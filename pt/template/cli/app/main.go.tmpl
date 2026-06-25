@@ -1,0 +1,16 @@
+// Command {{.Name}} is a Plumtree CLI app.
+package main
+
+import "github.com/Ceinl/plumtree/sdk"
+
+func main() {
+	sdk.CLI(sdk.Meta{Name: "{{.Name}}", Type: "cli"},
+		func(ctx sdk.Ctx, args []string) error {
+			name := "world"
+			if len(args) > 0 {
+				name = args[0]
+			}
+			ctx.Out().Printf("Hello %s\n", name)
+			return nil
+		})
+}

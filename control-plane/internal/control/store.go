@@ -1,0 +1,367 @@
+package control
+
+import (
+	"fmt"
+	"sort"
+	"sync"
+	"time"
+)
+
+const DeployClaimTTL = 30 * time.Second
+
+type Option func(*Store)
+
+// WithClock lets tests provide deterministic timestamps.
+func WithClock(now func() time.Time) Option {
+	return func(s *Store) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
+// WithMaxSessionsPerAppPerDay caps how many sessions a single app may start in
+// any rolling 24-hour window, a platform-wide abuse/DDoS control. 0 disables it.
+func WithMaxSessionsPerAppPerDay(n int) Option {
+	return func(s *Store) { s.maxSessionsPerAppPerDay = n }
+}
+
+// WithMaxDeployClaimsPerHour caps how many new deploy claims may be created
+// across the platform in any rolling hour — the primary control against
+// anonymous-deploy flooding (deploy is gated harder than run). 0 disables it.
+func WithMaxDeployClaimsPerHour(n int) Option {
+	return func(s *Store) { s.maxDeployClaimsPerHour = n }
+}
+
+// WithBlobDir stores compiled WASM artifacts as files under dir instead of
+// inside the JSON state file — durable artifact storage that keeps large
+// binaries out of the metadata snapshot. The directory is created on first use.
+func WithBlobDir(dir string) Option {
+	return func(s *Store) {
+		if dir != "" {
+			s.blobs = &fsBlobStore{dir: dir}
+		}
+	}
+}
+
+// Store is a concurrency-safe control-plane repository. It is in-memory by
+// default; OpenStore enables local JSON snapshot persistence. A SQL
+// implementation can satisfy the same behavior later.
+type Store struct {
+	mu  sync.RWMutex
+	now func() time.Time
+	seq map[string]int
+
+	persistPath string
+
+	owners        map[string]Owner
+	ownerByHandle map[string]string
+	identities    map[identityKey]AuthIdentity
+
+	apps           map[string]App
+	appByOwnerName map[appKey]string
+
+	artifacts map[string]Artifact
+	blobs     BlobStore
+	deploys   map[string]Deploy
+
+	sshKeys             map[string]SSHKey
+	sshKeyByFingerprint map[string]string
+
+	ciTokens map[string]CIToken
+	secrets  map[secretKey]SecretMetadata
+	// secretValues holds the actual secret bytes, kept separate from the
+	// value-free SecretMetadata. Injected into a claimed app's runtime as the
+	// Env capability; never returned through list/metadata APIs.
+	secretValues map[secretKey][]byte
+	// egressAllow is the per-app outbound HTTP allowlist (host patterns). An app
+	// with no entry has default-deny egress.
+	egressAllow map[string][]string
+	sessions    map[string]Session
+	quotas      map[string]Quotas
+
+	// suspendedDeploys is the operator kill switch at deploy granularity. Deploy
+	// records stay immutable; suspension is tracked separately.
+	suspendedDeploys map[string]struct{}
+
+	// maxSessionsPerAppPerDay caps new sessions per app in any rolling 24h
+	// window. 0 disables the cap.
+	maxSessionsPerAppPerDay int
+
+	// deploy-claim rate limiting: recentDeployClaims holds the timestamps of new
+	// deploy claims in the trailing hour, gating the crown-jewel action against
+	// anonymous-deploy flooding. 0 disables the cap.
+	maxDeployClaimsPerHour int
+	recentDeployClaims     []time.Time
+}
+
+type appKey struct {
+	ownerID string
+	name    string
+}
+
+type identityKey struct {
+	provider AuthProvider
+	subject  string
+}
+
+type secretKey struct {
+	appID string
+	key   string
+}
+
+func NewStore(opts ...Option) *Store {
+	s := &Store{
+		now:                 time.Now,
+		seq:                 make(map[string]int),
+		owners:              make(map[string]Owner),
+		ownerByHandle:       make(map[string]string),
+		identities:          make(map[identityKey]AuthIdentity),
+		apps:                make(map[string]App),
+		appByOwnerName:      make(map[appKey]string),
+		artifacts:           make(map[string]Artifact),
+		blobs:               newMemBlobStore(),
+		deploys:             make(map[string]Deploy),
+		sshKeys:             make(map[string]SSHKey),
+		sshKeyByFingerprint: make(map[string]string),
+		ciTokens:            make(map[string]CIToken),
+		secrets:             make(map[secretKey]SecretMetadata),
+		secretValues:        make(map[secretKey][]byte),
+		egressAllow:         make(map[string][]string),
+		sessions:            make(map[string]Session),
+		quotas:              make(map[string]Quotas),
+		suspendedDeploys:    make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+func (s *Store) EnsureOwnerForIdentity(in IdentityInput) (Owner, AuthIdentity, error) {
+	if !validProvider(in.Provider) {
+		return Owner{}, AuthIdentity{}, fmt.Errorf("%w: unknown identity provider %q", ErrInvalid, in.Provider)
+	}
+	if err := validateNonEmpty("identity subject", in.Subject); err != nil {
+		return Owner{}, AuthIdentity{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := identityKey{provider: in.Provider, subject: in.Subject}
+	if identity, ok := s.identities[key]; ok {
+		owner, ok := s.owners[identity.OwnerID]
+		if !ok {
+			return Owner{}, AuthIdentity{}, fmt.Errorf("%w: owner %q", ErrNotFound, identity.OwnerID)
+		}
+		return owner, identity, nil
+	}
+
+	owner := Owner{
+		ID:        s.nextID("own"),
+		CreatedAt: s.now(),
+	}
+	identity := AuthIdentity{
+		Provider:  in.Provider,
+		Subject:   in.Subject,
+		OwnerID:   owner.ID,
+		CreatedAt: s.now(),
+	}
+	s.owners[owner.ID] = owner
+	s.identities[key] = identity
+	if err := s.persistLocked(); err != nil {
+		return Owner{}, AuthIdentity{}, err
+	}
+	return owner, identity, nil
+}
+
+func (s *Store) CreateOwner(handle string) (Owner, error) {
+	if err := ValidateName(handle); err != nil {
+		return Owner{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.ownerByHandle[handle]; ok {
+		return Owner{}, fmt.Errorf("%w: owner %q already exists", ErrConflict, handle)
+	}
+	o := Owner{ID: s.nextID("own"), Handle: handle, HandleClaimed: true, CreatedAt: s.now()}
+	s.owners[o.ID] = o
+	s.ownerByHandle[o.Handle] = o.ID
+	if err := s.persistLocked(); err != nil {
+		return Owner{}, err
+	}
+	return o, nil
+}
+
+func (s *Store) EnsureOwner(handle string) (Owner, error) {
+	if err := ValidateName(handle); err != nil {
+		return Owner{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.ownerByHandle[handle]; ok {
+		return s.owners[id], nil
+	}
+	o := Owner{ID: s.nextID("own"), Handle: handle, HandleClaimed: true, CreatedAt: s.now()}
+	s.owners[o.ID] = o
+	s.ownerByHandle[o.Handle] = o.ID
+	if err := s.persistLocked(); err != nil {
+		return Owner{}, err
+	}
+	return o, nil
+}
+
+func (s *Store) ClaimOwnerHandle(ownerID, handle string) (Owner, error) {
+	if err := ValidateName(handle); err != nil {
+		return Owner{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner, ok := s.owners[ownerID]
+	if !ok {
+		return Owner{}, fmt.Errorf("%w: owner %q", ErrNotFound, ownerID)
+	}
+	if owner.Handle == handle {
+		if !owner.HandleClaimed {
+			owner.HandleClaimed = true
+			s.owners[owner.ID] = owner
+			if err := s.persistLocked(); err != nil {
+				return Owner{}, err
+			}
+		}
+		return owner, nil
+	}
+	if existingOwnerID, ok := s.ownerByHandle[handle]; ok && existingOwnerID != owner.ID {
+		return Owner{}, fmt.Errorf("%w: owner %q already exists", ErrConflict, handle)
+	}
+	if owner.Handle != "" {
+		delete(s.ownerByHandle, owner.Handle)
+	}
+	owner.Handle = handle
+	owner.HandleClaimed = true
+	s.owners[owner.ID] = owner
+	s.ownerByHandle[owner.Handle] = owner.ID
+	if err := s.persistLocked(); err != nil {
+		return Owner{}, err
+	}
+	return owner, nil
+}
+
+func (s *Store) GetOwner(id string) (Owner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	o, ok := s.owners[id]
+	if !ok {
+		return Owner{}, fmt.Errorf("%w: owner %q", ErrNotFound, id)
+	}
+	return o, nil
+}
+
+func (s *Store) FindOwner(handle string) (Owner, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.ownerByHandle[handle]
+	if !ok {
+		return Owner{}, fmt.Errorf("%w: owner %q", ErrNotFound, handle)
+	}
+	return s.owners[id], nil
+}
+
+func (s *Store) CreateApp(in AppInput) (App, error) {
+	if err := ValidateName(in.Name); err != nil {
+		return App{}, err
+	}
+	visibility, err := validateVisibility(in.Visibility)
+	if err != nil {
+		return App{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.owners[in.OwnerID]; !ok {
+		return App{}, fmt.Errorf("%w: owner %q", ErrNotFound, in.OwnerID)
+	}
+	key := appKey{ownerID: in.OwnerID, name: in.Name}
+	if _, ok := s.appByOwnerName[key]; ok {
+		return App{}, fmt.Errorf("%w: app %q already exists", ErrConflict, in.Name)
+	}
+	if err := s.checkAppQuotaLocked(in.OwnerID); err != nil {
+		return App{}, err
+	}
+	app := App{
+		ID:         s.nextID("app"),
+		OwnerID:    in.OwnerID,
+		Name:       in.Name,
+		Visibility: visibility,
+		CreatedAt:  s.now(),
+	}
+	s.apps[app.ID] = app
+	s.appByOwnerName[key] = app.ID
+	if err := s.persistLocked(); err != nil {
+		return App{}, err
+	}
+	return app, nil
+}
+
+func (s *Store) EnsureApp(in AppInput) (App, error) {
+	if err := ValidateName(in.Name); err != nil {
+		return App{}, err
+	}
+	visibility, err := validateVisibility(in.Visibility)
+	if err != nil {
+		return App{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.owners[in.OwnerID]; !ok {
+		return App{}, fmt.Errorf("%w: owner %q", ErrNotFound, in.OwnerID)
+	}
+	key := appKey{ownerID: in.OwnerID, name: in.Name}
+	if id, ok := s.appByOwnerName[key]; ok {
+		app := s.apps[id]
+		if in.Visibility != "" && app.Visibility != visibility {
+			app.Visibility = visibility
+			s.apps[id] = app
+			if err := s.persistLocked(); err != nil {
+				return App{}, err
+			}
+		}
+		return app, nil
+	}
+	if err := s.checkAppQuotaLocked(in.OwnerID); err != nil {
+		return App{}, err
+	}
+	app := App{
+		ID:         s.nextID("app"),
+		OwnerID:    in.OwnerID,
+		Name:       in.Name,
+		Visibility: visibility,
+		CreatedAt:  s.now(),
+	}
+	s.apps[app.ID] = app
+	s.appByOwnerName[key] = app.ID
+	if err := s.persistLocked(); err != nil {
+		return App{}, err
+	}
+	return app, nil
+}
+
+func (s *Store) ListApps(ownerID string) ([]App, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.owners[ownerID]; !ok {
+		return nil, fmt.Errorf("%w: owner %q", ErrNotFound, ownerID)
+	}
+	var out []App
+	for _, app := range s.apps {
+		if app.OwnerID == ownerID {
+			out = append(out, app)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}

@@ -1,0 +1,31 @@
+# {{.Name}}
+
+Plumtree {{.Kind}} app.
+
+## Layout
+
+- `plumtree.json` - committed app manifest. Keep the name and type in sync with the app.
+- `app/main.go` - application entrypoint.
+- `AGENTS.md` - notes for coding agents working in this project.
+- `.plumtree/` - local deploy metadata written by `pt deploy`; do not commit it.
+
+## Run Locally
+
+```bash
+{{.RunCommand}}
+```
+
+## Deterministic Check
+
+```bash
+{{.CheckCommand}}
+```
+
+## Deploy
+
+```bash
+pt deploy --server http://127.0.0.1:18080 --dev-token local-dev
+pt claim
+```
+
+After the first claim, later deploys reuse `.plumtree/deploy.json`.

@@ -1,0 +1,20 @@
+# Agent Notes
+
+This is a Plumtree {{.Kind}} app named `{{.Name}}`.
+
+## Commands
+
+- Run locally: `pt dev`
+- Deterministic smoke check: `{{.CheckCommand}}`
+- Serve over SSH for manual testing: `pt dev --ssh`
+- Deploy to a local control plane: `pt deploy --server http://127.0.0.1:18080 --dev-token local-dev`
+
+## Project Rules
+
+- Keep app code under `app/` unless a broader structure is needed.
+- Keep `plumtree.json` committed and do not store secrets in it.
+- Do not commit `.plumtree/`, `.env.plumtree.server.local`, `dist/`, or generated `*.wasm` files.
+- Use the Plumtree SDK imports already present in `app/main.go`; avoid adding terminal-specific output for TUI apps because the host owns rendering.
+- For TUI changes, prefer state updates in `Update` and component tree changes in `View`.
+- For CLI changes, write user output through `sdk.Ctx` rather than directly to stdout.
+- Run the deterministic smoke check before handing work back.

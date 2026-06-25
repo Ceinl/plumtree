@@ -1,0 +1,9 @@
+.DS_Store
+bin/
+dist/
+coverage.out
+*.test
+
+# Reference checkout of github.com/Ceinl/plums (source the tui-runtime was
+# extracted from); not part of this module's build.
+/plums/

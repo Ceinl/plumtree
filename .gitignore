@@ -1,0 +1,27 @@
+.DS_Store
+
+# Local Plumtree state
+_devtest/
+.plumtree/
+**/.plumtree/
+.env.plumtree.server.local
+**/.env.plumtree.server.local
+
+# Build/test output
+bin/
+dist/
+**/bin/
+**/dist/
+coverage.out
+**/coverage.out
+*.test
+*.wasm
+
+# Generated example binaries
+sdk/buschat
+sdk/fetchcheck
+
+# Agent/local tool state
+**/.agents/
+.branch/
+.claude/

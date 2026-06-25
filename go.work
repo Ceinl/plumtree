@@ -1,0 +1,12 @@
+go 1.26
+
+use (
+	./build-worker
+	./control-plane
+	./pt
+	./runner
+	./sdk
+	./spike
+	./ssh-gateway
+	./tui-runtime
+)
