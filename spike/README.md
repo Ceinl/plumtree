@@ -1,11 +1,11 @@
 # Plumtree WASM feasibility spike (Phase 1)
 
-This spike retires the load-bearing technical risk from `PLATFORM_SPEC.md`:
+This spike retires the load-bearing technical risk described in the root `README.md`:
 
 > confirm the Plumtree runtime + a real TUI loop compile and run under
 > `wasip1`/TinyGo in wazero, with input/render bridged through the host renderer.
 
-**Result: feasible.** A counter TUI built on the real `plumtree-tui` runtime
+**Result: feasible.** A counter TUI built on the real `tui-runtime` runtime
 compiles to `wasip1` WASM, runs in wazero with no ambient authority, receives
 host input events, and returns structured frames the host renders — with
 per-frame deadlines that reliably kill a runaway guest and no path for the guest
@@ -16,7 +16,7 @@ to emit raw terminal escapes.
 | Path | What |
 | --- | --- |
 | `abi/` | ABI v0 wire format (event host→guest, frame guest→host). Pure Go, shared. No raw ANSI on the wire — colors are structured RGB. |
-| `guest/` | The counter app. Built `GOOS=wasip1 GOARCH=wasm -buildmode=c-shared`. Uses the real `plumtree-tui` layout/screen/components; exports `alloc`/`free`/`frame`. |
+| `guest/` | The counter app. Built `GOOS=wasip1 GOARCH=wasm -buildmode=c-shared`. Uses the real `tui-runtime` layout/screen/components; exports `alloc`/`free`/`frame`. |
 | `host/` | wazero runner: instantiates the guest with limits, drives the frame loop, sanitizes + renders. `headless` (text, TTY-free) and `tty` (interactive) modes. |
 | `build.sh` | Builds guest WASM + host. Also builds a TinyGo guest if `tinygo` is present. |
 
@@ -72,7 +72,7 @@ depends on host internals.
   Covered by `TestRunawayGuestIsCancelled`.
 - ✅ Resource caps enforced: linear-memory page cap (`WithMemoryLimitPages`),
   guest stdout/stderr captured as logs (never the terminal), no FS/env/args/net.
-- ✅ Limitations documented (here + `PLATFORM_SPEC.md` "Phase 1 findings").
+- ✅ Limitations documented (here, in the follow-ups section below).
 
 ## Go WASI vs TinyGo (measurements)
 
@@ -93,7 +93,7 @@ language features. `build.sh` builds a TinyGo guest automatically when present.
 
 ## Known limitations / follow-ups
 
-See the "Phase 1 findings" section added to `PLATFORM_SPEC.md`. Headlines:
+Headlines:
 
 1. **Color model.** `screen.Cell` stores colors as ANSI SGR *strings*. The guest
    parses them back to RGB at the ABI boundary; the real runtime should store

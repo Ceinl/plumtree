@@ -9,8 +9,10 @@ metadata:
 that hosts Go TUI/CLI apps compiled to WASM and streamed over SSH — "Lakebed for
 the terminal." Subrepos: `tui-runtime`, `sdk`, `pt` (author CLI), `runner`
 (wazero session runner + host ABI), `control-plane`, `build-worker`,
-`ssh-gateway` (skeleton). Architecture in `PLATFORM_SPEC.md`, subrepo map in
-`REPOS.md`. Each subrepo is its own git repo; the top-level dir, `spike/`, and
+`ssh-gateway` (skeleton). Architecture, subrepo map, and status are all now
+consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
+`REPOS.md` were folded into it and deleted 2026-06-27). Each subrepo is its own
+git repo; the top-level dir, `spike/`, and
 `_devtest/` are NOT under git.
 
 Status (2026-06-25): Phase 1 spike validated; end-to-end dev+deploy loop works
@@ -23,10 +25,16 @@ apps, and e2e tests that build the real WASM guest:
   fingerprint), **Env** (claimed-only secrets, `pt secret`), **Fetch**
   (claimed-only default-deny gated egress, `pt egress`).
 Auth = the deploy **claim** token (`pt claim` + Shoo); NO `pt auth login`.
-Production hardening started: durable artifact storage (`control.BlobStore` +
-`--blob-dir`), out-of-process build worker (`--build-url`, pre-existing), and
-deploy-claim rate limiting (`--max-deploys-per-hour`). Remaining: runner/gateway
-as separate processes, anonymous preview deploy. See [[plumtree-next-capabilities]].
+Production hardening (Phase 5, done): out-of-process runner isolation
+(`runner.ProcessRunner` + `cmd/plumtree-runner-worker`, forwards every host call
+over the lock-step `procproto`; control-plane `--runner-worker`); durable
+artifact storage (`control.BlobStore` + `--blob-dir`); out-of-process build
+worker (`--build-url`); deploy-claim rate limiting (`--max-deploys-per-hour`);
+anonymous preview run (`--anonymous-preview`, `ssh preview-<deployID>@host`,
+ownerless tightest sandbox). Module paths were renamed to
+`github.com/Ceinl/plumtree/<sub>` (was `plumtree.dev/*`). Remaining: extract the
+SSH gateway into its own process (still a skeleton; control plane embeds it),
+moderation at scale, `ctx.DB`. See [[plumtree-next-capabilities]].
 
 Note: `sdk/plums` is an independent checkout (github.com/Ceinl/plums, the repo
 tui-runtime was extracted from), with its own .git, untracked/gitignored in sdk
