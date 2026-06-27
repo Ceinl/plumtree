@@ -101,7 +101,7 @@ func TestAppsListsAuthenticatedOwnersApps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateApp(control.AppInput{OwnerID: owner.ID, Name: "counter", Visibility: control.VisibilityPublic}); err != nil {
+	if _, err := store.CreateApp(control.AppInput{OwnerID: owner.ID, Name: "counter"}); err != nil {
 		t.Fatal(err)
 	}
 	server := New(store, fakeVerifier{claims: shoo.Claims{PairwiseSub: "ps_test"}}, "http://localhost:8080")
@@ -112,14 +112,13 @@ func TestAppsListsAuthenticatedOwnersApps(t *testing.T) {
 	}
 	var body struct {
 		Apps []struct {
-			Handle     string `json:"handle"`
-			Visibility string `json:"visibility"`
+			Handle string `json:"handle"`
 		} `json:"apps"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Apps) != 1 || body.Apps[0].Handle != owner.Handle+"/counter" || body.Apps[0].Visibility != "public" {
+	if len(body.Apps) != 1 || body.Apps[0].Handle != owner.Handle+"/counter" {
 		t.Fatalf("apps = %+v", body.Apps)
 	}
 }

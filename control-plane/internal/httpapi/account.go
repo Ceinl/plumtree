@@ -100,7 +100,6 @@ func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 			"id":             app.ID,
 			"name":           app.Name,
 			"handle":         owner.Handle + "/" + app.Name,
-			"visibility":     app.Visibility,
 			"activeDeployId": app.ActiveDeployID,
 			"createdAt":      app.CreatedAt,
 		})

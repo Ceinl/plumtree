@@ -299,7 +299,6 @@ func devDeployBody(wasm []byte) map[string]any {
 	return map[string]any{
 		"appName":           "counter",
 		"appType":           "tui",
-		"visibility":        "public",
 		"artifactDigest":    testDigest(wasm),
 		"artifactSizeBytes": len(wasm),
 		"abiVersion":        0,

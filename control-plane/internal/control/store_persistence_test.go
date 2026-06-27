@@ -113,7 +113,7 @@ func TestOpenStorePersistsRunnableDeploy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter", Visibility: VisibilityPublic})
+	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,6 @@ func TestOpenStorePersistsClaimedDeployAfterClaimWindow(t *testing.T) {
 	}
 	deploy, err := store.CreateDeployClaim(DeployClaimInput{
 		AppName:        "counter",
-		Visibility:     VisibilityPublic,
 		ArtifactID:     artifact.ID,
 		SourceDigest:   sourceDigest,
 		ClaimTokenHash: claimDigest,
@@ -282,7 +281,6 @@ func TestOpenStoreDeletesExpiredUnclaimedDeploy(t *testing.T) {
 	}
 	deploy, err := store.CreateDeployClaim(DeployClaimInput{
 		AppName:        "counter",
-		Visibility:     VisibilityPublic,
 		ArtifactID:     artifact.ID,
 		SourceDigest:   sourceDigest,
 		ClaimTokenHash: claimDigest,

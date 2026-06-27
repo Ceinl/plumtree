@@ -19,7 +19,7 @@ func TestKillSwitchSuspendsResolution(t *testing.T) {
 	if owner, err = store.ClaimOwnerHandle(owner.ID, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter", Visibility: VisibilityPublic})
+	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestResolveRunnableReturnsArtifactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter", Visibility: VisibilityPublic})
+	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		t.Fatal(err)
 	}

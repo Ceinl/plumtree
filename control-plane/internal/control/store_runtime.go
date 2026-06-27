@@ -96,6 +96,10 @@ func (s *Store) EgressAllowlist(appID string) []string {
 // AddEgressHost adds host to the app's allowlist if absent. It returns the
 // updated allowlist.
 func (s *Store) AddEgressHost(appID, host string) ([]string, error) {
+	host, err := ValidateEgressHost(host)
+	if err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.apps[appID]; !ok {

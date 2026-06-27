@@ -43,7 +43,6 @@ func TestDevDeployBuildsUploadedSource(t *testing.T) {
 	body := map[string]any{
 		"appName":    "counter",
 		"appType":    "tui",
-		"visibility": "public",
 		"abiVersion": 0,
 		"source":     []byte("fake-archive"),
 	}

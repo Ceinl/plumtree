@@ -20,7 +20,7 @@ func TestOwnerAppDeployLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(AppInput{OwnerID: owner.ID, Name: "counter", Visibility: VisibilityPublic})
+	app, err := store.CreateApp(AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,18 +219,15 @@ func TestEnsureOwnerAndAppAreIdempotent(t *testing.T) {
 		t.Fatalf("EnsureOwner returned different owner: %q != %q", again.ID, owner.ID)
 	}
 
-	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter", Visibility: VisibilityPrivate})
+	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	againApp, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter", Visibility: VisibilityPublic})
+	againApp, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if againApp.ID != app.ID {
 		t.Fatalf("EnsureApp returned different app: %q != %q", againApp.ID, app.ID)
-	}
-	if againApp.Visibility != VisibilityPublic {
-		t.Fatalf("visibility = %q, want public", againApp.Visibility)
 	}
 }

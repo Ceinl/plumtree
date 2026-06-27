@@ -1,28 +1,27 @@
-package sshgateway
+package gateway
 
 import (
 	"path/filepath"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
 	"github.com/Ceinl/plumtree/runner"
 )
 
 // capsFor builds the capability set for an app's sessions: a per-app KV store
 // (persisted, shared) and a per-app pub/sub bus (in-memory, shared across the
 // live sessions of this process). Both are keyed by app ID so concurrent
-// sessions of the same app see one instance.
-func (s *Server) capsFor(app control.App) runner.Capabilities {
-	if app.ID == "" {
+// sessions of the same app see one instance. Secrets and egress are claimed-only:
+// only apps with an owner get Env and a Fetcher, and egress stays default-deny
+// unless the allowlist is non-empty.
+func (s *Server) capsFor(appID, ownerID string) runner.Capabilities {
+	if appID == "" {
 		return runner.Capabilities{}
 	}
-	caps := runner.Capabilities{KV: s.kvFor(app.ID), Bus: s.busFor(app.ID)}
-	// Secrets and egress are claimed-only: only apps with an owner get Env and a
-	// Fetcher, and egress stays default-deny unless the allowlist is non-empty.
-	if app.OwnerID != "" {
-		if secrets := s.Store.SecretsForApp(app.ID); len(secrets) > 0 {
+	caps := runner.Capabilities{KV: s.kvFor(appID), Bus: s.busFor(appID)}
+	if ownerID != "" {
+		if secrets := s.Backend.SecretsForApp(appID); len(secrets) > 0 {
 			caps.Env = runner.MapEnv(secrets)
 		}
-		if allow := s.Store.EgressAllowlist(app.ID); len(allow) > 0 {
+		if allow := s.Backend.EgressAllowlist(appID); len(allow) > 0 {
 			caps.Fetch = runner.NewAllowlistFetcher(allow)
 		}
 	}

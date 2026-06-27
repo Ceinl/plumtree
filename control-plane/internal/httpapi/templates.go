@@ -140,7 +140,6 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       </div>
       <section class="summary" aria-label="Account summary">
         <div class="metric"><span>Total apps</span><strong id="total">-</strong></div>
-        <div class="metric"><span>Public</span><strong id="public">-</strong></div>
         <div class="metric"><span>Active deploys</span><strong id="active">-</strong></div>
       </section>
       {{if .Limits}}
@@ -164,7 +163,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       <div id="empty" class="empty" hidden>No apps in this namespace yet.</div>
       <div id="apps" class="table-wrap" hidden>
         <table>
-          <thead><tr><th>Handle</th><th>Visibility</th><th>Active deploy</th><th>Created</th></tr></thead>
+          <thead><tr><th>Handle</th><th>Active deploy</th><th>Created</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -176,7 +175,6 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
     const owner = document.getElementById("owner");
     const identityLabel = document.getElementById("identity");
     const total = document.getElementById("total");
-    const publicCount = document.getElementById("public");
     const active = document.getElementById("active");
     const apps = document.getElementById("apps");
     const rows = document.getElementById("rows");
@@ -231,17 +229,15 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       rows.textContent = "";
       for (const app of items) {
         const tr = document.createElement("tr");
-        tr.innerHTML = "<td><code></code></td><td><span class=\"pill\"></span></td><td></td><td></td>";
+        tr.innerHTML = "<td><code></code></td><td></td><td></td>";
         tr.children[0].firstChild.textContent = app.handle;
-        tr.children[1].firstChild.textContent = app.visibility;
-        tr.children[2].textContent = app.activeDeployId || "-";
-        tr.children[3].textContent = app.createdAt ? new Date(app.createdAt).toLocaleString() : "-";
+        tr.children[1].textContent = app.activeDeployId || "-";
+        tr.children[2].textContent = app.createdAt ? new Date(app.createdAt).toLocaleString() : "-";
         rows.appendChild(tr);
       }
       apps.hidden = items.length === 0;
       empty.hidden = items.length !== 0;
       total.textContent = String(items.length);
-      publicCount.textContent = String(items.filter(app => app.visibility === "public").length);
       active.textContent = String(items.filter(app => app.activeDeployId).length);
     }
 

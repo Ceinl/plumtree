@@ -3,6 +3,7 @@ package control
 import (
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 )
@@ -19,7 +20,46 @@ var (
 	namePattern   = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 	digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 	secretPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,127}$`)
+	// egressHostPattern matches a DNS hostname (no scheme/port/path). The optional
+	// leading dot for the subdomain-wildcard form is stripped before matching.
+	egressHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 )
+
+// nonPublicTLDs are domain suffixes that name internal networks rather than the
+// public internet. Allowing them as egress targets would let an app reach
+// services behind the platform, so they are rejected at allowlist-add time.
+var nonPublicTLDs = map[string]bool{
+	"local": true, "localhost": true, "internal": true,
+	"lan": true, "home": true, "intranet": true, "corp": true,
+}
+
+// ValidateEgressHost normalizes and validates an egress allowlist entry. It
+// accepts a public DNS hostname (optionally with a leading dot for the
+// subdomain-wildcard form) and rejects IP literals, single-label/internal names,
+// and anything carrying a scheme, port, or path. This is the add-time half of
+// the SSRF defense; the runner additionally blocks non-public resolved IPs at
+// dial time to stop DNS rebinding.
+func ValidateEgressHost(host string) (string, error) {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if h == "" {
+		return "", fmt.Errorf("%w: egress host is required", ErrInvalid)
+	}
+	bare := strings.TrimPrefix(h, ".")
+	if strings.ContainsAny(bare, "/:@ \t") {
+		return "", fmt.Errorf("%w: egress host %q must be a bare hostname (no scheme, port, or path)", ErrInvalid, host)
+	}
+	if net.ParseIP(bare) != nil {
+		return "", fmt.Errorf("%w: egress host %q must be a domain name, not an IP address", ErrInvalid, host)
+	}
+	if !egressHostPattern.MatchString(bare) {
+		return "", fmt.Errorf("%w: egress host %q is not a valid public domain name", ErrInvalid, host)
+	}
+	labels := strings.Split(bare, ".")
+	if nonPublicTLDs[labels[len(labels)-1]] {
+		return "", fmt.Errorf("%w: egress host %q uses a non-public domain suffix", ErrInvalid, host)
+	}
+	return h, nil
+}
 
 // ValidateName accepts the namespace-safe handles used for owners and apps.
 func ValidateName(name string) error {
@@ -37,18 +77,6 @@ func validateDigest(label, digest string) error {
 		return fmt.Errorf("%w: %s must be sha256:<64 lowercase hex chars>", ErrInvalid, label)
 	}
 	return nil
-}
-
-func validateVisibility(v Visibility) (Visibility, error) {
-	if v == "" {
-		return VisibilityPrivate, nil
-	}
-	switch v {
-	case VisibilityPrivate, VisibilityPublic:
-		return v, nil
-	default:
-		return "", fmt.Errorf("%w: unknown visibility %q", ErrInvalid, v)
-	}
 }
 
 func validateSecretKey(key string) error {

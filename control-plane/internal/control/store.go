@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-const DeployClaimTTL = 30 * time.Second
+// DeployClaimTTL is the default lifetime of an unclaimed deploy before it is
+// garbage-collected. Operators can override it per-store with WithDeployClaimTTL.
+const DeployClaimTTL = 5 * time.Minute
 
 type Option func(*Store)
 
@@ -26,11 +28,35 @@ func WithMaxSessionsPerAppPerDay(n int) Option {
 	return func(s *Store) { s.maxSessionsPerAppPerDay = n }
 }
 
+// WithAnonymousPreview enables anonymous preview run: any deploy is runnable by
+// id at "preview-<deployID>" in the tightest sandbox (no owner capabilities).
+// It is gated because it lets unclaimed code run; enable it only with deploy
+// rate limiting in place.
+func WithAnonymousPreview(enabled bool) Option {
+	return func(s *Store) { s.anonymousPreview = enabled }
+}
+
 // WithMaxDeployClaimsPerHour caps how many new deploy claims may be created
 // across the platform in any rolling hour — the primary control against
 // anonymous-deploy flooding (deploy is gated harder than run). 0 disables it.
 func WithMaxDeployClaimsPerHour(n int) Option {
 	return func(s *Store) { s.maxDeployClaimsPerHour = n }
+}
+
+// WithDeployClaimTTL sets how long an unclaimed deploy survives before it is
+// garbage-collected. Non-positive values keep the default (DeployClaimTTL).
+func WithDeployClaimTTL(d time.Duration) Option {
+	return func(s *Store) {
+		if d > 0 {
+			s.deployClaimTTL = d
+		}
+	}
+}
+
+// WithDefaultMaxApps caps how many apps a single owner may create, applied to
+// any owner without an explicit MaxApps quota. 0 leaves owners uncapped.
+func WithDefaultMaxApps(n int) Option {
+	return func(s *Store) { s.defaultMaxApps = n }
 }
 
 // WithBlobDir stores compiled WASM artifacts as files under dir instead of
@@ -93,6 +119,19 @@ type Store struct {
 	// anonymous-deploy flooding. 0 disables the cap.
 	maxDeployClaimsPerHour int
 	recentDeployClaims     []time.Time
+
+	// deployClaimTTL is how long an unclaimed deploy survives before GC.
+	// Defaults to DeployClaimTTL; set via WithDeployClaimTTL.
+	deployClaimTTL time.Duration
+
+	// defaultMaxApps caps apps per owner for owners without an explicit MaxApps
+	// quota. 0 leaves them uncapped; set via WithDefaultMaxApps.
+	defaultMaxApps int
+
+	// anonymousPreview enables running any deploy by id at the handle
+	// "preview-<deployID>" in the tightest (ownerless) sandbox — no secrets, no
+	// egress. Off by default; gated on because it relies on deploy rate limiting.
+	anonymousPreview bool
 }
 
 type appKey struct {
@@ -113,6 +152,7 @@ type secretKey struct {
 func NewStore(opts ...Option) *Store {
 	s := &Store{
 		now:                 time.Now,
+		deployClaimTTL:      DeployClaimTTL,
 		seq:                 make(map[string]int),
 		owners:              make(map[string]Owner),
 		ownerByHandle:       make(map[string]string),
@@ -136,6 +176,14 @@ func NewStore(opts ...Option) *Store {
 		opt(s)
 	}
 	return s
+}
+
+// DeployClaimTTL returns the configured unclaimed-deploy lifetime, so callers
+// (e.g. cleanup schedulers) stay consistent with the store's expiry policy.
+func (s *Store) DeployClaimTTL() time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deployClaimTTL
 }
 
 func (s *Store) EnsureOwnerForIdentity(in IdentityInput) (Owner, AuthIdentity, error) {
@@ -274,10 +322,6 @@ func (s *Store) CreateApp(in AppInput) (App, error) {
 	if err := ValidateName(in.Name); err != nil {
 		return App{}, err
 	}
-	visibility, err := validateVisibility(in.Visibility)
-	if err != nil {
-		return App{}, err
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,11 +336,10 @@ func (s *Store) CreateApp(in AppInput) (App, error) {
 		return App{}, err
 	}
 	app := App{
-		ID:         s.nextID("app"),
-		OwnerID:    in.OwnerID,
-		Name:       in.Name,
-		Visibility: visibility,
-		CreatedAt:  s.now(),
+		ID:        s.nextID("app"),
+		OwnerID:   in.OwnerID,
+		Name:      in.Name,
+		CreatedAt: s.now(),
 	}
 	s.apps[app.ID] = app
 	s.appByOwnerName[key] = app.ID
@@ -310,10 +353,6 @@ func (s *Store) EnsureApp(in AppInput) (App, error) {
 	if err := ValidateName(in.Name); err != nil {
 		return App{}, err
 	}
-	visibility, err := validateVisibility(in.Visibility)
-	if err != nil {
-		return App{}, err
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -322,25 +361,16 @@ func (s *Store) EnsureApp(in AppInput) (App, error) {
 	}
 	key := appKey{ownerID: in.OwnerID, name: in.Name}
 	if id, ok := s.appByOwnerName[key]; ok {
-		app := s.apps[id]
-		if in.Visibility != "" && app.Visibility != visibility {
-			app.Visibility = visibility
-			s.apps[id] = app
-			if err := s.persistLocked(); err != nil {
-				return App{}, err
-			}
-		}
-		return app, nil
+		return s.apps[id], nil
 	}
 	if err := s.checkAppQuotaLocked(in.OwnerID); err != nil {
 		return App{}, err
 	}
 	app := App{
-		ID:         s.nextID("app"),
-		OwnerID:    in.OwnerID,
-		Name:       in.Name,
-		Visibility: visibility,
-		CreatedAt:  s.now(),
+		ID:        s.nextID("app"),
+		OwnerID:   in.OwnerID,
+		Name:      in.Name,
+		CreatedAt: s.now(),
 	}
 	s.apps[app.ID] = app
 	s.appByOwnerName[key] = app.ID

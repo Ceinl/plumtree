@@ -70,11 +70,6 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 		if err := ValidateName(app.Name); err != nil {
 			return false, err
 		}
-		visibility, err := validateVisibility(app.Visibility)
-		if err != nil {
-			return false, err
-		}
-		app.Visibility = visibility
 		key := appKey{ownerID: app.OwnerID, name: app.Name}
 		if _, ok := s.apps[app.ID]; ok {
 			return false, fmt.Errorf("%w: duplicate app ID %q", ErrConflict, app.ID)
@@ -134,16 +129,11 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 			if err := ValidateName(deploy.AppName); err != nil {
 				return false, err
 			}
-			visibility, err := validateVisibility(deploy.Visibility)
-			if err != nil {
-				return false, err
-			}
-			deploy.Visibility = visibility
 			if err := validateDigest("claim token hash", deploy.ClaimTokenHash); err != nil {
 				return false, err
 			}
 			if deploy.ClaimExpiresAt == nil {
-				expiresAt := deploy.CreatedAt.Add(DeployClaimTTL)
+				expiresAt := deploy.CreatedAt.Add(s.deployClaimTTL)
 				deploy.ClaimExpiresAt = &expiresAt
 				migrated = true
 			}

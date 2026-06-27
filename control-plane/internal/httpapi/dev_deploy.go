@@ -11,15 +11,14 @@ import (
 )
 
 type devDeployRequest struct {
-	AppName           string             `json:"appName"`
-	AppType           string             `json:"appType"`
-	Visibility        control.Visibility `json:"visibility"`
-	ArtifactDigest    string             `json:"artifactDigest"`
-	ArtifactSizeBytes int64              `json:"artifactSizeBytes"`
-	ABIVersion        uint8              `json:"abiVersion"`
-	SourceDigest      string             `json:"sourceDigest"`
-	BuildMetadata     map[string]string  `json:"buildMetadata"`
-	WASM              []byte             `json:"wasm,omitempty"`
+	AppName           string            `json:"appName"`
+	AppType           string            `json:"appType"`
+	ArtifactDigest    string            `json:"artifactDigest"`
+	ArtifactSizeBytes int64             `json:"artifactSizeBytes"`
+	ABIVersion        uint8             `json:"abiVersion"`
+	SourceDigest      string            `json:"sourceDigest"`
+	BuildMetadata     map[string]string `json:"buildMetadata"`
+	WASM              []byte            `json:"wasm,omitempty"`
 	// Source is a packed app source archive (see buildworker.PackSource). When
 	// present and a build backend is configured, the control plane compiles it
 	// server-side and ignores any client-supplied WASM/digest.
@@ -59,7 +58,6 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 	deploy, err := s.store.CreateDeployClaim(control.DeployClaimInput{
 		AppName:        req.AppName,
 		AppType:        req.AppType,
-		Visibility:     req.Visibility,
 		ArtifactID:     artifact.ID,
 		SourceDigest:   req.SourceDigest,
 		ClaimTokenHash: hashClaimToken(claimToken),
@@ -71,10 +69,13 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 	s.scheduleDeployClaimCleanup()
 
 	claimURL := s.claimURL(r, deploy.ID, claimToken)
-	writeJSON(w, http.StatusCreated, devDeployResponse("", control.App{
-		Name:       deploy.AppName,
-		Visibility: deploy.Visibility,
-	}, deploy, false, claimURL))
+	resp := devDeployResponse("", control.App{
+		Name: deploy.AppName,
+	}, deploy, false, claimURL)
+	if s.store.AnonymousPreviewEnabled() {
+		resp["previewHandle"] = "preview-" + deploy.ID
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleDevDeployPath(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +157,6 @@ func (s *Server) handleDevDeployUpdate(w http.ResponseWriter, r *http.Request) {
 	app, deploy, claimed, err := s.store.UpdateDeployClaim(deployID, control.DeployClaimInput{
 		AppName:        req.AppName,
 		AppType:        req.AppType,
-		Visibility:     req.Visibility,
 		ArtifactID:     artifact.ID,
 		SourceDigest:   req.SourceDigest,
 		ClaimTokenHash: hashClaimToken(claimToken),
@@ -229,9 +229,6 @@ func readDevDeployRequest(w http.ResponseWriter, r *http.Request) (devDeployRequ
 	var req devDeployRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&req); err != nil {
 		return req, err
-	}
-	if req.Visibility == "" {
-		req.Visibility = control.VisibilityPublic
 	}
 	if len(req.Source) > 0 {
 		// The control plane owns the source digest when it receives source.

@@ -17,16 +17,25 @@ Owns:
 - per-app egress allowlist (injected into claimed apps as `ctx.Fetch`).
 - quotas and authz, incl. `--max-deploys-per-hour` rate limiting and the
   per-app daily session cap.
+- optional out-of-process WASM isolation via `--runner-worker <path>` (spawns a
+  `plumtree-runner-worker` per TUI session).
+- optional anonymous preview run via `--anonymous-preview` (run any deploy
+  unclaimed at `ssh preview-<deployID>@host` in the tightest sandbox).
 - HTTP dashboard/API for owners to inspect their apps, plus claim-token
   `pt secret` / `pt egress` endpoints.
 - Shoo-backed browser auth for the dashboard.
-- local all-in-one SSH gateway for deployed apps during development, wiring the
-  KV, pub/sub bus, Auth, Env, and Fetch capabilities per session.
+- local all-in-one SSH gateway for deployed apps during development, embedding
+  the `ssh-gateway` package via an in-process backend and wiring the KV, pub/sub
+  bus, Auth, Env, and Fetch capabilities per session.
+- the operator-internal gateway API (`/internal/gateway/*`, enabled with
+  `--gateway-token`) that lets a standalone `ssh-gateway` use the control plane
+  as its backend.
 
 Does not own:
 
 - compiling untrusted source.
-- production runner isolation (separate runner/gateway processes).
+- the SSH front end itself in production — that is the separate `ssh-gateway`
+  deployable, talking to this control plane over the gateway API.
 
 ## Local dashboard
 
@@ -45,7 +54,7 @@ server-side against Shoo's JWKS before returning owner/app data.
 For local development, `-dev-token` enables `POST /api/dev/deploy`. Use the
 same token with `pt deploy`; the CLI creates a short-lived anonymous deploy
 claim, then `pt claim` opens the Shoo-authenticated browser claim page. Claim
-links expire after 30 seconds. After a deploy is claimed, later `pt deploy`
+links expire after 5 minutes. After a deploy is claimed, later `pt deploy`
 updates use the saved claim token in `.plumtree/deploy.json`.
 
 The same process also starts a local SSH gateway by default. After `pt deploy`,

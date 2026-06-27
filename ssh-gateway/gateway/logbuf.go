@@ -1,4 +1,4 @@
-package sshgateway
+package gateway
 
 import "bytes"
 

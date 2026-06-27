@@ -1,4 +1,4 @@
-package sshgateway
+package gateway
 
 import (
 	"context"
@@ -9,11 +9,10 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
-	"github.com/Ceinl/plumtree/runner"
 )
 
 type ptyRequest struct {
@@ -28,7 +27,7 @@ type windowChange struct {
 	WidthPx, HeightPx uint32
 }
 
-func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, app control.App, deploy control.Deploy, wasm []byte, appType string, identity runner.Identity) {
+func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, run Runnable, identity runner.Identity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -67,7 +66,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				continue
 			}
 			started = true
-			go s.startSession(ctx, cancel, ch, app, deploy, wasm, appType, identity, size, winch)
+			go s.startSession(ctx, cancel, ch, run, identity, size, winch)
 		case "env":
 			req.Reply(true, nil)
 		default:
@@ -77,9 +76,9 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 	cancel()
 }
 
-func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, app control.App, deploy control.Deploy, wasm []byte, appType string, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
+func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, run Runnable, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
 	if !s.acquireSlot() {
-		s.logf("reject %q: runner at capacity (%d sessions)", app.Name, s.MaxConcurrentSessions)
+		s.logf("reject %q: runner at capacity (%d sessions)", run.AppName, s.MaxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
 		ch.Close()
 		cancel()
@@ -87,11 +86,11 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 	}
 	defer s.releaseSlot()
 
-	session, err := s.Store.StartSession(app.ID, deploy.ID)
+	sessionID, err := s.Backend.StartSession(run.AppID, run.DeployID)
 	if err != nil {
-		s.logf("start session %q: %v", app.Name, err)
+		s.logf("start session %q: %v", run.AppName, err)
 		msg := "session unavailable; try again later"
-		if errors.Is(err, control.ErrQuota) {
+		if errors.Is(err, ErrQuota) {
 			msg = "this app has reached its daily connection limit; try again later"
 		}
 		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
@@ -99,22 +98,22 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 		cancel()
 		return
 	}
-	s.sessions.add(session.ID, sessionEntry{
-		ownerID:  app.OwnerID,
-		appID:    app.ID,
-		deployID: deploy.ID,
+	s.sessions.add(sessionID, sessionEntry{
+		ownerID:  run.OwnerID,
+		appID:    run.AppID,
+		deployID: run.DeployID,
 		cancel:   cancel,
 	})
-	defer s.sessions.remove(session.ID)
+	defer s.sessions.remove(sessionID)
 
-	caps := s.capsFor(app)
+	caps := s.capsFor(run.AppID, run.OwnerID)
 	caps.Auth = runner.StaticAuth{Identity: identity}
-	log, truncated := s.runSession(ctx, ch, wasm, appType, caps, size, winch)
-	if _, err := s.Store.RecordSessionLog(session.ID, log, truncated); err != nil {
-		s.logf("record session log %q: %v", session.ID, err)
+	log, truncated := s.runSession(ctx, ch, run.WASM, run.AppType, caps, size, winch)
+	if err := s.Backend.RecordSessionLog(sessionID, log, truncated); err != nil {
+		s.logf("record session log %q: %v", sessionID, err)
 	}
-	if _, err := s.Store.EndSession(session.ID); err != nil {
-		s.logf("end session %q: %v", session.ID, err)
+	if err := s.Backend.EndSession(sessionID); err != nil {
+		s.logf("end session %q: %v", sessionID, err)
 	}
 	ch.Close()
 	cancel()
@@ -148,7 +147,14 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 	sink := runner.NewTTYSinkWriter(w, h, s.MaxFPS, ch)
 
 	logs := newCapWriter(maxSessionLogBytes)
-	err := s.Runner.Run(ctx, wasm, lim, caps, src, sink, logs)
+	// When a worker binary is configured, isolate the WASM sandbox in a separate
+	// process; otherwise run it in-process with the shared compilation cache.
+	var err error
+	if s.RunnerWorker != "" {
+		err = runner.NewProcessRunner(s.RunnerWorker).Run(ctx, wasm, lim, caps, src, sink, logs)
+	} else {
+		err = s.Runner.Run(ctx, wasm, lim, caps, src, sink, logs)
+	}
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
 	default:

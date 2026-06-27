@@ -1,4 +1,4 @@
-package sshgateway
+package gateway
 
 func (s *Server) acquireSlot() bool {
 	if s.slots == nil {

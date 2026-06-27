@@ -10,6 +10,7 @@ import (
 	buildworker "github.com/Ceinl/plumtree/build-worker"
 	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 )
 
 type TokenVerifier interface {
@@ -24,13 +25,14 @@ type BuildBackend interface {
 }
 
 type Server struct {
-	store     *control.Store
-	verifier  TokenVerifier
-	appOrigin string
-	devToken  string
-	build     BuildBackend
-	limiter   *ipLimiter
-	limits    []limitRow
+	store        *control.Store
+	verifier     TokenVerifier
+	appOrigin    string
+	devToken     string
+	gatewayToken string
+	build        BuildBackend
+	limiter      *ipLimiter
+	limits       []limitRow
 }
 
 // limitRow is one labeled platform limit rendered on the dashboard.
@@ -48,6 +50,11 @@ type Config struct {
 	Verifier  TokenVerifier
 	AppOrigin string
 	DevToken  string
+	// GatewayToken, when set, enables the operator-internal gateway API
+	// (/internal/gateway/*) that a standalone SSH gateway calls to resolve apps
+	// and record sessions. Empty disables those endpoints (all-in-one mode, where
+	// the gateway runs in-process and talks to the store directly).
+	GatewayToken string
 	// Build, when set, compiles uploaded source server-side. When nil, deploys
 	// must carry pre-built WASM (legacy/dev path).
 	Build BuildBackend
@@ -76,13 +83,14 @@ func NewWithConfig(cfg Config) *Server {
 		store = control.NewStore()
 	}
 	return &Server{
-		store:     store,
-		verifier:  cfg.Verifier,
-		appOrigin: cfg.AppOrigin,
-		devToken:  cfg.DevToken,
-		build:     cfg.Build,
-		limiter:   newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
-		limits:    buildLimitRows(cfg),
+		store:        store,
+		verifier:     cfg.Verifier,
+		appOrigin:    cfg.AppOrigin,
+		devToken:     cfg.DevToken,
+		gatewayToken: cfg.GatewayToken,
+		build:        cfg.Build,
+		limiter:      newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
+		limits:       buildLimitRows(cfg),
 	}
 }
 
@@ -135,6 +143,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/claims/", s.handleClaimAPI)
 	mux.HandleFunc("/api/dev/deploy/", s.handleDevDeployPath)
 	mux.HandleFunc("/api/dev/deploy", s.handleDevDeploy)
+	mux.HandleFunc(gatewayapi.BasePath+"/resolve", s.handleGatewayResolve)
+	mux.HandleFunc(gatewayapi.BasePath+"/sessions", s.handleGatewayStartSession)
+	mux.HandleFunc(gatewayapi.BasePath+"/sessions/", s.handleGatewaySessionByID)
+	mux.HandleFunc(gatewayapi.BasePath+"/apps/", s.handleGatewayApp)
 	return securityHeaders(rateLimit(mux, s.limiter))
 }
 

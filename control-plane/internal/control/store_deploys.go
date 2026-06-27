@@ -32,7 +32,6 @@ func (s *Store) CreateDeploy(in DeployInput) (Deploy, error) {
 		ID:               s.nextID("dep"),
 		AppID:            in.AppID,
 		AppName:          app.Name,
-		Visibility:       app.Visibility,
 		ArtifactID:       in.ArtifactID,
 		SourceDigest:     in.SourceDigest,
 		CreatedByOwnerID: in.CreatedByOwnerID,
@@ -48,7 +47,17 @@ func (s *Store) CreateDeploy(in DeployInput) (Deploy, error) {
 func (s *Store) ResolveRunnable(handle string) (App, Deploy, Artifact, []byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	app, deploy, artifact, err := s.resolveActiveLocked(handle)
+	var (
+		app      App
+		deploy   Deploy
+		artifact Artifact
+		err      error
+	)
+	if id, ok := previewDeployID(handle); ok && s.anonymousPreview {
+		app, deploy, artifact, err = s.resolvePreviewLocked(id)
+	} else {
+		app, deploy, artifact, err = s.resolveActiveLocked(handle)
+	}
 	if err != nil {
 		return App{}, Deploy{}, Artifact{}, nil, err
 	}
@@ -151,6 +160,50 @@ func (s *Store) ResolveActiveDeploy(ownerHandle, appName string) (App, Deploy, A
 		return App{}, Deploy{}, Artifact{}, err
 	}
 	return app, cloneDeploy(deploy), cloneArtifact(artifact), nil
+}
+
+// AnonymousPreviewEnabled reports whether anonymous preview run is on, so the
+// API can advertise the preview handle to the deploy client.
+func (s *Store) AnonymousPreviewEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.anonymousPreview
+}
+
+// previewDeployID extracts the deploy id from a "preview-<deployID>" handle.
+func previewDeployID(handle string) (string, bool) {
+	const prefix = "preview-"
+	if len(handle) > len(prefix) && handle[:len(prefix)] == prefix {
+		return handle[len(prefix):], true
+	}
+	return "", false
+}
+
+// resolvePreviewLocked resolves any deploy by id for an anonymous preview run.
+// It returns a synthetic, ownerless App (ID "preview-<deployID>") so the session
+// runs in the tightest sandbox — KV scoped to the preview, but no secrets and no
+// egress (both are owner-gated). Suspended deploys and owners are still blocked.
+func (s *Store) resolvePreviewLocked(deployID string) (App, Deploy, Artifact, error) {
+	deploy, ok := s.deploys[deployID]
+	if !ok {
+		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: deploy %q", ErrNotFound, deployID)
+	}
+	if _, suspended := s.suspendedDeploys[deployID]; suspended {
+		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
+	}
+	if deploy.AppID != "" {
+		if app, ok := s.apps[deploy.AppID]; ok {
+			if app.Suspended || s.owners[app.OwnerID].Suspended {
+				return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
+			}
+		}
+	}
+	artifact, ok := s.artifacts[deploy.ArtifactID]
+	if !ok {
+		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: artifact %q", ErrNotFound, deploy.ArtifactID)
+	}
+	app := App{ID: "preview-" + deployID, Name: deploy.AppName} // OwnerID empty => tightest sandbox
+	return app, deploy, artifact, nil
 }
 
 func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error) {

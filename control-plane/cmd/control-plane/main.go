@@ -13,13 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	buildworker "github.com/Ceinl/plumtree/build-worker"
 	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/control-plane/internal/gatewaybackend"
 	"github.com/Ceinl/plumtree/control-plane/internal/httpapi"
-	"github.com/Ceinl/plumtree/control-plane/internal/sshgateway"
 	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
 )
 
 // buildBackend selects the source-to-WASM build implementation. A non-empty URL
@@ -60,19 +62,34 @@ func workspaceModules(devRoot string) []string {
 }
 
 func main() {
+	// Resolve and load the optional config file first so its values can seed the
+	// flag defaults. Precedence: flag > env var > config file > built-in default.
+	configPath := configPathFromArgs(os.Args[1:], os.Getenv("PLUMTREE_CONFIG"))
+	fileCfg, err := loadConfig(configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fileTTL, _ := fileCfg.deployClaimTTL() // already validated by loadConfig
+
+	flag.String("config", configPath, "path to a JSON operator config file (PLUMTREE_CONFIG)")
 	addr := flag.String("addr", env("PLUMTREE_ADDR", ":8080"), "HTTP listen address")
-	origin := flag.String("origin", env("PLUMTREE_PUBLIC_ORIGIN", "http://localhost:8080"), "public dashboard origin")
+	origin := flag.String("origin", env("PLUMTREE_PUBLIC_ORIGIN", firstNonEmpty(fileCfg.PublicOrigin, "http://localhost:8080")), "public dashboard origin")
 	shooBase := flag.String("shoo-base-url", env("SHOO_BASE_URL", shoo.DefaultBaseURL), "Shoo base URL")
 	devToken := flag.String("dev-token", env("PLUMTREE_DEV_TOKEN", ""), "enable local dev deploy API with this token")
+	gatewayToken := flag.String("gateway-token", env("PLUMTREE_GATEWAY_TOKEN", ""), "enable the gateway API (/internal/gateway) for a standalone SSH gateway with this shared token")
 	stateFile := flag.String("state-file", env("PLUMTREE_STATE_FILE", defaultStateFile()), "persistent state file; empty disables persistence")
 	blobDir := flag.String("blob-dir", env("PLUMTREE_BLOB_DIR", ""), "directory for durable WASM artifact storage; empty keeps artifacts in the state file")
+	runnerWorker := flag.String("runner-worker", env("PLUMTREE_RUNNER_WORKER", ""), "path to the plumtree-runner-worker binary; set to isolate each TUI session in a separate process")
 	sshAddr := flag.String("ssh-addr", env("PLUMTREE_SSH_ADDR", "127.0.0.1:2222"), "SSH gateway listen address; empty disables SSH")
-	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", "plumtree.dev"), "local SSH host alias written to ~/.ssh/config")
+	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", firstNonEmpty(fileCfg.SSHHost, "plumtree.dev")), "local SSH host alias written to ~/.ssh/config")
 	noSSHConfig := flag.Bool("no-ssh-config", false, "do not update ~/.ssh/config for the local SSH gateway")
 	maxFPS := flag.Int("max-fps", 60, "SSH repaint cap")
 	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", 0), "max concurrent SSH sessions on this runner; 0 = unlimited")
-	maxSessionsPerAppDay := flag.Int("max-sessions-per-app-day", envInt("PLUMTREE_MAX_SESSIONS_PER_APP_DAY", 50), "max sessions per app per rolling 24h; 0 = unlimited")
-	maxDeploysPerHour := flag.Int("max-deploys-per-hour", envInt("PLUMTREE_MAX_DEPLOYS_PER_HOUR", 0), "max new deploy claims across the platform per rolling hour; 0 = unlimited")
+	maxSessionsPerAppDay := flag.Int("max-sessions-per-app-day", envInt("PLUMTREE_MAX_SESSIONS_PER_APP_DAY", firstPositiveInt(fileCfg.MaxSessionsPerAppPerDay, 50)), "max sessions per app per rolling 24h; 0 = unlimited")
+	maxDeploysPerHour := flag.Int("max-deploys-per-hour", envInt("PLUMTREE_MAX_DEPLOYS_PER_HOUR", fileCfg.MaxDeploysPerHour), "max new deploy claims across the platform per rolling hour; 0 = unlimited")
+	maxAppsPerOwner := flag.Int("max-apps-per-owner", envInt("PLUMTREE_MAX_APPS_PER_OWNER", fileCfg.MaxAppsPerOwner), "max apps a single owner may create; 0 = unlimited")
+	deployClaimTTL := flag.Duration("deploy-claim-ttl", envDuration("PLUMTREE_DEPLOY_CLAIM_TTL", firstDuration(fileTTL, control.DeployClaimTTL)), "how long an unclaimed deploy may exist before garbage collection")
+	anonPreview := flag.Bool("anonymous-preview", envBool("PLUMTREE_ANONYMOUS_PREVIEW", false), "allow running any deploy unclaimed at ssh preview-<deployID>@host, in the tightest sandbox")
 	rateLimit := flag.Int("rate-limit", envInt("PLUMTREE_RATE_LIMIT", 20), "dashboard/API requests per second per client IP; 0 = unlimited")
 	rateBurst := flag.Int("rate-burst", envInt("PLUMTREE_RATE_BURST", 40), "dashboard/API rate-limit burst per client IP")
 	seedDemo := flag.Bool("seed-demo", false, "seed a demo owner/app for local UI development")
@@ -92,6 +109,9 @@ func main() {
 	storeOpts := []control.Option{
 		control.WithMaxSessionsPerAppPerDay(*maxSessionsPerAppDay),
 		control.WithMaxDeployClaimsPerHour(*maxDeploysPerHour),
+		control.WithDefaultMaxApps(*maxAppsPerOwner),
+		control.WithDeployClaimTTL(*deployClaimTTL),
+		control.WithAnonymousPreview(*anonPreview),
 	}
 	if *blobDir != "" {
 		storeOpts = append(storeOpts, control.WithBlobDir(*blobDir))
@@ -111,6 +131,7 @@ func main() {
 		Verifier:        verifier,
 		AppOrigin:       *origin,
 		DevToken:        *devToken,
+		GatewayToken:    *gatewayToken,
 		Build:           build,
 		RateLimitPerSec: *rateLimit,
 		RateLimitBurst:  *rateBurst,
@@ -122,18 +143,39 @@ func main() {
 			SessionTimeout:          runner.DefaultLimits.SessionTimeout,
 		},
 	}).Handler()
-	fmt.Printf("control-plane listening on %s\n", *addr)
-	fmt.Printf("dashboard: %s/dashboard\n", strings.TrimRight(*origin, "/"))
-	if *buildURL != "" {
-		fmt.Printf("build worker: %s\n", *buildURL)
-	} else {
-		fmt.Println("build worker: in-process sandbox")
-	}
-	if *devToken != "" {
-		fmt.Println("local dev deploy API: enabled")
-	}
+	originURL := strings.TrimRight(*origin, "/")
+	fmt.Println()
+	fmt.Println("Plumtree control plane")
+	fmt.Printf("  dashboard:  %s/dashboard\n", originURL)
+	fmt.Printf("  http api:   %s\n", *addr)
 	if *stateFile != "" {
-		fmt.Printf("persistent state: %s\n", *stateFile)
+		fmt.Printf("  state:      %s\n", *stateFile)
+	} else {
+		fmt.Println("  state:      in-memory (ephemeral)")
+	}
+	if *buildURL != "" {
+		fmt.Printf("  build:      remote worker %s\n", *buildURL)
+	} else {
+		fmt.Println("  build:      in-process sandbox")
+	}
+	if configPath != "" {
+		fmt.Printf("  config:     %s\n", configPath)
+	}
+
+	fmt.Println()
+	fmt.Printf("Limits: %s apps/owner · %s connections/app/day · %s new deploys/hour · claim window %s\n",
+		unlimitedOr(*maxAppsPerOwner), unlimitedOr(*maxSessionsPerAppDay), unlimitedOr(*maxDeploysPerHour), *deployClaimTTL)
+
+	fmt.Println()
+	fmt.Println("Authors — deploy, then claim to own the app:")
+	if *devToken != "" {
+		fmt.Println("  pt deploy            build & upload the current app (server-side)")
+		fmt.Printf("  pt claim             open the browser claim to take ownership (within %s)\n", *deployClaimTTL)
+	} else {
+		fmt.Println("  deploy is disabled — start with -dev-token TOKEN to allow `pt deploy`")
+	}
+	if *gatewayToken != "" {
+		fmt.Println("  gateway API enabled at /internal/gateway (for a standalone ssh-gateway)")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -152,25 +194,41 @@ func main() {
 	}()
 
 	if *sshAddr != "" {
-		gw := &sshgateway.Server{
-			Store:                 store,
+		gw := &gateway.Server{
+			Backend:               gatewaybackend.New(store),
 			Limits:                runner.DefaultLimits,
 			MaxFPS:                *maxFPS,
 			MaxConcurrentSessions: *maxSessions,
 			StateDir:              stateDir(*stateFile),
+			RunnerWorker:          *runnerWorker,
 			Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
 			Ready: func(a net.Addr) {
 				host, port, _ := net.SplitHostPort(a.String())
-				connectHost := sshgateway.HostFromListen(host)
-				if *noSSHConfig {
-					fmt.Printf("ssh gateway: listening on %s:%s\n", connectHost, port)
-					fmt.Printf("connect deployed apps with: ssh -p %s -o HostKeyAlias=plumtree-dev -o StrictHostKeyChecking=accept-new <app>@%s\n", port, connectHost)
-				} else if path, err := installDevSSHConfig(*sshHost, connectHost, port); err == nil {
-					fmt.Printf("ssh gateway: %s maps %s -> %s:%s\n", path, *sshHost, connectHost, port)
-					fmt.Printf("connect deployed apps with: ssh <app>@%s\n", *sshHost)
-				} else {
-					fmt.Fprintf(os.Stderr, "ssh config update failed: %v\n", err)
-					fmt.Printf("connect deployed apps with: ssh -p %s <app>@%s\n", port, connectHost)
+				connectHost := gateway.HostFromListen(host)
+
+				// connect renders the ssh command a user runs for a given handle,
+				// matching whichever connection style is active (alias vs raw port).
+				var connect func(handle string) string
+				fmt.Println()
+				switch {
+				case *noSSHConfig:
+					fmt.Printf("Users connect over SSH (gateway %s:%s):\n", connectHost, port)
+					connect = func(h string) string {
+						return fmt.Sprintf("ssh -p %s -o HostKeyAlias=plumtree-dev -o StrictHostKeyChecking=accept-new %s@%s", port, h, connectHost)
+					}
+				default:
+					if path, err := installDevSSHConfig(*sshHost, connectHost, port); err == nil {
+						fmt.Printf("Users connect over SSH (gateway %s:%s, aliased %q in %s):\n", connectHost, port, *sshHost, path)
+						connect = func(h string) string { return fmt.Sprintf("ssh %s@%s", h, *sshHost) }
+					} else {
+						fmt.Fprintf(os.Stderr, "ssh config update failed: %v\n", err)
+						fmt.Printf("Users connect over SSH (gateway %s:%s):\n", connectHost, port)
+						connect = func(h string) string { return fmt.Sprintf("ssh -p %s %s@%s", port, h, connectHost) }
+					}
+				}
+				fmt.Printf("  claimed app:         %s\n", connect("<app>"))
+				if *anonPreview {
+					fmt.Printf("  unclaimed preview:   %s\n", connect("preview-<deployID>"))
 				}
 			},
 		}
@@ -179,6 +237,9 @@ func main() {
 				errCh <- err
 			}
 		}()
+	} else {
+		fmt.Println()
+		fmt.Println("SSH gateway disabled (-ssh-addr empty); deployed apps are not connectable here.")
 	}
 
 	select {
@@ -202,6 +263,54 @@ func envInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
+}
+
+// firstDuration returns the first positive duration, so a config value wins over
+// the built-in default only when it is actually set.
+func firstDuration(values ...time.Duration) time.Duration {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+// firstPositiveInt returns the first value greater than zero, so a config value
+// overrides the built-in default only when it is actually set.
+func firstPositiveInt(values ...int) int {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+// unlimitedOr renders a 0 limit as "unlimited" for startup logging.
+func unlimitedOr(n int) string {
+	if n <= 0 {
+		return "unlimited"
+	}
+	return strconv.Itoa(n)
 }
 
 func defaultStateFile() string {
@@ -228,7 +337,7 @@ func seed(store *control.Store) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	app, err := store.EnsureApp(control.AppInput{OwnerID: owner.ID, Name: "counter", Visibility: control.VisibilityPublic})
+	app, err := store.EnsureApp(control.AppInput{OwnerID: owner.ID, Name: "counter"})
 	if err != nil {
 		log.Fatal(err)
 	}

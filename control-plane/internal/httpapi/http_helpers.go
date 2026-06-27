@@ -167,6 +167,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-func afterDeployClaimTTL(fn func()) {
-	time.AfterFunc(control.DeployClaimTTL, fn)
+func afterDeployClaimTTL(ttl time.Duration, fn func()) {
+	if ttl <= 0 {
+		ttl = control.DeployClaimTTL
+	}
+	time.AfterFunc(ttl, fn)
 }

@@ -32,7 +32,6 @@ func (s *Server) handleClaimAPI(w http.ResponseWriter, r *http.Request) {
 			"id":             app.ID,
 			"name":           app.Name,
 			"handle":         owner.Handle + "/" + app.Name,
-			"visibility":     app.Visibility,
 			"activeDeployId": app.ActiveDeployID,
 		},
 		"deploy": map[string]any{
@@ -60,7 +59,7 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scheduleDeployClaimCleanup() {
-	afterDeployClaimTTL(func() {
+	afterDeployClaimTTL(s.store.DeployClaimTTL(), func() {
 		_, _ = s.store.DeleteExpiredDeployClaims()
 	})
 }

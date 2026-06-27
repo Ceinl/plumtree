@@ -5,14 +5,6 @@ package control
 
 import "time"
 
-// Visibility controls who may run an app. Deploy remains owner-gated either way.
-type Visibility string
-
-const (
-	VisibilityPrivate Visibility = "private"
-	VisibilityPublic  Visibility = "public"
-)
-
 // Owner is an authenticated Plumtree namespace owner.
 type Owner struct {
 	ID            string
@@ -43,7 +35,6 @@ type App struct {
 	ID             string
 	OwnerID        string
 	Name           string
-	Visibility     Visibility
 	ActiveDeployID string
 	// Suspended is an operator kill switch: when true, the app does not resolve
 	// to a runnable session.
@@ -68,7 +59,6 @@ type Deploy struct {
 	AppID            string
 	AppName          string
 	AppType          string
-	Visibility       Visibility
 	ArtifactID       string
 	SourceDigest     string
 	CreatedByOwnerID string
@@ -143,9 +133,8 @@ type Quotas struct {
 }
 
 type AppInput struct {
-	OwnerID    string
-	Name       string
-	Visibility Visibility
+	OwnerID string
+	Name    string
 }
 
 type ArtifactInput struct {
@@ -165,7 +154,6 @@ type DeployInput struct {
 type DeployClaimInput struct {
 	AppName        string
 	AppType        string
-	Visibility     Visibility
 	ArtifactID     string
 	SourceDigest   string
 	ClaimTokenHash string

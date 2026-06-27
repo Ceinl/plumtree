@@ -1,6 +1,8 @@
-// Package sshgateway serves deployed Plumtree apps over SSH for the local
-// all-in-one control-plane prototype.
-package sshgateway
+// Package gateway serves deployed Plumtree apps over SSH. It owns the SSH front
+// end, the PTY/session lifecycle, and the per-session WASM sandbox, delegating
+// all authoritative platform state to a Backend. It runs either embedded in the
+// control plane (in-process Backend) or as its own deployable (HTTP Backend).
+package gateway
 
 import (
 	"context"
@@ -11,22 +13,29 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/crypto/ssh"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
 	"github.com/Ceinl/plumtree/runner"
+	"golang.org/x/crypto/ssh"
 )
 
 type Server struct {
-	Store  *control.Store
-	Runner *runner.Runner
-	Limits runner.Limits
-	MaxFPS int
+	// Backend is the port to the control plane (required).
+	Backend Backend
+	Runner  *runner.Runner
+	Limits  runner.Limits
+	MaxFPS  int
+	// HostKey signs the SSH host key. When nil, a persistent dev host key under
+	// the OS config dir is loaded or generated.
+	HostKey ssh.Signer
 	// StateDir is where per-app KV stores are persisted (under StateDir/kv).
 	// Empty disables KV: apps still run but their storage is unavailable.
 	StateDir string
-	// MaxConcurrentSessions caps how many sessions run on this runner at once
+	// RunnerWorker, when set, is the path to the runner-worker binary; TUI
+	// sessions then run the WASM sandbox in a separate process isolated from the
+	// gateway. Empty runs the sandbox in-process (shared compile cache).
+	RunnerWorker string
+	// MaxConcurrentSessions caps how many sessions run on this gateway at once
 	// (the runner-wide concurrency quota). 0 means unlimited. Per-owner limits
-	// are enforced separately by the store's Quotas.MaxSessions.
+	// are enforced separately by the Backend's session accounting.
 	MaxConcurrentSessions int
 	Logf                  func(format string, args ...any)
 	Ready                 func(net.Addr)
@@ -42,8 +51,8 @@ type Server struct {
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
-	if s.Store == nil {
-		return errors.New("sshgateway: store is required")
+	if s.Backend == nil {
+		return errors.New("gateway: backend is required")
 	}
 	if s.Runner == nil {
 		s.Runner = runner.New()
@@ -66,9 +75,13 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			}, nil
 		},
 	}
-	signer, err := devHostKey()
-	if err != nil {
-		return err
+	signer := s.HostKey
+	if signer == nil {
+		var err error
+		signer, err = devHostKey()
+		if err != nil {
+			return err
+		}
 	}
 	cfg.AddHostKey(signer)
 
@@ -113,22 +126,18 @@ func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 	defer sshConn.Close()
 	go ssh.DiscardRequests(reqs)
 
-	app, deploy, artifact, wasm, err := s.Store.ResolveRunnable(sshConn.User())
+	run, err := s.Backend.ResolveRunnable(sshConn.User())
 	if err != nil {
 		s.logf("resolve %q from %s failed: %v", sshConn.User(), nConn.RemoteAddr(), err)
 		msg := fmt.Sprintf("app %q is not available", sshConn.User())
-		if errors.Is(err, control.ErrSuspended) {
+		if errors.Is(err, ErrSuspended) {
 			msg = fmt.Sprintf("app %q is temporarily unavailable (suspended)", sshConn.User())
 		}
 		discardChannels(chans, msg)
 		return
 	}
-	appType := artifact.BuildMetadata["app_type"]
-	if appType == "" {
-		appType = "tui"
-	}
 	identity := identityFromConn(sshConn)
-	s.logf("connected: user=%q app=%q deploy=%q id=%q from %s", sshConn.User(), app.Name, app.ActiveDeployID, identity.User, nConn.RemoteAddr())
+	s.logf("connected: user=%q app=%q deploy=%q id=%q from %s", sshConn.User(), run.AppName, run.DeployID, identity.User, nConn.RemoteAddr())
 
 	for newCh := range chans {
 		if newCh.ChannelType() != "session" {
@@ -140,7 +149,7 @@ func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 			s.logf("accept channel: %v", err)
 			continue
 		}
-		go s.handleSession(ctx, ch, chReqs, app, deploy, wasm, appType, identity)
+		go s.handleSession(ctx, ch, chReqs, run, identity)
 	}
 }
 

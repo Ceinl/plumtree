@@ -20,12 +20,11 @@ func (s *Store) CreateDeployClaim(in DeployClaimInput) (Deploy, error) {
 	if _, ok := s.artifacts[in.ArtifactID]; !ok {
 		return Deploy{}, fmt.Errorf("%w: artifact %q", ErrNotFound, in.ArtifactID)
 	}
-	expiresAt := now.Add(DeployClaimTTL)
+	expiresAt := now.Add(s.deployClaimTTL)
 	deploy := Deploy{
 		ID:             s.nextID("dep"),
 		AppName:        in.AppName,
 		AppType:        in.AppType,
-		Visibility:     normalizeVisibility(in.Visibility),
 		ArtifactID:     in.ArtifactID,
 		SourceDigest:   in.SourceDigest,
 		ClaimTokenHash: in.ClaimTokenHash,
@@ -117,7 +116,7 @@ func (s *Store) ClaimDeploy(deployID, claimTokenHash, ownerID string) (App, Depl
 		return app, cloneDeploy(deploy), "already_claimed", nil
 	}
 
-	app, err := s.ensureDeployAppLocked(owner.ID, deploy.AppName, deploy.Visibility)
+	app, err := s.ensureDeployAppLocked(owner.ID, deploy.AppName)
 	if err != nil {
 		if expired > 0 {
 			_ = s.persistLocked()
@@ -172,11 +171,10 @@ func (s *Store) UpdateDeployClaim(deployID string, in DeployClaimInput) (App, De
 	}
 	deploy.AppName = in.AppName
 	deploy.AppType = in.AppType
-	deploy.Visibility = normalizeVisibility(in.Visibility)
 	deploy.ArtifactID = in.ArtifactID
 	deploy.SourceDigest = in.SourceDigest
 	if deploy.CreatedByOwnerID == "" {
-		expiresAt := now.Add(DeployClaimTTL)
+		expiresAt := now.Add(s.deployClaimTTL)
 		deploy.ClaimExpiresAt = &expiresAt
 	}
 	s.deploys[deploy.ID] = deploy
@@ -188,9 +186,6 @@ func (s *Store) UpdateDeployClaim(deployID string, in DeployClaimInput) (App, De
 		app, ok = s.apps[deploy.AppID]
 		if !ok {
 			return App{}, Deploy{}, false, fmt.Errorf("%w: app %q", ErrNotFound, deploy.AppID)
-		}
-		if app.Visibility != deploy.Visibility {
-			app.Visibility = deploy.Visibility
 		}
 		if app.ActiveDeployID == "" {
 			app.ActiveDeployID = deploy.ID
@@ -217,9 +212,6 @@ func validateDeployClaimInput(in DeployClaimInput) error {
 	if err := ValidateName(in.AppName); err != nil {
 		return err
 	}
-	if _, err := validateVisibility(in.Visibility); err != nil {
-		return err
-	}
 	if err := validateNonEmpty("artifact ID", in.ArtifactID); err != nil {
 		return err
 	}
@@ -232,34 +224,22 @@ func validateDeployClaimInput(in DeployClaimInput) error {
 	return nil
 }
 
-func normalizeVisibility(v Visibility) Visibility {
-	visibility, _ := validateVisibility(v)
-	return visibility
-}
-
-func (s *Store) ensureDeployAppLocked(ownerID, appName string, visibility Visibility) (App, error) {
+func (s *Store) ensureDeployAppLocked(ownerID, appName string) (App, error) {
 	if _, ok := s.owners[ownerID]; !ok {
 		return App{}, fmt.Errorf("%w: owner %q", ErrNotFound, ownerID)
 	}
-	visibility = normalizeVisibility(visibility)
 	key := appKey{ownerID: ownerID, name: appName}
 	if id, ok := s.appByOwnerName[key]; ok {
-		app := s.apps[id]
-		if app.Visibility != visibility {
-			app.Visibility = visibility
-			s.apps[id] = app
-		}
-		return app, nil
+		return s.apps[id], nil
 	}
 	if err := s.checkAppQuotaLocked(ownerID); err != nil {
 		return App{}, err
 	}
 	app := App{
-		ID:         s.nextID("app"),
-		OwnerID:    ownerID,
-		Name:       appName,
-		Visibility: visibility,
-		CreatedAt:  s.now(),
+		ID:        s.nextID("app"),
+		OwnerID:   ownerID,
+		Name:      appName,
+		CreatedAt: s.now(),
 	}
 	s.apps[app.ID] = app
 	s.appByOwnerName[key] = app.ID

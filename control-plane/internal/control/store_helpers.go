@@ -170,8 +170,13 @@ var legacyIdentityNouns = []string{
 }
 
 func (s *Store) checkAppQuotaLocked(ownerID string) error {
-	q := s.quotas[ownerID]
-	if quotaExceeded(q.MaxApps, s.apps, func(_ string, app App) bool { return app.OwnerID == ownerID }) {
+	// An explicit per-owner quota wins; otherwise fall back to the platform
+	// default (0 = uncapped).
+	limit := s.quotas[ownerID].MaxApps
+	if limit == 0 {
+		limit = s.defaultMaxApps
+	}
+	if quotaExceeded(limit, s.apps, func(_ string, app App) bool { return app.OwnerID == ownerID }) {
 		return fmt.Errorf("%w: owner app quota exceeded", ErrInvalid)
 	}
 	return nil
