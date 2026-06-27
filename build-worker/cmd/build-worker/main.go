@@ -25,6 +25,7 @@ func main() {
 	workRoot := flag.String("work-root", env("PLUMTREE_BUILD_WORK_ROOT", ""), "parent dir for build sandboxes; empty uses the OS temp dir")
 	timeout := flag.Duration("timeout", durEnv("PLUMTREE_BUILD_TIMEOUT", 90*time.Second), "per-build wall-clock limit")
 	maxSource := flag.Int64("max-source-bytes", 8<<20, "max uploaded source archive size")
+	maxMemory := flag.Int64("max-memory-bytes", 2<<30, "address-space limit for the build process (Linux); negative disables")
 	flag.Parse()
 
 	builder := buildworker.NewBuilder(buildworker.Config{
@@ -33,6 +34,7 @@ func main() {
 		GoProxy:        *goProxy,
 		Timeout:        *timeout,
 		MaxSourceBytes: *maxSource,
+		MaxMemoryBytes: *maxMemory,
 	})
 	svc := buildworker.NewService(builder, *token)
 

@@ -153,6 +153,38 @@ func TestBuildModulePolicyRejection(t *testing.T) {
 	}
 }
 
+func TestBuildReplaceDirectiveRejected(t *testing.T) {
+	files := map[string]string{
+		"go.mod":      "module example.com/app\n\ngo 1.26\n\nreplace github.com/Ceinl/plumtree/sdk => ../evil\n",
+		"app/main.go": "package main\n\nfunc main() {}\n",
+	}
+	archive := packProject(t, files)
+	b := NewBuilder(Config{})
+	res, err := b.Build(context.Background(), Request{Source: archive})
+	if err != nil {
+		t.Fatalf("worker error: %v", err)
+	}
+	if res.Success || res.Failure == nil || res.Failure.Stage != StagePolicy {
+		t.Fatalf("expected policy failure for replace directive, got %+v", res)
+	}
+}
+
+func TestBuildExcludeDirectiveRejected(t *testing.T) {
+	files := map[string]string{
+		"go.mod":      "module example.com/app\n\ngo 1.26\n\nexclude (\n\tgithub.com/foo/bar v1.0.0\n)\n",
+		"app/main.go": "package main\n\nfunc main() {}\n",
+	}
+	archive := packProject(t, files)
+	b := NewBuilder(Config{})
+	res, err := b.Build(context.Background(), Request{Source: archive})
+	if err != nil {
+		t.Fatalf("worker error: %v", err)
+	}
+	if res.Success || res.Failure == nil || res.Failure.Stage != StagePolicy {
+		t.Fatalf("expected policy failure for exclude directive, got %+v", res)
+	}
+}
+
 func TestBuildToolchainDirectiveRejected(t *testing.T) {
 	files := map[string]string{
 		"go.mod":      "module example.com/app\n\ngo 1.26\n\ntoolchain go1.99.0\n",

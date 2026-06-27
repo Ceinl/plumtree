@@ -40,6 +40,9 @@ type Config struct {
 	MaxExtractBytes int64
 	// MaxFiles caps the number of files in the archive. Default 2000.
 	MaxFiles int
+	// MaxMemoryBytes caps the build process's address space (RLIMIT_AS) on
+	// supported platforms (Linux). Default 2 GiB. 0 after defaults disables it.
+	MaxMemoryBytes int64
 	// Timeout bounds total build wall-clock time. Default 90s.
 	Timeout time.Duration
 	// GoProxy sets GOPROXY for the build. Default "off" — no network. Set to a
@@ -79,6 +82,9 @@ func NewBuilder(cfg Config) *Builder {
 	}
 	if cfg.MaxFiles == 0 {
 		cfg.MaxFiles = 2000
+	}
+	if cfg.MaxMemoryBytes == 0 {
+		cfg.MaxMemoryBytes = 2 << 30 // 2 GiB
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 90 * time.Second
@@ -205,7 +211,14 @@ func (b *Builder) compile(ctx context.Context, sandbox, srcDir, wasmPath string)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	runErr := cmd.Run()
+	// Start then apply OS-level resource limits to the build process group, so a
+	// hostile or pathological source cannot exhaust the worker's memory/CPU. The
+	// wall-clock timeout above bounds time; these bound space and CPU-seconds.
+	runErr := cmd.Start()
+	if runErr == nil {
+		applySandboxLimits(cmd.Process.Pid, b.cfg.MaxMemoryBytes, b.cfg.Timeout)
+		runErr = cmd.Wait()
+	}
 	log = out.String()
 	if runErr == nil {
 		return log, "", nil
