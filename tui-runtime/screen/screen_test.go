@@ -87,6 +87,27 @@ func TestFlushWritesOnlyChangedCells(t *testing.T) {
 	}
 }
 
+func TestFlushDisablesAutowrap(t *testing.T) {
+	// Painting the last column of the last row must not be allowed to scroll the
+	// terminal, so every frame disables autowrap (DECAWM) while it paints and
+	// restores it afterwards. Without this the screen creeps/flickers.
+	var buf bytes.Buffer
+	s := NewScreen(2, 1)
+	s.out = &buf
+	s.Set(1, 0, 'x', "", "", "")
+	s.Flush()
+	out := buf.String()
+	if !strings.Contains(out, "\x1b[?7l") {
+		t.Errorf("flush should disable autowrap: %q", out)
+	}
+	if !strings.Contains(out, "\x1b[?7h") {
+		t.Errorf("flush should restore autowrap: %q", out)
+	}
+	if strings.Index(out, "\x1b[?7l") > strings.Index(out, "\x1b[?7h") {
+		t.Errorf("autowrap must be disabled before it is restored: %q", out)
+	}
+}
+
 func TestSetCursorClamps(t *testing.T) {
 	var buf bytes.Buffer
 	s := NewScreen(4, 3)

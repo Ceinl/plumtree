@@ -104,7 +104,13 @@ func (s *Screen) Set(x, y int, ch rune, fg, bg, decor string) {
 }
 
 func (s *Screen) Flush() {
-	fmt.Fprint(s.out, "\x1b[?25l")
+	// Hide the cursor and disable autowrap (DECAWM) for the duration of the
+	// frame. With autowrap on — the terminal default — writing the cell in the
+	// last column of the last row makes the terminal scroll up one line, which
+	// shifts the managed region out from under the diff and shows up as the
+	// whole screen flickering/creeping. Disabling autowrap lets us paint the
+	// bottom-right cell in place; we restore it before returning.
+	fmt.Fprint(s.out, "\x1b[?25l\x1b[?7l")
 	for y := 0; y < s.h; y++ {
 		changed := false
 		startX := -1
@@ -124,7 +130,7 @@ func (s *Screen) Flush() {
 		}
 		copy(s.old[y], s.cur[y])
 	}
-	fmt.Fprint(s.out, "\x1b[0m")
+	fmt.Fprint(s.out, "\x1b[0m\x1b[?7h")
 }
 
 func (s *Screen) flushSegment(y, startX, endX int) {
