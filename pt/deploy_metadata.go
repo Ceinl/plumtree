@@ -63,7 +63,44 @@ func updateCurrentDeployMetadata(meta deployMetadata) error {
 	return writeDeployMetadata(proj, meta)
 }
 
-func deployReadOptions(serverFlag, devTokenFlag, deployArg string) (*deployMetadata, string, string, string, error) {
+// defaultServerURL and defaultDevToken are baked into the binary at build time
+// so a released pt publishes to the maintainer's control plane with no
+// configuration: a user downloads the release and runs `pt deploy`. The release
+// build injects them from CI secrets, e.g. in GitHub Actions:
+//
+//	go build -ldflags "\
+//	  -X 'github.com/Ceinl/plumtree/pt.defaultServerURL=$PLUMTREE_SERVER_URL' \
+//	  -X 'github.com/Ceinl/plumtree/pt.defaultDevToken=$PLUMTREE_DEV_TOKEN'"
+//
+// Both are empty in an un-baked local build; the matching PLUMTREE_* environment
+// variables override the baked values for the maintainer's own development.
+var (
+	defaultServerURL = ""
+	defaultDevToken  = ""
+)
+
+// localServerURL is the fallback when neither a baked value nor the environment
+// supplies one, so an un-baked dev build still targets the local control plane.
+const localServerURL = "http://localhost:18080"
+
+// resolveServerURL returns the deploy target: PLUMTREE_SERVER_URL if set, then
+// the value baked at build time, then the local dev server. The address is build
+// or environment configuration, not a per-command flag, so authors publish to
+// the maintainer's server without knowing or passing it.
+func resolveServerURL() string {
+	return normalizedServerURL(firstNonEmpty(os.Getenv("PLUMTREE_SERVER_URL"), defaultServerURL, localServerURL))
+}
+
+// resolveDevToken returns the deploy token: PLUMTREE_DEV_TOKEN if set, then the
+// value baked at build time. Empty when neither is present.
+func resolveDevToken() string {
+	return firstNonEmpty(os.Getenv("PLUMTREE_DEV_TOKEN"), defaultDevToken)
+}
+
+// deployReadOptions resolves the target for the read-only commands (inspect,
+// logs, whoami): the deploy identity comes from the per-app .plumtree/deploy.json
+// while the server URL and token come from the environment.
+func deployReadOptions(deployArg string) (*deployMetadata, string, string, string, error) {
 	proj, err := findProject()
 	if err != nil {
 		return nil, "", "", "", err
@@ -75,11 +112,8 @@ func deployReadOptions(serverFlag, devTokenFlag, deployArg string) (*deployMetad
 	if meta == nil {
 		return nil, "", "", "", errors.New("no deploy claim metadata found; run pt deploy first")
 	}
-	server := normalizedServerURL(firstNonEmpty(serverFlag, meta.ServerURL, "http://localhost:18080"))
-	devToken := firstNonEmpty(devTokenFlag, meta.DevToken, "local-dev")
-	if devToken == "" {
-		return nil, "", "", "", errors.New("missing --dev-token; run pt deploy with --dev-token once, or pass --dev-token/PLUMTREE_DEV_TOKEN")
-	}
+	server := resolveServerURL()
+	devToken := firstNonEmpty(resolveDevToken(), "local-dev")
 	deployID := deployArg
 	if deployID == "" {
 		deployID = meta.DeployID
@@ -90,11 +124,11 @@ func deployReadOptions(serverFlag, devTokenFlag, deployArg string) (*deployMetad
 	return meta, deployID, server, devToken, nil
 }
 
-func usableDeployMetadata(meta *deployMetadata, serverURL string) bool {
-	if meta == nil {
-		return false
-	}
-	return normalizedServerURL(meta.ServerURL) == normalizedServerURL(serverURL) && meta.DeployID != "" && meta.ClaimToken != ""
+// usableDeployMetadata reports whether saved metadata can update an existing
+// deploy in place: it just needs the deploy identity, since the server URL and
+// token now come from the environment rather than the file.
+func usableDeployMetadata(meta *deployMetadata) bool {
+	return meta != nil && meta.DeployID != "" && meta.ClaimToken != ""
 }
 
 func normalizedServerURL(raw string) string {

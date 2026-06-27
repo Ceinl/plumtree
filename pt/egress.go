@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 )
 
 // cmdEgress manages an app's outbound-HTTP allowlist. Egress is default-deny and
@@ -30,22 +29,19 @@ func cmdEgress(args []string) error {
 	}
 }
 
-func egressFlags(name string) (*flag.FlagSet, *string, *string) {
-	fs := flag.NewFlagSet("egress "+name, flag.ContinueOnError)
-	serverURL := fs.String("server", env("PLUMTREE_SERVER_URL", ""), "control-plane URL")
-	devToken := fs.String("dev-token", os.Getenv("PLUMTREE_DEV_TOKEN"), "local dev deploy token")
-	return fs, serverURL, devToken
+func egressFlags(name string) *flag.FlagSet {
+	return flag.NewFlagSet("egress "+name, flag.ContinueOnError)
 }
 
 func cmdEgressMutate(args []string, verb string, call func(ctx context.Context, server, devToken, deployID, claimToken, host string) ([]string, error)) error {
-	fs, serverURL, devToken := egressFlags(verb)
+	fs := egressFlags(verb)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: pt egress %s HOST", verb)
 	}
-	meta, _, server, token, err := deployReadOptions(*serverURL, *devToken, "")
+	meta, _, server, token, err := deployReadOptions("")
 	if err != nil {
 		return err
 	}
@@ -58,11 +54,11 @@ func cmdEgressMutate(args []string, verb string, call func(ctx context.Context, 
 }
 
 func cmdEgressList(args []string) error {
-	fs, serverURL, devToken := egressFlags("list")
+	fs := egressFlags("list")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	meta, _, server, token, err := deployReadOptions(*serverURL, *devToken, "")
+	meta, _, server, token, err := deployReadOptions("")
 	if err != nil {
 		return err
 	}

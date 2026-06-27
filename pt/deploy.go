@@ -15,20 +15,16 @@ import (
 
 func cmdDeploy(args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
-	serverURL := fs.String("server", env("PLUMTREE_SERVER_URL", "http://localhost:18080"), "control-plane URL")
-	devToken := fs.String("dev-token", os.Getenv("PLUMTREE_DEV_TOKEN"), "local dev deploy token")
-	visibility := fs.String("visibility", "public", "public or private")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: pt deploy [--server URL] --dev-token TOKEN")
+		return errors.New("usage: pt deploy")
 	}
-	if *devToken == "" {
-		return errors.New("missing --dev-token; start control-plane with -dev-token TOKEN and pass the same token here")
-	}
-	if *visibility != "public" && *visibility != "private" {
-		return errors.New("--visibility must be public or private")
+	server := resolveServerURL()
+	devToken := resolveDevToken()
+	if devToken == "" {
+		return errors.New("missing deploy token; set PLUMTREE_DEV_TOKEN in the environment")
 	}
 
 	proj, err := findProject()
@@ -54,7 +50,6 @@ func cmdDeploy(args []string) error {
 	req := deployRequest{
 		AppName:      man.Name,
 		AppType:      man.Type,
-		Visibility:   *visibility,
 		ABIVersion:   0,
 		SourceDigest: buildworker.SourceDigest(source),
 		BuildMetadata: map[string]string{
@@ -64,7 +59,6 @@ func cmdDeploy(args []string) error {
 		Source: source,
 	}
 
-	server := normalizedServerURL(*serverURL)
 	meta, err := readDeployMetadata(proj)
 	if err != nil {
 		return err
@@ -72,8 +66,8 @@ func cmdDeploy(args []string) error {
 
 	var res deployResponse
 	usedExistingClaim := false
-	if usableDeployMetadata(meta, server) {
-		res, err = putDeploy(context.Background(), server, *devToken, meta.DeployID, meta.ClaimToken, req)
+	if usableDeployMetadata(meta) {
+		res, err = putDeploy(context.Background(), server, devToken, meta.DeployID, meta.ClaimToken, req)
 		if err == nil {
 			usedExistingClaim = true
 		} else if !isHTTPStatus(err, http.StatusNotFound) {
@@ -81,7 +75,7 @@ func cmdDeploy(args []string) error {
 		}
 	}
 	if !usedExistingClaim {
-		res, err = postDeploy(context.Background(), server, *devToken, req)
+		res, err = postDeploy(context.Background(), server, devToken, req)
 	}
 	if err != nil {
 		return err
@@ -101,7 +95,7 @@ func cmdDeploy(args []string) error {
 	}
 	nextMeta := deployMetadata{
 		ServerURL:      server,
-		DevToken:       *devToken,
+		DevToken:       devToken,
 		DeployID:       res.Deploy.ID,
 		ClaimToken:     claimToken,
 		ClaimURL:       claimURL,
@@ -123,6 +117,9 @@ func cmdDeploy(args []string) error {
 		}
 	}
 	fmt.Printf("Deploy: %s\n", res.Deploy.ID)
+	if res.PreviewHandle != "" {
+		fmt.Printf("Preview (unclaimed, tightest sandbox): ssh %s@plumtree.dev\n", res.PreviewHandle)
+	}
 	fmt.Printf("Dashboard: %s/dashboard\n", server)
 	return nil
 }
@@ -161,15 +158,13 @@ func cmdClaim(args []string) error {
 
 func cmdInspect(args []string) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
-	serverURL := fs.String("server", env("PLUMTREE_SERVER_URL", ""), "control-plane URL")
-	devToken := fs.String("dev-token", os.Getenv("PLUMTREE_DEV_TOKEN"), "local dev deploy token")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 1 {
-		return errors.New("usage: pt inspect [deploy-id] [--server URL] [--dev-token TOKEN]")
+		return errors.New("usage: pt inspect [deploy-id]")
 	}
-	meta, deployID, server, token, err := deployReadOptions(*serverURL, *devToken, fs.Arg(0))
+	meta, deployID, server, token, err := deployReadOptions(fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -187,15 +182,13 @@ func cmdInspect(args []string) error {
 
 func cmdLogs(args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
-	serverURL := fs.String("server", env("PLUMTREE_SERVER_URL", ""), "control-plane URL")
-	devToken := fs.String("dev-token", os.Getenv("PLUMTREE_DEV_TOKEN"), "local dev deploy token")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 1 {
-		return errors.New("usage: pt logs [deploy-id] [--server URL] [--dev-token TOKEN]")
+		return errors.New("usage: pt logs [deploy-id]")
 	}
-	meta, deployID, server, token, err := deployReadOptions(*serverURL, *devToken, fs.Arg(0))
+	meta, deployID, server, token, err := deployReadOptions(fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -227,15 +220,13 @@ func cmdLogs(args []string) error {
 
 func cmdWhoami(args []string) error {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
-	serverURL := fs.String("server", env("PLUMTREE_SERVER_URL", ""), "control-plane URL")
-	devToken := fs.String("dev-token", os.Getenv("PLUMTREE_DEV_TOKEN"), "local dev deploy token")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: pt whoami [--server URL] [--dev-token TOKEN]")
+		return errors.New("usage: pt whoami")
 	}
-	meta, deployID, server, token, err := deployReadOptions(*serverURL, *devToken, "")
+	meta, deployID, server, token, err := deployReadOptions("")
 	if err != nil {
 		return err
 	}
@@ -263,7 +254,6 @@ func printInspect(res inspectResponse) {
 	fmt.Printf("App:      %s\n", handle)
 	fmt.Printf("Deploy:   %s\n", res.Deploy.ID)
 	fmt.Printf("Type:     %s\n", firstNonEmpty(res.Deploy.AppType, "tui"))
-	fmt.Printf("Visible:  %s\n", firstNonEmpty(res.App.Visibility, "private"))
 	fmt.Printf("Active:   %t\n", res.App.ActiveDeployID == res.Deploy.ID && res.App.ActiveDeployID != "")
 	fmt.Printf("Artifact: %s (%d bytes)\n", res.Artifact.Digest, res.Artifact.SizeBytes)
 	if res.Deploy.SourceDigest != "" {

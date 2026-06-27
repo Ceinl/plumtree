@@ -7,7 +7,7 @@ This is a Plumtree {{.Kind}} app named `{{.Name}}`.
 - Run locally: `pt dev`
 - Deterministic smoke check: `{{.CheckCommand}}`
 - Serve over SSH for manual testing: `pt dev --ssh`
-- Deploy to a local control plane: `pt deploy --server http://127.0.0.1:18080 --dev-token local-dev`
+- Deploy: set `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` in the environment, then `pt deploy` (no flags)
 
 ## Project Rules
 

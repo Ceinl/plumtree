@@ -34,7 +34,6 @@ func TestPostDeploySendsDevTokenOnly(t *testing.T) {
 	res, err := postDeploy(context.Background(), srv.URL, "secret", deployRequest{
 		AppName:           "counter",
 		AppType:           "tui",
-		Visibility:        "public",
 		ArtifactDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ArtifactSizeBytes: 1,
 		SourceDigest:      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -69,7 +68,6 @@ func TestPutDeploySendsClaimToken(t *testing.T) {
 	res, err := putDeploy(context.Background(), srv.URL, "secret", "dep_000001", "claim-token", deployRequest{
 		AppName:           "counter",
 		AppType:           "tui",
-		Visibility:        "public",
 		ArtifactDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ArtifactSizeBytes: 1,
 		SourceDigest:      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

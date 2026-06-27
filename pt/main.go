@@ -86,10 +86,9 @@ pt dev flags:
   --mem-pages          linear-memory cap in 64KiB pages (default 512)
   --max-fps            tty/ssh repaint cap (default 60)
 
-pt deploy flags:
-  --server URL         control-plane URL (default http://localhost:18080)
-  --dev-token TOKEN    local dev deploy token
-  --visibility VALUE   public|private (default public)
+Environment (deploy/inspect/logs/whoami/secret/egress):
+  PLUMTREE_SERVER_URL  control-plane URL to publish to (preset; built-in default)
+  PLUMTREE_DEV_TOKEN   deploy token; set as a CI/GitHub Actions secret
 `)
 }
 

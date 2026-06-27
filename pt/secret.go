@@ -33,15 +33,12 @@ func cmdSecret(args []string) error {
 	}
 }
 
-func secretFlags(name string) (*flag.FlagSet, *string, *string) {
-	fs := flag.NewFlagSet("secret "+name, flag.ContinueOnError)
-	serverURL := fs.String("server", env("PLUMTREE_SERVER_URL", ""), "control-plane URL")
-	devToken := fs.String("dev-token", os.Getenv("PLUMTREE_DEV_TOKEN"), "local dev deploy token")
-	return fs, serverURL, devToken
+func secretFlags(name string) *flag.FlagSet {
+	return flag.NewFlagSet("secret "+name, flag.ContinueOnError)
 }
 
 func cmdSecretSet(args []string) error {
-	fs, serverURL, devToken := secretFlags("set")
+	fs := secretFlags("set")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -62,7 +59,7 @@ func cmdSecretSet(args []string) error {
 		value = strings.TrimRight(line, "\r\n")
 	}
 
-	meta, _, server, token, err := deployReadOptions(*serverURL, *devToken, "")
+	meta, _, server, token, err := deployReadOptions("")
 	if err != nil {
 		return err
 	}
@@ -75,11 +72,11 @@ func cmdSecretSet(args []string) error {
 }
 
 func cmdSecretList(args []string) error {
-	fs, serverURL, devToken := secretFlags("list")
+	fs := secretFlags("list")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	meta, _, server, token, err := deployReadOptions(*serverURL, *devToken, "")
+	meta, _, server, token, err := deployReadOptions("")
 	if err != nil {
 		return err
 	}
@@ -98,14 +95,14 @@ func cmdSecretList(args []string) error {
 }
 
 func cmdSecretRm(args []string) error {
-	fs, serverURL, devToken := secretFlags("rm")
+	fs := secretFlags("rm")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return errors.New("usage: pt secret rm KEY")
 	}
-	meta, _, server, token, err := deployReadOptions(*serverURL, *devToken, "")
+	meta, _, server, token, err := deployReadOptions("")
 	if err != nil {
 		return err
 	}

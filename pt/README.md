@@ -22,7 +22,7 @@ Does not own:
 - control-plane persistence.
 - SSH gateway serving.
 
-## Implemented today (Phase 3)
+## Quickstart
 
 ```bash
 pt new counter --tui      # scaffold counter/{go.mod,plumtree.json,.gitignore,README.md,AGENTS.md,app/main.go}
@@ -78,18 +78,40 @@ go run ./cmd/control-plane \
   -ssh-addr 127.0.0.1:2222
 ```
 
-Register the current app/deploy:
+Register the current app/deploy. The control-plane URL and deploy token come
+from the environment, not flags — so a distributed `pt` can publish to the main
+server without the author configuring anything, and CI can set them as secrets:
 
 ```bash
-pt deploy \
-  --server http://localhost:18080 \
-  --dev-token local-dev
+export PLUMTREE_SERVER_URL=http://localhost:18080   # built-in default; bake via -ldflags for prod
+export PLUMTREE_DEV_TOKEN=local-dev                 # set as a GitHub Actions secret in CI
+pt deploy
 ```
 
 The first deploy prints `Claim: pt claim` and writes `.plumtree/deploy.json`.
-Run `pt claim` within 30 seconds, sign in with Shoo in the browser, and choose a
+Run `pt claim` within 5 minutes, sign in with Shoo in the browser, and choose a
 handle if needed. Later `pt deploy` runs update the same claimed app by using
 the saved deploy claim token.
+
+### Baking the server into a release
+
+`PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` can be compiled into the binary so
+a distributed `pt` publishes to your control plane with no configuration — a user
+downloads the release and just runs `pt deploy`. Inject them with `-ldflags`:
+
+```bash
+pkg=github.com/Ceinl/plumtree/pt
+go build -trimpath -ldflags "\
+  -X ${pkg}.defaultServerURL=https://your-control-plane.example \
+  -X ${pkg}.defaultDevToken=$PLUMTREE_DEV_TOKEN" -o pt ./pt
+```
+
+The release workflow at `.github/workflows/release.yml` does this on tag push,
+reading the two values from repository secrets. The matching `PLUMTREE_*`
+environment variables override the baked values for your own local development.
+
+> The deploy token is embedded in the published binaries and can be extracted by
+> anyone who downloads them. Use a narrowly-scoped token and rotate it if leaked.
 
 After claiming, these commands use the same saved local claim metadata:
 
@@ -99,13 +121,14 @@ pt inspect
 pt logs
 ```
 
-Refresh the dashboard and the app should appear with its active deploy ID. This
-local deploy path also uploads the WASM bytes to the control-plane store, so the
-control-plane SSH gateway can run it:
+Refresh the dashboard and the app should appear with its active deploy ID. The
+deploy uploads the WASM bytes to the control-plane store, so the SSH gateway can
+run it:
 
 ```bash
 ssh counter@plumtree.dev
 ```
 
-This is still local prototype storage; durable artifact storage and the
-production runner are later phases.
+The control plane backs this with durable on-disk artifact storage
+(`--blob-dir`) and can run each session in an out-of-process WASM worker
+(`--runner-worker`); see the control-plane and runner READMEs.

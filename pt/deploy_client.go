@@ -15,7 +15,6 @@ import (
 type deployRequest struct {
 	AppName           string            `json:"appName"`
 	AppType           string            `json:"appType"`
-	Visibility        string            `json:"visibility"`
 	ArtifactDigest    string            `json:"artifactDigest"`
 	ArtifactSizeBytes int64             `json:"artifactSizeBytes"`
 	ABIVersion        uint8             `json:"abiVersion"`
@@ -37,7 +36,8 @@ type deployResponse struct {
 		Claimed        bool   `json:"claimed"`
 		ClaimExpiresAt string `json:"claimExpiresAt"`
 	} `json:"deploy"`
-	ClaimURL string `json:"claimUrl"`
+	ClaimURL      string `json:"claimUrl"`
+	PreviewHandle string `json:"previewHandle"`
 }
 
 type inspectResponse struct {
@@ -45,7 +45,6 @@ type inspectResponse struct {
 		ID             string `json:"id"`
 		Name           string `json:"name"`
 		Handle         string `json:"handle"`
-		Visibility     string `json:"visibility"`
 		ActiveDeployID string `json:"activeDeployId"`
 		Claimed        bool   `json:"claimed"`
 	} `json:"app"`
