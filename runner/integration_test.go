@@ -240,8 +240,11 @@ func TestFetchGatedEgress(t *testing.T) {
 		return frameText(sink.frames[len(sink.frames)-1])
 	}
 
-	// Allowlisted: the request succeeds and the body is rendered.
-	if got := run(NewAllowlistFetcher([]string{"127.0.0.1"})); !strings.Contains(got, "status 200") || !strings.Contains(got, "ok") {
+	// Allowlisted: the request succeeds and the body is rendered. The test server
+	// is on loopback, so allow private IPs here (production leaves this off).
+	allowed := NewAllowlistFetcher([]string{"127.0.0.1"})
+	allowed.AllowPrivateIPs = true
+	if got := run(allowed); !strings.Contains(got, "status 200") || !strings.Contains(got, "ok") {
 		t.Fatalf("allowed egress: %q", got)
 	}
 	// Default-deny (empty allowlist): the guest sees a denial.
