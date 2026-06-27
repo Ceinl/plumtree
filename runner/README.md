@@ -13,6 +13,10 @@ Owns:
 - memory, CPU, time, input, and output limits.
 - structured frame rendering.
 - CLI output filtering.
+- **out-of-process isolation** — `ProcessRunner` + the `plumtree-runner-worker`
+  binary (`cmd/plumtree-runner-worker`) run the wazero sandbox in a separate
+  process, forwarding every host call to the parent over the lock-step
+  `procproto`. The control plane enables it per session via `--runner-worker`.
 
 Does not own:
 
