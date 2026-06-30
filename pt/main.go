@@ -88,7 +88,7 @@ pt dev flags:
 
 Environment (deploy/inspect/logs/whoami/secret/egress):
   PLUMTREE_SERVER_URL  control-plane URL to publish to (preset; built-in default)
-  PLUMTREE_DEV_TOKEN   deploy token; set as a CI/GitHub Actions secret
+  PLUMTREE_DEV_TOKEN   deploy token; build config, baked into release binaries
 `)
 }
 

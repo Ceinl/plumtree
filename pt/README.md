@@ -84,7 +84,7 @@ server without the author configuring anything, and CI can set them as secrets:
 
 ```bash
 export PLUMTREE_SERVER_URL=http://localhost:18080   # built-in default; bake via -ldflags for prod
-export PLUMTREE_DEV_TOKEN=local-dev                 # set as a GitHub Actions secret in CI
+export PLUMTREE_DEV_TOKEN=local-dev                 # build config, baked into release binaries
 pt deploy
 ```
 
@@ -100,10 +100,20 @@ a distributed `pt` publishes to your control plane with no configuration — a u
 downloads the release and just runs `pt deploy`. Inject them with `-ldflags`:
 
 ```bash
-pkg=github.com/Ceinl/plumtree/pt
+# pt is `package main`, so the symbol prefix is `main`, not the import path —
+# using the import path silently bakes nothing.
 go build -trimpath -ldflags "\
-  -X ${pkg}.defaultServerURL=https://your-control-plane.example \
-  -X ${pkg}.defaultDevToken=$PLUMTREE_DEV_TOKEN" -o pt ./pt
+  -X main.defaultServerURL=https://your-control-plane.example \
+  -X main.defaultDevToken=$PLUMTREE_DEV_TOKEN" -o pt ./pt
+```
+
+Or use the Makefile, which bakes the local dev values from `ORIGIN` and
+`DEV_TOKEN`:
+
+```bash
+make install-pt                                   # baked pt onto your PATH
+make build-pt                                      # baked ./pt-bin in the repo root
+make install-pt ORIGIN=https://prod.example DEV_TOKEN=...
 ```
 
 The release workflow at `.github/workflows/release.yml` does this on tag push,

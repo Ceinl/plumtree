@@ -25,3 +25,4 @@ sdk/fetchcheck
 **/.agents/
 .branch/
 .claude/
+pt-bin
