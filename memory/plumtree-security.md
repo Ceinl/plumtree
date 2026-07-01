@@ -30,6 +30,13 @@ Decisions and changes made:
   no-network container with a tmpfs work dir** — OS-level netns isolation was not
   added in-code (would need userns and risks breaking builds).
 
-Still open (flagged, not done): plaintext dev-token compared non-constant-time in
-`authorizeDevDeploy`; CLI `controlFilter` passes C1 bytes (TUI sink already
-sanitizes them).
+Update (2026-07-01): all shared operator tokens (dev deploy, gateway API, build
+worker) now use `crypto/subtle.ConstantTimeCompare`. Production packaging landed
+in `deploy/`: the build-worker container runs with **zero network** — SDK +
+tui-runtime baked in as workspace modules (`-workspace-modules` flag on
+cmd/build-worker), transitive deps from a baked-in `file://` module proxy,
+internal-only compose network, read-only rootfs, tmpfs sandboxes. Verified by
+building a scaffolded app inside the no-network container.
+
+Still open (flagged, not done): CLI `controlFilter` passes C1 bytes (TUI sink
+already sanitizes them).
