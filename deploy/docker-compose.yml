@@ -1,0 +1,67 @@
+# Production topology: three processes, least privilege each.
+#
+#   internet ──▶ ssh-gateway:2222 ──▶ control-plane:8080 (internal)
+#   internet ──▶ control-plane:8080 (dashboard/API, put a TLS proxy in front)
+#   control-plane ──▶ build-worker:8090 (internal only, no egress at all)
+#
+# Copy .env.example to .env and fill in the tokens first.
+services:
+  control-plane:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.control-plane
+    restart: unless-stopped
+    environment:
+      PLUMTREE_PUBLIC_ORIGIN: ${PLUMTREE_PUBLIC_ORIGIN:?set in .env}
+      PLUMTREE_DEV_TOKEN: ${PLUMTREE_DEV_TOKEN:?set in .env}
+      PLUMTREE_GATEWAY_TOKEN: ${PLUMTREE_GATEWAY_TOKEN:?set in .env}
+      PLUMTREE_BUILD_TOKEN: ${PLUMTREE_BUILD_TOKEN:?set in .env}
+      PLUMTREE_BUILD_URL: http://build-worker:8090
+      PLUMTREE_ANONYMOUS_PREVIEW: ${PLUMTREE_ANONYMOUS_PREVIEW:-false}
+    ports:
+      - "8080:8080"
+    volumes:
+      - control-plane-data:/data
+    networks: [web, internal]
+    depends_on: [build-worker]
+
+  ssh-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.ssh-gateway
+    restart: unless-stopped
+    environment:
+      PLUMTREE_CONTROL_URL: http://control-plane:8080
+      PLUMTREE_GATEWAY_TOKEN: ${PLUMTREE_GATEWAY_TOKEN:?set in .env}
+    ports:
+      - "2222:2222"
+    volumes:
+      - ssh-gateway-data:/data
+    networks: [web, internal]
+    depends_on: [control-plane]
+
+  build-worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.build-worker
+    restart: unless-stopped
+    environment:
+      PLUMTREE_BUILD_TOKEN: ${PLUMTREE_BUILD_TOKEN:?set in .env}
+    # Untrusted compilation: internal-only network (no route to the internet),
+    # read-only image, sandboxes on a size-capped tmpfs wiped on restart.
+    networks: [internal]
+    read_only: true
+    tmpfs:
+      - /work:size=2g,mode=0770,uid=65532,gid=65532
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  web:
+  internal:
+    internal: true
+
+volumes:
+  control-plane-data:
+  ssh-gateway-data:

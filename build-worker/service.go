@@ -3,6 +3,7 @@ package buildworker
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,7 +45,7 @@ func (s *Service) handleBuild(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if s.token != "" && r.Header.Get("X-Plumtree-Build-Token") != s.token {
+	if s.token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Plumtree-Build-Token")), []byte(s.token)) != 1 {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid build token"})
 		return
 	}

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -22,7 +23,7 @@ func (s *Server) authorizeGateway(w http.ResponseWriter, r *http.Request) bool {
 		writeGatewayError(w, http.StatusNotFound, "", "gateway API is disabled")
 		return false
 	}
-	if r.Header.Get(gatewayapi.TokenHeader) != s.gatewayToken {
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get(gatewayapi.TokenHeader)), []byte(s.gatewayToken)) != 1 {
 		writeGatewayError(w, http.StatusUnauthorized, "", "invalid gateway token")
 		return false
 	}
