@@ -184,19 +184,9 @@ func previewDeployID(handle string) (string, bool) {
 // runs in the tightest sandbox — KV scoped to the preview, but no secrets and no
 // egress (both are owner-gated). Suspended deploys and owners are still blocked.
 func (s *Store) resolvePreviewLocked(deployID string) (App, Deploy, Artifact, error) {
-	deploy, ok := s.deploys[deployID]
-	if !ok {
-		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: deploy %q", ErrNotFound, deployID)
-	}
-	if _, suspended := s.suspendedDeploys[deployID]; suspended {
-		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
-	}
-	if deploy.AppID != "" {
-		if app, ok := s.apps[deploy.AppID]; ok {
-			if app.Suspended || s.owners[app.OwnerID].Suspended {
-				return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
-			}
-		}
+	deploy, err := s.checkPreviewDeployLocked(deployID)
+	if err != nil {
+		return App{}, Deploy{}, Artifact{}, err
 	}
 	artifact, ok := s.artifacts[deploy.ArtifactID]
 	if !ok {
@@ -204,6 +194,29 @@ func (s *Store) resolvePreviewLocked(deployID string) (App, Deploy, Artifact, er
 	}
 	app := App{ID: "preview-" + deployID, Name: deploy.AppName} // OwnerID empty => tightest sandbox
 	return app, deploy, artifact, nil
+}
+
+// checkPreviewDeployLocked validates that a deploy is runnable as an anonymous
+// preview: it exists and neither it, its app, nor its owner is suspended. Unlike
+// resolveActiveLocked it does not require the deploy to be any app's active
+// deploy. Shared by preview resolution and session accounting so the two cannot
+// drift on what "previewable" means.
+func (s *Store) checkPreviewDeployLocked(deployID string) (Deploy, error) {
+	deploy, ok := s.deploys[deployID]
+	if !ok {
+		return Deploy{}, fmt.Errorf("%w: deploy %q", ErrNotFound, deployID)
+	}
+	if _, suspended := s.suspendedDeploys[deployID]; suspended {
+		return Deploy{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
+	}
+	if deploy.AppID != "" {
+		if app, ok := s.apps[deploy.AppID]; ok {
+			if app.Suspended || s.owners[app.OwnerID].Suspended {
+				return Deploy{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
+			}
+		}
+	}
+	return deploy, nil
 }
 
 func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error) {

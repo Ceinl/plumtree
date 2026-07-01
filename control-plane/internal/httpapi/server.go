@@ -2,9 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	buildworker "github.com/Ceinl/plumtree/build-worker"
@@ -32,13 +30,6 @@ type Server struct {
 	gatewayToken string
 	build        BuildBackend
 	limiter      *ipLimiter
-	limits       []limitRow
-}
-
-// limitRow is one labeled platform limit rendered on the dashboard.
-type limitRow struct {
-	Label string
-	Value string
 }
 
 func New(store *control.Store, verifier TokenVerifier, appOrigin string) *Server {
@@ -63,18 +54,6 @@ type Config struct {
 	// bucket depth (defaults to RateLimitPerSec).
 	RateLimitPerSec int
 	RateLimitBurst  int
-	// Limits are the runner/session caps surfaced read-only on the dashboard.
-	Limits LimitsInfo
-}
-
-// LimitsInfo is the set of platform limits shown on the dashboard. Zero values
-// render as "unlimited".
-type LimitsInfo struct {
-	MaxConcurrentSessions   int
-	MaxSessionsPerAppPerDay int
-	MaxFramesPerSec         int
-	MaxEventsPerSec         int
-	SessionTimeout          time.Duration
 }
 
 func NewWithConfig(cfg Config) *Server {
@@ -90,41 +69,6 @@ func NewWithConfig(cfg Config) *Server {
 		gatewayToken: cfg.GatewayToken,
 		build:        cfg.Build,
 		limiter:      newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
-		limits:       buildLimitRows(cfg),
-	}
-}
-
-// buildLimitRows renders the configured platform limits for display, formatting
-// zero values as "unlimited".
-func buildLimitRows(cfg Config) []limitRow {
-	perPerSec := func(n int, unit string) string {
-		if n <= 0 {
-			return "unlimited"
-		}
-		if unit == "" {
-			return strconv.Itoa(n)
-		}
-		return fmt.Sprintf("%d %s", n, unit)
-	}
-	httpRate := "unlimited"
-	if cfg.RateLimitPerSec > 0 {
-		burst := cfg.RateLimitBurst
-		if burst < 1 {
-			burst = cfg.RateLimitPerSec
-		}
-		httpRate = fmt.Sprintf("%d req/s (burst %d)", cfg.RateLimitPerSec, burst)
-	}
-	sessionTimeout := "unlimited"
-	if cfg.Limits.SessionTimeout > 0 {
-		sessionTimeout = cfg.Limits.SessionTimeout.String()
-	}
-	return []limitRow{
-		{"Connections / app / day", perPerSec(cfg.Limits.MaxSessionsPerAppPerDay, "")},
-		{"Concurrent sessions", perPerSec(cfg.Limits.MaxConcurrentSessions, "")},
-		{"HTTP rate / IP", httpRate},
-		{"Input events", perPerSec(cfg.Limits.MaxEventsPerSec, "/s")},
-		{"Frames", perPerSec(cfg.Limits.MaxFramesPerSec, "fps")},
-		{"Session time budget", sessionTimeout},
 	}
 }
 
@@ -138,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/me", s.handleMe)
 	mux.HandleFunc("/api/me/handle", s.handleMeHandle)
 	mux.HandleFunc("/api/apps", s.handleApps)
+	mux.HandleFunc("/api/apps/stream", s.handleAppsStream)
 	mux.HandleFunc("/api/me/tokens", s.handleTokens)
 	mux.HandleFunc("/api/me/tokens/", s.handleTokenByID)
 	mux.HandleFunc("/api/claims/", s.handleClaimAPI)
@@ -170,6 +115,5 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = dashboardTmpl.Execute(w, struct {
 		AppOrigin string
-		Limits    []limitRow
-	}{AppOrigin: s.appOrigin, Limits: s.limits})
+	}{AppOrigin: s.appOrigin})
 }

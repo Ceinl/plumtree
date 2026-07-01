@@ -1,0 +1,21 @@
+# SSH gateway: public SSH front end. Uses the control plane as its backend and
+# runs each app session in a separate plumtree-runner-worker process.
+# Build from the repo root: docker build -f deploy/Dockerfile.ssh-gateway .
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY . .
+RUN cd ssh-gateway && CGO_ENABLED=0 go build -trimpath -o /out/ssh-gateway ./cmd/ssh-gateway \
+    && cd ../runner && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-worker ./cmd/plumtree-runner-worker
+
+FROM alpine:3.21
+RUN adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data
+COPY --from=build /out/ssh-gateway /out/plumtree-runner-worker /usr/local/bin/
+USER plumtree
+# HOME on the volume keeps the SSH host key stable across restarts
+# (gateway persists it under $HOME/.config/plumtree).
+ENV HOME=/data \
+    PLUMTREE_STATE_DIR=/data \
+    PLUMTREE_RUNNER_WORKER=/usr/local/bin/plumtree-runner-worker
+VOLUME /data
+EXPOSE 2222
+ENTRYPOINT ["ssh-gateway"]

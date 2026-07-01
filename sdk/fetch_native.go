@@ -35,9 +35,14 @@ func fetch(method, url string, body []byte) (Response, error) {
 		return Response{}, ErrFetchFailed
 	}
 	defer resp.Body.Close()
-	out, err := io.ReadAll(io.LimitReader(resp.Body, abi.FetchMaxBody))
+	// Read one byte past the cap so an exactly-cap body still reads fully while an
+	// oversized one is reported rather than silently truncated by LimitReader.
+	out, err := io.ReadAll(io.LimitReader(resp.Body, abi.FetchMaxBody+1))
 	if err != nil {
 		return Response{}, ErrFetchFailed
+	}
+	if len(out) > abi.FetchMaxBody {
+		return Response{}, ErrFetchTooLarge
 	}
 	return Response{Status: resp.StatusCode, Body: out}, nil
 }

@@ -62,13 +62,6 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       white-space: nowrap;
     }
     button.secondary { background: transparent; color: var(--ink); }
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr));
-      border: 1px solid var(--line);
-      background: var(--panel);
-      margin-bottom: 28px;
-    }
     .claim {
       border: 1px solid var(--line);
       background: var(--panel);
@@ -89,12 +82,6 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       padding: 8px 10px;
     }
     .hint { margin: 0; color: var(--muted); font-size: 13px; }
-    .metric { padding: 18px; border-right: 1px solid var(--line); min-height: 92px; }
-    .metric:last-child { border-right: 0; }
-    .metric span { color: var(--muted); font-size: 13px; text-transform: uppercase; }
-    .metric strong { display: block; margin-top: 8px; font-size: 28px; }
-    .section-title { margin: 0 0 14px; font-size: 22px; line-height: 1.1; }
-    .limits .metric strong { font-size: 18px; overflow-wrap: anywhere; }
     .table-wrap { border: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; min-width: 720px; }
     th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -109,11 +96,8 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       .shell { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); padding: 18px 20px; }
       .topbar { flex-direction: column; }
-      .summary { grid-template-columns: 1fr; }
       .claim-row { flex-direction: column; }
       .claim-row button { width: 100%; }
-      .metric { border-right: 0; border-bottom: 1px solid var(--line); }
-      .metric:last-child { border-bottom: 0; }
     }
   </style>
 </head>
@@ -138,17 +122,6 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
           <button id="signout" class="secondary" hidden>Sign out</button>
         </div>
       </div>
-      <section class="summary" aria-label="Account summary">
-        <div class="metric"><span>Total apps</span><strong id="total">-</strong></div>
-        <div class="metric"><span>Active deploys</span><strong id="active">-</strong></div>
-      </section>
-      {{if .Limits}}
-      <h2 class="section-title">Platform limits</h2>
-      <section class="summary limits" aria-label="Platform limits">
-        {{range .Limits}}<div class="metric"><span>{{.Label}}</span><strong>{{.Value}}</strong></div>
-        {{end}}
-      </section>
-      {{end}}
       <section id="handleSetup" class="claim" hidden>
         <h2>Choose your handle</h2>
         <form id="handleForm">
@@ -163,7 +136,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       <div id="empty" class="empty" hidden>No apps in this namespace yet.</div>
       <div id="apps" class="table-wrap" hidden>
         <table>
-          <thead><tr><th>Handle</th><th>Active deploy</th><th>Created</th></tr></thead>
+          <thead><tr><th>Handle</th><th>Active deploy</th><th>Connections / day</th><th>Created</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -174,17 +147,35 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
     const signout = document.getElementById("signout");
     const owner = document.getElementById("owner");
     const identityLabel = document.getElementById("identity");
-    const total = document.getElementById("total");
-    const active = document.getElementById("active");
     const apps = document.getElementById("apps");
     const rows = document.getElementById("rows");
     const empty = document.getElementById("empty");
     const errorBox = document.getElementById("error");
-    const summary = document.querySelector(".summary");
     const handleSetup = document.getElementById("handleSetup");
     const handleForm = document.getElementById("handleForm");
     const handleInput = document.getElementById("handleInput");
     let activeToken = "";
+    let appsStream = null;
+
+    // openAppsStream subscribes to live app updates over SSE so per-app
+    // connection counts refresh on change without re-fetching. EventSource cannot
+    // set headers, so the bearer rides along as a query param.
+    function openAppsStream(token) {
+      closeAppsStream();
+      appsStream = new EventSource("/api/apps/stream?access_token=" + encodeURIComponent(token));
+      appsStream.onmessage = (event) => {
+        try {
+          renderApps(JSON.parse(event.data).apps || []);
+        } catch (e) { /* ignore malformed frame */ }
+      };
+    }
+
+    function closeAppsStream() {
+      if (appsStream) {
+        appsStream.close();
+        appsStream = null;
+      }
+    }
 
     login.href = "https://shoo.dev/authorize?redirect_uri=" + encodeURIComponent(new URL("/shoo/callback", window.location.origin).href);
     login.addEventListener("click", (event) => {
@@ -229,47 +220,45 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       rows.textContent = "";
       for (const app of items) {
         const tr = document.createElement("tr");
-        tr.innerHTML = "<td><code></code></td><td></td><td></td>";
+        tr.innerHTML = "<td><code></code></td><td></td><td></td><td></td>";
         tr.children[0].firstChild.textContent = app.handle;
         tr.children[1].textContent = app.activeDeployId || "-";
-        tr.children[2].textContent = app.createdAt ? new Date(app.createdAt).toLocaleString() : "-";
+        tr.children[2].textContent = app.connectionsPerDay > 0
+          ? app.connectionsToday + " / " + app.connectionsPerDay
+          : app.connectionsToday + " / ∞";
+        tr.children[3].textContent = app.createdAt ? new Date(app.createdAt).toLocaleString() : "-";
         rows.appendChild(tr);
       }
       apps.hidden = items.length === 0;
       empty.hidden = items.length !== 0;
-      total.textContent = String(items.length);
-      active.textContent = String(items.filter(app => app.activeDeployId).length);
     }
 
     function showHandleSetup() {
-      summary.hidden = true;
+      closeAppsStream();
       apps.hidden = true;
       empty.hidden = true;
       handleSetup.hidden = false;
       owner.textContent = "-";
       identityLabel.textContent = "Shoo verified";
-      total.textContent = "-";
-      publicCount.textContent = "-";
-      active.textContent = "-";
       handleInput.focus();
     }
 
     async function loadApps(token, me) {
       handleSetup.hidden = true;
-      summary.hidden = false;
       owner.textContent = me.owner.handle;
       identityLabel.textContent = me.auth.provider === "shoo" ? "Shoo verified" : "Signed in";
       const listing = await api("/api/apps", token);
       renderApps(listing.apps || []);
+      openAppsStream(token);
     }
 
     async function boot() {
       const auth = await identity();
       if (!auth) {
+        closeAppsStream();
         login.hidden = false;
         signout.hidden = true;
         handleSetup.hidden = true;
-        summary.hidden = false;
         owner.textContent = "-";
         identityLabel.textContent = "Not signed in";
         renderApps([]);

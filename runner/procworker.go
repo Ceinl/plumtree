@@ -24,7 +24,7 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	if o != opStart {
 		return errProtocol
 	}
-	lim, cli, wasm, err := decodeStart(payload)
+	lim, cli, capBits, wasm, err := decodeStart(payload)
 	if err != nil {
 		return err
 	}
@@ -34,13 +34,26 @@ func RunWorker(in io.Reader, out io.Writer) error {
 		return writeMsg(out, opDone, encodeDone("process runner: CLI not supported", nil))
 	}
 
+	// Install a proxy only for capabilities the parent actually holds. A
+	// capability the parent lacks stays nil here so the guest's host function
+	// returns the same "unavailable" code as the in-process path, rather than a
+	// proxy that forwards a call the parent answers as not-found/empty/no-op.
 	rpc := &workerRPC{in: in, out: out}
-	caps := Capabilities{
-		KV:    proxyKV{rpc},
-		Bus:   proxyBus{rpc},
-		Auth:  proxyAuth{rpc},
-		Env:   proxyEnv{rpc},
-		Fetch: proxyFetch{rpc},
+	caps := Capabilities{}
+	if capBits&capKV != 0 {
+		caps.KV = proxyKV{rpc}
+	}
+	if capBits&capBus != 0 {
+		caps.Bus = proxyBus{rpc}
+	}
+	if capBits&capAuth != 0 {
+		caps.Auth = proxyAuth{rpc}
+	}
+	if capBits&capEnv != 0 {
+		caps.Env = proxyEnv{rpc}
+	}
+	if capBits&capFetch != 0 {
+		caps.Fetch = proxyFetch{rpc}
 	}
 	logs := &boundedBuffer{max: maxSessionLog}
 	runErr := Run(context.Background(), wasm, lim, caps, &proxySource{rpc}, &proxySink{rpc}, logs)

@@ -78,11 +78,46 @@ func readMsg(r io.Reader) (op, []byte, error) {
 	return op(hdr[0]), payload, nil
 }
 
+// Capability-presence bits in the start payload. The parent sets a bit for each
+// capability it actually holds and the worker installs a proxy only for those,
+// so a capability the parent lacks is nil in the worker too — its host function
+// then returns the same "unavailable" code as the in-process path instead of a
+// proxy that silently reports not-found/empty/no-op. Without this the process
+// (production) path would diverge from in-process for nil Env/Bus/Auth.
+const (
+	capKV    byte = 1 << 0
+	capBus   byte = 1 << 1
+	capAuth  byte = 1 << 2
+	capEnv   byte = 1 << 3
+	capFetch byte = 1 << 4
+)
+
+// capMask returns the presence bitmask for caps.
+func capMask(caps Capabilities) byte {
+	var m byte
+	if caps.KV != nil {
+		m |= capKV
+	}
+	if caps.Bus != nil {
+		m |= capBus
+	}
+	if caps.Auth != nil {
+		m |= capAuth
+	}
+	if caps.Env != nil {
+		m |= capEnv
+	}
+	if caps.Fetch != nil {
+		m |= capFetch
+	}
+	return m
+}
+
 // startPayload encodes the session parameters the parent hands the worker.
 // Layout: [appType u8][memPages u32][frameTimeoutNs i64][sessionTimeoutNs i64]
-// [maxEventsPerSec u32][maxFramesPerSec u32][wasm...].
-func encodeStart(lim Limits, cli bool, wasm []byte) []byte {
-	b := make([]byte, 0, 29+len(wasm))
+// [maxEventsPerSec u32][maxFramesPerSec u32][capMask u8][wasm...].
+func encodeStart(lim Limits, cli bool, caps byte, wasm []byte) []byte {
+	b := make([]byte, 0, 30+len(wasm))
 	var appType byte
 	if cli {
 		appType = 1
@@ -93,13 +128,14 @@ func encodeStart(lim Limits, cli bool, wasm []byte) []byte {
 	b = binary.LittleEndian.AppendUint64(b, uint64(lim.SessionTimeout))
 	b = binary.LittleEndian.AppendUint32(b, uint32(lim.MaxEventsPerSec))
 	b = binary.LittleEndian.AppendUint32(b, uint32(lim.MaxFramesPerSec))
+	b = append(b, caps)
 	b = append(b, wasm...)
 	return b
 }
 
-func decodeStart(b []byte) (lim Limits, cli bool, wasm []byte, err error) {
-	if len(b) < 29 {
-		return Limits{}, false, nil, errProtocol
+func decodeStart(b []byte) (lim Limits, cli bool, caps byte, wasm []byte, err error) {
+	if len(b) < 30 {
+		return Limits{}, false, 0, nil, errProtocol
 	}
 	cli = b[0] == 1
 	lim.MemoryPages = binary.LittleEndian.Uint32(b[1:5])
@@ -107,8 +143,9 @@ func decodeStart(b []byte) (lim Limits, cli bool, wasm []byte, err error) {
 	lim.SessionTimeout = time.Duration(binary.LittleEndian.Uint64(b[13:21]))
 	lim.MaxEventsPerSec = int(binary.LittleEndian.Uint32(b[21:25]))
 	lim.MaxFramesPerSec = int(binary.LittleEndian.Uint32(b[25:29]))
-	wasm = append([]byte(nil), b[29:]...)
-	return lim, cli, wasm, nil
+	caps = b[29]
+	wasm = append([]byte(nil), b[30:]...)
+	return lim, cli, caps, wasm, nil
 }
 
 // keyValuePayload encodes [u16 keyLen][key][value] for kv_set / bus_pub.

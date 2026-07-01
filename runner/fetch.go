@@ -103,14 +103,24 @@ func (f *AllowlistFetcher) Fetch(ctx context.Context, req abi.FetchRequest) (abi
 		return abi.FetchResponse{}, err
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, abi.FetchMaxBody))
+	// Read one byte past the cap so an exactly-cap body still reads fully while an
+	// oversized one is detected rather than silently truncated by LimitReader.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, abi.FetchMaxBody+1))
 	if err != nil {
 		return abi.FetchResponse{}, err
+	}
+	if len(respBody) > abi.FetchMaxBody {
+		return abi.FetchResponse{}, errResponseTooLarge
 	}
 	return abi.FetchResponse{Status: resp.StatusCode, Body: respBody}, nil
 }
 
 var errBadRequest = errors.New("fetch: bad request")
+
+// errResponseTooLarge reports that the response body exceeded abi.FetchMaxBody.
+// The host maps it to abi.FetchErrTooLarge so the guest sees an explicit error
+// instead of a truncated body.
+var errResponseTooLarge = errors.New("fetch: response too large")
 
 // guardedClient builds an http.Client that, on every connection (including
 // redirect hops), rejects dials to non-public IPs and re-checks each redirect
@@ -226,6 +236,8 @@ func registerFetch(b wazero.HostModuleBuilder, fetch Fetcher) wazero.HostModuleB
 					return abi.FetchErrDenied
 				case errors.Is(err, errEgressUnavailable):
 					return abi.FetchErrUnavail
+				case errors.Is(err, errResponseTooLarge):
+					return abi.FetchErrTooLarge
 				default:
 					return abi.FetchErrInternal
 				}

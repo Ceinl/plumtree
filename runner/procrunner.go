@@ -64,7 +64,7 @@ func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps 
 		}
 	}
 
-	if err := writeMsg(stdin, opStart, encodeStart(lim, false, wasm)); err != nil {
+	if err := writeMsg(stdin, opStart, encodeStart(lim, false, capMask(caps), wasm)); err != nil {
 		return err
 	}
 

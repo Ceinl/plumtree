@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
@@ -43,7 +44,7 @@ func (s *Server) authorizeDevDeploy(w http.ResponseWriter, r *http.Request) bool
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "dev deploy API is disabled"})
 		return false
 	}
-	if r.Header.Get("X-Plumtree-Dev-Token") != s.devToken {
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Plumtree-Dev-Token")), []byte(s.devToken)) != 1 {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid dev token"})
 		return false
 	}

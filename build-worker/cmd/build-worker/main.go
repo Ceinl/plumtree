@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,18 +24,20 @@ func main() {
 	goBin := flag.String("go", env("PLUMTREE_BUILD_GO", "go"), "go toolchain binary")
 	goProxy := flag.String("goproxy", env("GOPROXY_BUILD", "off"), "GOPROXY for builds; 'off' means no network")
 	workRoot := flag.String("work-root", env("PLUMTREE_BUILD_WORK_ROOT", ""), "parent dir for build sandboxes; empty uses the OS temp dir")
+	workspace := flag.String("workspace-modules", env("PLUMTREE_BUILD_WORKSPACE", ""), "comma-separated local module dirs (e.g. a baked-in sdk and tui-runtime) tied into each build workspace so the unpublished SDK resolves without a registry")
 	timeout := flag.Duration("timeout", durEnv("PLUMTREE_BUILD_TIMEOUT", 90*time.Second), "per-build wall-clock limit")
 	maxSource := flag.Int64("max-source-bytes", 8<<20, "max uploaded source archive size")
 	maxMemory := flag.Int64("max-memory-bytes", 2<<30, "address-space limit for the build process (Linux); negative disables")
 	flag.Parse()
 
 	builder := buildworker.NewBuilder(buildworker.Config{
-		GoBin:          *goBin,
-		WorkRoot:       *workRoot,
-		GoProxy:        *goProxy,
-		Timeout:        *timeout,
-		MaxSourceBytes: *maxSource,
-		MaxMemoryBytes: *maxMemory,
+		GoBin:            *goBin,
+		WorkRoot:         *workRoot,
+		GoProxy:          *goProxy,
+		Timeout:          *timeout,
+		MaxSourceBytes:   *maxSource,
+		MaxMemoryBytes:   *maxMemory,
+		WorkspaceModules: splitList(*workspace),
 	})
 	svc := buildworker.NewService(builder, *token)
 
@@ -56,6 +59,16 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func env(key, fallback string) string {

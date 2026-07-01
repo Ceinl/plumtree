@@ -1,0 +1,30 @@
+# Build worker: compiles untrusted author source to WASM. Runs with ZERO
+# network: the unpublished SDK + TUI runtime are baked in as workspace modules,
+# and their transitive deps (golang.org/x/*) are served from a baked-in file://
+# module proxy seeded at image build time. Run it on an internal-only network
+# with a tmpfs work dir (see docker-compose.yml).
+# Build from the repo root: docker build -f deploy/Dockerfile.build-worker .
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY . .
+RUN cd build-worker && CGO_ENABLED=0 go build -trimpath -o /out/build-worker ./cmd/build-worker
+
+# The runtime image keeps the Go toolchain: it compiles author source.
+FROM golang:1.26-alpine
+COPY --from=build /out/build-worker /usr/local/bin/build-worker
+# Bake the unpublished SDK and TUI runtime for workspace resolution, then seed
+# a local module proxy with their transitive dependencies so builds resolve
+# everything offline. GOMODCACHE's cache/download layout IS the proxy protocol.
+COPY sdk/ /opt/plumtree/sdk/
+COPY tui-runtime/ /opt/plumtree/tui-runtime/
+RUN cd /opt/plumtree/sdk && GOMODCACHE=/opt/plumtree/modproxy GOFLAGS=-mod=mod go mod download \
+    && cd /opt/plumtree/tui-runtime && GOMODCACHE=/opt/plumtree/modproxy GOFLAGS=-mod=mod go mod download \
+    && chmod -R a+rX /opt/plumtree \
+    && adduser -D -u 65532 plumtree \
+    && mkdir -p /work && chown plumtree /work
+USER plumtree
+ENV PLUMTREE_BUILD_WORKSPACE=/opt/plumtree/sdk,/opt/plumtree/tui-runtime \
+    GOPROXY_BUILD=file:///opt/plumtree/modproxy/cache/download \
+    PLUMTREE_BUILD_WORK_ROOT=/work
+EXPOSE 8090
+ENTRYPOINT ["build-worker"]

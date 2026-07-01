@@ -61,6 +61,42 @@ func TestAnonymousPreviewGated(t *testing.T) {
 	}
 }
 
+func TestAnonymousPreviewStartsSession(t *testing.T) {
+	store := NewStore(WithAnonymousPreview(true))
+	depID := makePreviewDeploy(t, store, []byte("\x00asm-sess"))
+
+	// Resolve mints the synthetic preview app id the gateway hands to StartSession.
+	app, deploy, _, _, err := store.ResolveRunnable("preview-" + depID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := store.StartSession(app.ID, deploy.ID)
+	if err != nil {
+		t.Fatalf("StartSession(preview): %v", err)
+	}
+	if sess.AppID != app.ID || sess.DeployID != depID {
+		t.Fatalf("session = %+v, want AppID %q DeployID %q", sess, app.ID, depID)
+	}
+	if _, err := store.EndSession(sess.ID); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	// Gating still holds at accounting time: with preview off, the synthetic id
+	// has no persisted app and must not start.
+	off := NewStore()
+	if _, err := off.StartSession(app.ID, deploy.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("preview disabled StartSession: err = %v, want ErrNotFound", err)
+	}
+
+	// A suspended deploy cannot start a preview session either.
+	if err := store.SetDeploySuspended(depID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartSession(app.ID, deploy.ID); !errors.Is(err, ErrSuspended) {
+		t.Fatalf("suspended StartSession: err = %v, want ErrSuspended", err)
+	}
+}
+
 func TestAnonymousPreviewBlocksSuspended(t *testing.T) {
 	store := NewStore(WithAnonymousPreview(true))
 	depID := makePreviewDeploy(t, store, []byte("\x00asm-x"))

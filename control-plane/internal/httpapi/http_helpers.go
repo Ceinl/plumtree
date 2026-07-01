@@ -89,6 +89,11 @@ func (s *Server) authenticate(r *http.Request) (control.Owner, shoo.Claims, erro
 	}
 	token := bearerToken(r.Header.Get("Authorization"))
 	if token == "" {
+		// EventSource (SSE) cannot set request headers, so the dashboard's
+		// stream endpoint passes the bearer as an access_token query param.
+		token = strings.TrimSpace(r.URL.Query().Get("access_token"))
+	}
+	if token == "" {
 		return control.Owner{}, shoo.Claims{}, errMissingBearer
 	}
 	claims, err := s.verifier.Verify(r.Context(), token)

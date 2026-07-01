@@ -89,20 +89,33 @@ func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	apps, err := s.store.ListApps(owner.ID)
+	items, err := s.appItems(owner)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"apps": items})
+}
+
+// appItems builds the dashboard's per-app view for an owner, including live
+// per-app daily connection usage and cap. Shared by the apps list and stream.
+func (s *Server) appItems(owner control.Owner) ([]map[string]any, error) {
+	apps, err := s.store.ListApps(owner.ID)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]map[string]any, 0, len(apps))
 	for _, app := range apps {
+		used, cap := s.store.AppDailyConnections(app.ID)
 		items = append(items, map[string]any{
-			"id":             app.ID,
-			"name":           app.Name,
-			"handle":         owner.Handle + "/" + app.Name,
-			"activeDeployId": app.ActiveDeployID,
-			"createdAt":      app.CreatedAt,
+			"id":                app.ID,
+			"name":              app.Name,
+			"handle":            owner.Handle + "/" + app.Name,
+			"activeDeployId":    app.ActiveDeployID,
+			"createdAt":         app.CreatedAt,
+			"connectionsToday":  used,
+			"connectionsPerDay": cap,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"apps": items})
+	return items, nil
 }
