@@ -42,6 +42,34 @@ func TestAllowlistFetcherAllowsAndDenies(t *testing.T) {
 	}
 }
 
+func TestFetchRejectsOversizedResponse(t *testing.T) {
+	// A body exceeding FetchMaxBody must surface errResponseTooLarge rather than
+	// being silently truncated to the cap.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, abi.FetchMaxBody+1))
+	}))
+	defer srv.Close()
+
+	f := NewAllowlistFetcher([]string{"127.0.0.1"})
+	f.AllowPrivateIPs = true
+	if _, err := f.Fetch(context.Background(), abi.FetchRequest{URL: srv.URL}); err != errResponseTooLarge {
+		t.Fatalf("oversized fetch err = %v, want errResponseTooLarge", err)
+	}
+
+	// A body exactly at the cap still succeeds and reads fully.
+	exact := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, abi.FetchMaxBody))
+	}))
+	defer exact.Close()
+	resp, err := f.Fetch(context.Background(), abi.FetchRequest{URL: exact.URL})
+	if err != nil {
+		t.Fatalf("at-cap fetch: %v", err)
+	}
+	if len(resp.Body) != abi.FetchMaxBody {
+		t.Fatalf("at-cap body = %d bytes, want %d", len(resp.Body), abi.FetchMaxBody)
+	}
+}
+
 func TestFetchBlocksNonPublicIP(t *testing.T) {
 	// A loopback target on the allowlist still gets blocked at dial time when the
 	// non-public-IP guard is on (the default), preventing SSRF into the platform.

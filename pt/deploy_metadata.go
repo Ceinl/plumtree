@@ -69,8 +69,11 @@ func updateCurrentDeployMetadata(meta deployMetadata) error {
 // build injects them from CI secrets, e.g. in GitHub Actions:
 //
 //	go build -ldflags "\
-//	  -X 'github.com/Ceinl/plumtree/pt.defaultServerURL=$PLUMTREE_SERVER_URL' \
-//	  -X 'github.com/Ceinl/plumtree/pt.defaultDevToken=$PLUMTREE_DEV_TOKEN'"
+//	  -X 'main.defaultServerURL=$PLUMTREE_SERVER_URL' \
+//	  -X 'main.defaultDevToken=$PLUMTREE_DEV_TOKEN'"
+//
+// pt is `package main`, so the linker symbol path is `main`, not the import
+// path github.com/Ceinl/plumtree/pt.
 //
 // Both are empty in an un-baked local build; the matching PLUMTREE_* environment
 // variables override the baked values for the maintainer's own development.

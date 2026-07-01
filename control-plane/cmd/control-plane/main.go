@@ -135,13 +135,6 @@ func main() {
 		Build:           build,
 		RateLimitPerSec: *rateLimit,
 		RateLimitBurst:  *rateBurst,
-		Limits: httpapi.LimitsInfo{
-			MaxConcurrentSessions:   *maxSessions,
-			MaxSessionsPerAppPerDay: *maxSessionsPerAppDay,
-			MaxFramesPerSec:         runner.DefaultLimits.MaxFramesPerSec,
-			MaxEventsPerSec:         runner.DefaultLimits.MaxEventsPerSec,
-			SessionTimeout:          runner.DefaultLimits.SessionTimeout,
-		},
 	}).Handler()
 	originURL := strings.TrimRight(*origin, "/")
 	fmt.Println()

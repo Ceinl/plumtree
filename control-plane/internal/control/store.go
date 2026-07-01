@@ -132,6 +132,51 @@ type Store struct {
 	// "preview-<deployID>" in the tightest (ownerless) sandbox — no secrets, no
 	// egress. Off by default; gated on because it relies on deploy rate limiting.
 	anonymousPreview bool
+
+	// subMu guards subs, the set of change subscribers notified when runtime
+	// state that dashboards display (sessions) mutates. It is independent of mu so
+	// notifications can fire while a write lock is held.
+	subMu sync.Mutex
+	subs  map[*subscriber]struct{}
+}
+
+// subscriber is one change listener. ch is buffered to length 1 so notifications
+// coalesce: a pending signal is enough to tell the reader "state changed, re-read".
+type subscriber struct {
+	ch chan struct{}
+}
+
+// Subscribe registers a listener for runtime-state changes. The returned channel
+// receives a coalesced signal whenever sessions change; the caller re-reads the
+// store to get the new state. The cancel func unregisters and must be called when
+// the listener goes away.
+func (s *Store) Subscribe() (<-chan struct{}, func()) {
+	sub := &subscriber{ch: make(chan struct{}, 1)}
+	s.subMu.Lock()
+	if s.subs == nil {
+		s.subs = make(map[*subscriber]struct{})
+	}
+	s.subs[sub] = struct{}{}
+	s.subMu.Unlock()
+	return sub.ch, func() {
+		s.subMu.Lock()
+		delete(s.subs, sub)
+		s.subMu.Unlock()
+	}
+}
+
+// notifyChange wakes every subscriber. The send is non-blocking: a subscriber
+// that already has a pending signal keeps it (coalescing), and a slow reader
+// never stalls a writer.
+func (s *Store) notifyChange() {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	for sub := range s.subs {
+		select {
+		case sub.ch <- struct{}{}:
+		default:
+		}
+	}
 }
 
 type appKey struct {
@@ -394,4 +439,18 @@ func (s *Store) ListApps(ownerID string) ([]App, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// AppDailyConnections reports how many sessions the app started in the trailing
+// 24h window and the configured per-app daily cap. A cap of 0 means unlimited.
+func (s *Store) AppDailyConnections(appID string) (used, cap int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cutoff := s.now().Add(-24 * time.Hour)
+	for _, session := range s.sessions {
+		if session.AppID == appID && session.StartedAt.After(cutoff) {
+			used++
+		}
+	}
+	return used, s.maxSessionsPerAppPerDay
 }

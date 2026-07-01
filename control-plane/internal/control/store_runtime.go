@@ -144,6 +144,9 @@ func (s *Store) RemoveEgressHost(appID, host string) ([]string, error) {
 func (s *Store) StartSession(appID, deployID string) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if id, ok := previewDeployID(appID); ok && s.anonymousPreview {
+		return s.startPreviewSessionLocked(appID, id, deployID)
+	}
 	app, ok := s.apps[appID]
 	if !ok {
 		return Session{}, fmt.Errorf("%w: app %q", ErrNotFound, appID)
@@ -174,6 +177,38 @@ func (s *Store) StartSession(appID, deployID string) (Session, error) {
 	if err := s.persistLocked(); err != nil {
 		return Session{}, err
 	}
+	s.notifyChange()
+	return cloneSession(session), nil
+}
+
+// startPreviewSessionLocked opens an anonymous-preview session under the
+// synthetic "preview-<deployID>" app id minted by resolvePreviewLocked. There is
+// no persisted app or active-deploy pointer to check, so it validates the deploy
+// directly. The owner session quota is owner-scoped and previews have no owner,
+// so only the per-app daily cap applies — keyed on the synthetic id, which rate-
+// limits each preview deploy on its own without touching the real app's budget.
+func (s *Store) startPreviewSessionLocked(appID, wantDeployID, deployID string) (Session, error) {
+	if wantDeployID != deployID {
+		return Session{}, fmt.Errorf("%w: preview app %q does not match deploy %q", ErrInvalid, appID, deployID)
+	}
+	deploy, err := s.checkPreviewDeployLocked(deployID)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := s.checkAppDailySessionQuotaLocked(appID); err != nil {
+		return Session{}, err
+	}
+	session := Session{
+		ID:        s.nextID("ses"),
+		AppID:     appID,
+		DeployID:  deploy.ID,
+		StartedAt: s.now(),
+	}
+	s.sessions[session.ID] = session
+	if err := s.persistLocked(); err != nil {
+		return Session{}, err
+	}
+	s.notifyChange()
 	return cloneSession(session), nil
 }
 
@@ -210,6 +245,7 @@ func (s *Store) EndSession(id string) (Session, error) {
 		if err := s.persistLocked(); err != nil {
 			return Session{}, err
 		}
+		s.notifyChange()
 	}
 	return cloneSession(session), nil
 }
