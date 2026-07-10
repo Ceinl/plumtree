@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plumtree audit report</title>
+  <style>
+    :root { color-scheme: light; --bg:#f4f5f2; --paper:#fff; --ink:#18201c; --muted:#66706a; --line:#dce1dc; --critical:#8d1f2d; --high:#b44b18; --medium:#956b08; --low:#4e6977; --ok:#26704b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { width:min(1040px,calc(100% - 32px)); margin:0 auto; padding:56px 0 72px; }
+    header { margin-bottom:30px; }
+    h1 { margin:0 0 8px; font-size:clamp(30px,5vw,48px); letter-spacing:-.04em; line-height:1.05; }
+    h2 { margin:0; font-size:18px; letter-spacing:-.01em; }
+    p { margin:8px 0 0; }
+    .muted,.meta { color:var(--muted); }
+    .meta { font-size:13px; }
+    .summary { display:grid; grid-template-columns:repeat(5,1fr); gap:1px; border:1px solid var(--line); background:var(--line); margin:24px 0; }
+    .metric { background:var(--paper); padding:16px; }
+    .metric b { display:block; font-size:26px; line-height:1.1; }
+    .metric span { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+    .verdict { border-left:4px solid var(--high); background:#fffaf5; padding:16px 18px; margin:0 0 30px; }
+    .finding { background:var(--paper); border:1px solid var(--line); padding:20px; margin:12px 0; }
+    .finding-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .id { color:var(--muted); font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; margin-bottom:4px; }
+    .badge { flex:0 0 auto; border:1px solid currentColor; border-radius:999px; padding:3px 9px; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+    .critical { color:var(--critical); } .high { color:var(--high); } .medium { color:var(--medium); } .low { color:var(--low); } .resolved { color:var(--ok); }
+    .detail { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:14px; }
+    .label { color:var(--muted); display:block; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; margin-bottom:3px; }
+    code { font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:#f1f3ef; padding:2px 5px; border-radius:3px; }
+    a { color:inherit; text-decoration-color:#aeb7b0; text-underline-offset:3px; }
+    table { width:100%; border-collapse:collapse; background:var(--paper); border:1px solid var(--line); }
+    th,td { text-align:left; padding:11px 13px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--muted); font-size:11px; letter-spacing:.07em; text-transform:uppercase; }
+    .pass { color:var(--ok); font-weight:700; }
+    section { margin-top:34px; }
+    footer { margin-top:34px; color:var(--muted); font-size:12px; }
+    @media (max-width:760px) { .summary { grid-template-columns:repeat(2,1fr); } .detail { grid-template-columns:1fr; } .finding-head { display:block; } .badge { display:inline-block; margin-top:10px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="meta">STATIC APPLICATION &amp; SECURITY REVIEW · REVALIDATED 10 JULY 2026</div>
+    <h1>Plumtree audit</h1>
+    <p class="muted">Current working tree · Go control plane, build worker, runner, SSH gateway, SDK and <code>pt</code> CLI</p>
+  </header>
+
+  <div class="summary" aria-label="Finding summary">
+    <div class="metric"><b class="resolved">12</b><span>resolved</span></div>
+    <div class="metric"><b>3</b><span>open</span></div>
+    <div class="metric"><b class="critical">0</b><span>critical / high</span></div>
+    <div class="metric"><b class="medium">0</b><span>medium</span></div>
+    <div class="metric"><b class="low">3</b><span>low</span></div>
+  </div>
+
+  <div class="verdict">
+    <strong>All previously reported critical and high findings are resolved in the current working tree.</strong>
+    <p>No critical, high, or medium findings remain. PT-09 was downgraded to low after SSH proof and identity resolution were implemented. The two originally low findings were not re-audited.</p>
+  </div>
+
+  <section aria-labelledby="findings">
+    <h2 id="findings">Findings</h2>
+    <p class="meta">Resolved cards retain the original finding text and recommendation beneath the green revalidation note for audit history.</p>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-01</div><h2>Build work happens before authorization, validation and quota enforcement</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> requests are now validated, update claims authenticated, and deploy quota reserved before building. Artifact and deploy creation is atomic, with build concurrency and queue limits covered by tests.</p>
+      <p>A deploy or update is compiled and persisted as an artifact before the deploy claim is validated. On update, possession of the claim token is not checked until after the build. Invalid names, bad deploy IDs, bad claim tokens and exceeded deploy quotas therefore still consume a build and leave an unreferenced artifact that has no cleanup path.</p>
+      <div class="detail"><div><span class="label">Impact</span>Anyone holding the published dev token can repeatedly consume CPU, memory and durable blob storage. A random bearer token is enough on the update route. The configured deploy/hour cap does not protect the expensive operation.</div><div><span class="label">Fix</span>Validate request fields, authenticate the deploy claim and reserve quota before calling the builder. Create artifact + deploy atomically, or delete the artifact on every failure. Add a build concurrency semaphore.</div></div>
+      <p class="meta">Evidence: <a href="control-plane/internal/httpapi/dev_deploy.go#L43">dev_deploy.go:43–68</a>, <a href="control-plane/internal/httpapi/dev_deploy.go#L147">dev_deploy.go:147–166</a>, <a href="control-plane/internal/httpapi/dev_deploy_artifact.go#L28">dev_deploy_artifact.go:28–64</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-02</div><h2>Standalone gateway truncates normal WASM responses</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> artifact responses now use a separate 256 MiB limit, while metadata stays at 1 MiB. An HTTP-backend test successfully round-trips a 3 MiB artifact.</p>
+      <p>The gateway applies a 1 MiB <code>LimitReader</code> to every successful backend response, including <code>ResolveRunnable</code>, whose JSON contains base64 WASM. The scaffolded counter builds to 2,741,026 bytes (about 3,654,704 base64 bytes), so production resolution ends with truncated JSON.</p>
+      <div class="detail"><div><span class="label">Impact</span>Ordinary deployed Go apps fail to launch through the standalone gateway used by Docker Compose.</div><div><span class="label">Fix</span>Stream artifacts separately, or use an explicit artifact-size cap large enough for the response. Keep the 1 MiB limit only for small metadata/error responses and add an adapter integration test with a multi-megabyte artifact.</div></div>
+      <p class="meta">Evidence: <a href="ssh-gateway/httpbackend/client.go#L35">httpbackend/client.go:35</a>, <a href="ssh-gateway/httpbackend/client.go#L129">httpbackend/client.go:129</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-03</div><h2>CLI apps bypass worker-process isolation</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> the process protocol supports CLI arguments and filtered output, and the gateway routes CLI apps through <code>ProcessRunner.RunCLI</code> when a worker is configured.</p>
+      <p>The production image configures <code>RunnerWorker</code>, but the gateway sends CLI apps directly to the in-process <code>Runner.RunCLI</code>. Only TUI sessions use <code>ProcessRunner</code>.</p>
+      <div class="detail"><div><span class="label">Impact</span>A runtime or host-function escape in a hostile CLI app lands inside the public SSH gateway process, contrary to the documented per-session process boundary.</div><div><span class="label">Fix</span>Implement CLI mode in the process protocol and route both app types through the worker whenever it is configured. Add a production-mode test asserting the worker is spawned.</div></div>
+      <p class="meta">Evidence: <a href="ssh-gateway/gateway/session.go#L122">gateway/session.go:122–157</a>, <a href="runner/procworker.go#L28">procworker.go:28–34</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-04</div><h2>SSH clients control unbounded gateway allocations</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> PTY and resize requests are rejected outside 1–500 × 1–300 with a 150,000-cell cap; the screen allocation site independently enforces the same bounds.</p>
+      <p>PTY and window dimensions are accepted as <code>uint32</code> with no bounds. Before the isolated worker starts, the gateway constructs a screen with <code>h × w</code> cells in its own process.</p>
+      <div class="detail"><div><span class="label">Impact</span>An anonymous SSH client can request extreme dimensions and trigger excessive allocation or process OOM, taking down all tenants on the gateway.</div><div><span class="label">Fix</span>Clamp dimensions at request parsing (for example 1–500 columns and 1–300 rows), reject invalid requests, and cap total cells before every screen resize.</div></div>
+      <p class="meta">Evidence: <a href="ssh-gateway/gateway/session.go#L44">gateway/session.go:44–57</a>, <a href="ssh-gateway/gateway/session.go#L134">gateway/session.go:134–147</a>, <a href="tui-runtime/screen/screen.go#L30">screen.go:30–51</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-05</div><h2>SSH connections have no admission or idle limits</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> global/per-IP admission, handshake and activity-based idle deadlines now have secure defaults. Session capacity is reserved before resolving and retaining WASM.</p>
+      <p>Each accepted TCP connection gets a goroutine; no handshake deadline, idle deadline, connection cap or per-IP cap is applied. After handshake, the complete WASM artifact is resolved and retained before the client opens a session channel. The session semaphore is acquired later.</p>
+      <div class="detail"><div><span class="label">Impact</span>Slow handshakes exhaust file descriptors/goroutines; many idle authenticated connections retain multi-megabyte artifacts and bypass <code>MaxConcurrentSessions</code>.</div><div><span class="label">Fix</span>Add handshake and idle deadlines, global/per-IP connection admission, and acquire capacity before artifact resolution. Avoid embedding artifact bytes in per-connection state.</div></div>
+      <p class="meta">Evidence: <a href="ssh-gateway/gateway/server.go#L101">gateway/server.go:101–152</a>, <a href="ssh-gateway/gateway/session.go#L79">gateway/session.go:79–89</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-06</div><h2>Production abuse limits default to unlimited</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> control plane, gateway and worker ship nonzero defaults; production mode rejects unlimited critical settings unless explicitly acknowledged. Compose adds CPU, memory and PID limits.</p>
+      <p>Global concurrent sessions and deploys/hour both default to zero (unlimited); Compose does not set either. The build service also has no job concurrency limit, and the container has no memory limit. The dev token is intentionally recoverable from released binaries.</p>
+      <div class="detail"><div><span class="label">Impact</span>A public deployment starts with weak protection against build floods and cross-app session floods. Multiple 2 GiB-limited compiler processes can still OOM the host.</div><div><span class="label">Fix</span>Ship conservative nonzero defaults, configure Compose limits, add build queue/concurrency controls and container CPU/memory/PID limits. Refuse production startup when critical limits remain unlimited unless explicitly acknowledged.</div></div>
+      <p class="meta">Evidence: <a href="control-plane/cmd/control-plane/main.go#L87">control-plane main.go:87–90</a>, <a href="ssh-gateway/cmd/ssh-gateway/main.go#L78">ssh-gateway main.go:78</a>, <a href="deploy/docker-compose.yml">docker-compose.yml</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-07</div><h2>Suspension does not terminate live sessions</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> suspensions fan out to embedded and standalone gateways, cancel matching sessions, wait for deregistration, and acknowledge completion before the operation returns.</p>
+      <p>Store suspension flags block future resolution only. A session registry can cancel active sessions, but no operator path calls it; the limitation is explicitly marked TODO.</p>
+      <div class="detail"><div><span class="label">Impact</span>Malicious or compromised code continues running until disconnect or the 30-minute session timeout after an operator “suspends” it.</div><div><span class="label">Fix</span>Wire owner/app/deploy suspension events to every gateway and wait for cancellation acknowledgement.</div></div>
+      <p class="meta">Evidence: <a href="ssh-gateway/gateway/killswitch.go#L29">killswitch.go:29–34</a>, <a href="control-plane/internal/control/store_deploys.go#L270">store_deploys.go:270–316</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-08</div><h2>Public HTTP servers omit defensive timeouts</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> control plane and build worker now set read-header, read, write and idle timeouts plus bounded graceful shutdown.</p>
+      <p>The control plane and build worker instantiate <code>http.Server</code> with only address and handler. Read-header, read, write and idle timeouts are unset.</p>
+      <div class="detail"><div><span class="label">Impact</span>Direct exposure permits slow-request connection exhaustion. A reverse proxy may reduce but does not remove the application-layer weakness.</div><div><span class="label">Fix</span>Set explicit <code>ReadHeaderTimeout</code>, <code>ReadTimeout</code>, <code>WriteTimeout</code>, <code>IdleTimeout</code> and bounded shutdown contexts.</div></div>
+      <p class="meta">Evidence: <a href="control-plane/cmd/control-plane/main.go#L178">control-plane main.go:178</a>, <a href="build-worker/cmd/build-worker/main.go#L44">build-worker main.go:44</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-09</div><h2>No user-facing SSH key enrollment path</h2></div><span class="badge low">Low</span></div>
+      <p class="resolved"><strong>Revalidated and downgraded:</strong> “none” authentication is gone; the gateway records a fingerprint only after signature verification, distinguishes anonymous/unregistered/registered keys, and resolves registered keys through the control plane.</p>
+      <p>The remaining gap is product plumbing: no HTTP or CLI route lets a normal owner call the existing <code>RegisterSSHKey</code> operation, so owner-linked <code>Authenticated=true</code> identities require out-of-band provisioning.</p>
+      <div class="detail"><div><span class="label">Impact</span>Stable proved-key identities work, but self-service owner association is unavailable.</div><div><span class="label">Fix</span>Add authenticated owner endpoints and <code>pt</code> commands to list, register and revoke SSH keys.</div></div>
+      <p class="meta">Evidence: <a href="ssh-gateway/gateway/server.go">gateway/server.go</a>, <a href="control-plane/internal/control/store_credentials.go">store_credentials.go</a>; no enrollment route found under <code>control-plane/internal/httpapi</code> or <code>pt</code>.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-10</div><h2>Issued CI tokens cannot authorize any operation</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> the incomplete HTTP token-issuance API and routes were removed, so users are no longer issued credentials that appear usable but are not.</p>
+      <p>The API creates scoped <code>ptci_</code> tokens and returns their plaintext once, but no HTTP route calls <code>AuthenticateCIToken</code> or enforces token scopes. Deploy, inspect, logs and secrets still require the global dev token plus claim token.</p>
+      <div class="detail"><div><span class="label">Impact</span>Users can create credentials that appear valid but are unusable, and the intended replacement for shared deploy credentials is incomplete.</div><div><span class="label">Fix</span>Add CI bearer authentication middleware and scope checks to each operation, or remove the token UI/API until complete.</div></div>
+      <p class="meta">Evidence: <a href="control-plane/internal/httpapi/tokens.go#L19">tokens.go:19–72</a>, <a href="control-plane/internal/control/store_credentials.go#L126">store_credentials.go:126–142</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-11</div><h2>Dashboard bearer token is placed in the URL</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> the query-token fallback was removed. The dashboard now consumes the SSE response through <code>fetch</code> with an Authorization header and reconnect handling.</p>
+      <p>The SSE endpoint accepts <code>access_token</code> and the dashboard constructs an EventSource URL containing the Shoo bearer token.</p>
+      <div class="detail"><div><span class="label">Impact</span>Tokens can enter access logs, proxy telemetry, browser history and diagnostic captures. <code>Referrer-Policy</code> helps only with referrer disclosure.</div><div><span class="label">Fix</span>Use a same-origin, short-lived, single-purpose SSE ticket or replace EventSource with a fetch-based stream that carries an Authorization header.</div></div>
+      <p class="meta">Evidence: <a href="control-plane/internal/httpapi/http_helpers.go#L90">http_helpers.go:90–95</a>, <a href="control-plane/internal/httpapi/templates.go#L160">templates.go:160–166</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-12</div><h2>File-backed app KV retains mutations after persistence failure</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated with forced failure:</strong> <code>FileStore</code> now serializes mutation and persistence, restores the previous value and byte count on error, and has explicit write- and rename-failure regression tests. A forced parent-directory failure returned an error and the attempted key was not visible afterward.</p>
+      <p>The original implementation mutated the embedded memory store before writing the JSON file. A mkdir, write or rename failure returned an error while leaving the rejected value visible to live sessions.</p>
+      <div class="detail"><div><span class="label">Original impact</span>App KV state could diverge from its acknowledged durable state and disappear after gateway restart.</div><div><span class="label">Implemented fix</span>Mutation, snapshot and rollback are guarded by a transaction lock; failed persistence restores both data and quota accounting.</div></div>
+      <p class="meta">Evidence: <a href="runner/kv.go#L251">runner/kv.go: FileStore.Set/Delete</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-13</div><h2>Application secrets are stored as reversible plaintext data</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> persistent snapshots now use AES-GCM envelope encryption with a KEK mounted outside the state volume, support key rotation, and production mode refuses persistent startup without the key.</p>
+      <p>Secret bytes are base64-encoded into the JSON state snapshot. File mode limits casual access, but volume snapshots and backups contain immediately recoverable values and there is no encryption or key separation.</p>
+      <div class="detail"><div><span class="label">Impact</span>A leaked control-plane volume or backup exposes every tenant secret.</div><div><span class="label">Fix</span>Use a managed secret store or envelope encryption with a key held outside the data volume; document rotation and backup handling.</div></div>
+      <p class="meta">Evidence: <a href="control-plane/internal/control/persistence_snapshot.go#L52">persistence_snapshot.go:52–58</a>, <a href="control-plane/internal/control/persistence.go#L28">persistence.go:28–45</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-14</div><h2>Rate limiting can permanently hide the final TUI frame</h2></div><span class="badge low">Low</span></div>
+      <p>Frames denied by the sink throttle update the in-memory screen but schedule no later flush; the <code>dirty</code> field is unused. A last frame arriving inside the interval may never reach the terminal.</p>
+      <div class="detail"><div><span class="label">Impact</span>Users can see stale state or miss a completion/error screen until another event causes a later render.</div><div><span class="label">Fix</span>Coalesce to the latest frame and schedule a trailing-edge flush; flush pending content on shutdown.</div></div>
+      <p class="meta">Evidence: <a href="runner/render.go#L48">render.go:48–90</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-15</div><h2>Production adapters and entrypoints lack direct tests</h2></div><span class="badge low">Low</span></div>
+      <p><code>ssh-gateway/httpbackend</code>, both standalone command packages and several SDK example paths report “no test files.” The 1 MiB production gateway failure is therefore outside current coverage even though all module tests pass.</p>
+      <div class="detail"><div><span class="label">Impact</span>Configuration-specific failures survive a green suite.</div><div><span class="label">Fix</span>Add Docker-topology smoke tests: deploy a real scaffolded app, resolve it through the HTTP backend, run both CLI and TUI sessions, exercise suspension and hostile SSH dimensions.</div></div>
+    </article>
+  </section>
+
+  <section aria-labelledby="verification">
+    <h2 id="verification">Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Result</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Go tests</td><td class="pass">Pass</td><td>All 7 workspace modules; security-relevant packages also rerun uncached</td></tr>
+        <tr><td>Go vet</td><td class="pass">Pass</td><td>All 7 workspace modules</td></tr>
+        <tr><td>Race tests</td><td>Not rerun</td><td>The earlier instrumentation-only runner timing failure remains historical and is not used as evidence for these findings.</td></tr>
+        <tr><td>Artifact-size reproduction</td><td>Confirmed</td><td>Counter WASM 2,741,026 B; base64 payload ≈ 3,654,704 B</td></tr>
+        <tr><td>Dependency vulnerability scan</td><td>Not run</td><td><code>govulncheck</code> is not installed in the workspace</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section aria-labelledby="priority">
+    <h2 id="priority">Recommended order</h2>
+    <p>No non-low findings remain. PT-09 is now low-severity product plumbing. PT-14 and PT-15 remain the two originally low findings and were not re-audited in this pass.</p>
+  </section>
+
+  <footer>
+    Revalidation of the current uncommitted working tree. Application source was not changed; only this report was updated. Dynamic internet-facing penetration testing and third-party dependency advisories were outside this run.
+  </footer>
+</main>
+</body>
+</html>
