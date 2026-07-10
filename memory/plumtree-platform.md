@@ -11,9 +11,10 @@ the terminal." Subrepos: `tui-runtime`, `sdk`, `pt` (author CLI), `runner`
 (wazero session runner + host ABI), `control-plane`, `build-worker`,
 `ssh-gateway` (skeleton). Architecture, subrepo map, and status are all now
 consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
-`REPOS.md` were folded into it and deleted 2026-06-27). Each subrepo is its own
-git repo; the top-level dir, `spike/`, and
-`_devtest/` are NOT under git.
+`REPOS.md` were folded into it and deleted 2026-06-27). Now a single top-level git
+repo (monorepo) at `/Users/c/code/plumtree`; `_devtest/` and `sdk/plums` are
+gitignored/untracked local state. The Phase-1 `spike/` prototype was removed
+2026-07-08 (validated + superseded; recoverable from git history).
 
 Status (2026-06-25): Phase 1 spike validated; end-to-end dev+deploy loop works
 (`pt new → dev → dev --ssh → deploy → claim → ssh <app>@plumtree.dev`). The full

@@ -8,5 +8,5 @@ require golang.org/x/sys v0.43.0 // indirect
 
 require golang.org/x/term v0.42.0 // indirect
 
-// During the spike the runtime lives in a sibling local repo.
+// The runtime is a sibling module in this workspace.
 replace github.com/Ceinl/plumtree/tui-runtime => ../tui-runtime

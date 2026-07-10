@@ -16,7 +16,7 @@ require (
 	golang.org/x/term v0.44.0 // indirect
 )
 
-// During the spike the SDK and runtime live in sibling local repos.
+// Sibling modules resolved locally within this workspace.
 replace (
 	github.com/Ceinl/plumtree/build-worker => ../build-worker
 	github.com/Ceinl/plumtree/runner => ../runner

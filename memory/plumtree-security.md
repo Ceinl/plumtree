@@ -38,5 +38,16 @@ cmd/build-worker), transitive deps from a baked-in `file://` module proxy,
 internal-only compose network, read-only rootfs, tmpfs sandboxes. Verified by
 building a scaffolded app inside the no-network container.
 
-Still open (flagged, not done): CLI `controlFilter` passes C1 bytes (TUI sink
-already sanitizes them).
+Update (2026-07-08): CLI `controlFilter` (runner/cli.go) now strips C1 controls
+(0x80–0x9f) too — it decodes the guest stream as UTF-8 and drops C0/DEL/C1 at the
+rune level (mirrors `sanitizeRune`), carrying runes split across Write calls, so a
+lone 0x9b/0x9d/0x90 (8-bit CSI/OSC/DCS) can no longer reach the terminal while
+legitimate multibyte UTF-8 survives. Tests in runner/devhost_test.go.
+
+Update (2026-07-10): the ssh-gateway operator kill switch is wired end to end.
+Owner/app/deploy suspension events fan out to embedded and standalone gateways,
+cancel matching sessions, wait for deregistration, and acknowledge completion
+before the control-plane operation returns. The same hardening pass added SSH
+connection admission/deadlines, bounded terminal dimensions, worker isolation
+for CLI apps, bounded build admission, encrypted control-plane snapshots, and
+transactional persistence rollback.

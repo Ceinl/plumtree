@@ -11,7 +11,6 @@ Owns:
   default, or on disk via `--blob-dir` for durable artifact storage).
 - sessions metadata.
 - SSH keys.
-- CI tokens.
 - server-side secrets (metadata + values; values injected into claimed apps as
   `ctx.Env`, never returned by the API).
 - per-app egress allowlist (injected into claimed apps as `ctx.Fetch`).

@@ -15,13 +15,6 @@ type manifest struct {
 	Type string `json:"type"`
 }
 
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func buildWASM(proj string) ([]byte, func(), error) {
 	out, err := os.CreateTemp("", "pt-dev-*.wasm")
 	if err != nil {

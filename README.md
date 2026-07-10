@@ -132,7 +132,7 @@ guest. More trust unlocks more capability:
 |-------------|----------------------------------------|---------------------|
 | `ctx.KV`    | durable per-app key/value state        | all apps            |
 | pub/sub     | live cross-session messaging (no poll) | all apps            |
-| `ctx.Auth`  | who's connected (SSH-key identity)     | all apps            |
+| `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
 | `ctx.Env`   | server-side secrets                    | **claimed** apps    |
 | `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
 
@@ -198,7 +198,6 @@ A multi-module Go workspace (`go.work`), split by product boundary:
 | `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
 | `runner/`        | `github.com/Ceinl/plumtree/runner`        | Isolated WASM session runner + host capability implementation. |
 | `ssh-gateway/`   | `github.com/Ceinl/plumtree/ssh-gateway`   | SSH front end mapping connections to deployed app sessions.    |
-| `spike/`         | `github.com/Ceinl/plumtree/spike`         | Phase 1 WASM feasibility spike (validating record, not shipped). |
 
 ## Status
 

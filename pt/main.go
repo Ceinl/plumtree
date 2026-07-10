@@ -1,7 +1,8 @@
-// Command pt is the Plumtree author CLI. This spike-stage build implements the
-// local authoring loop: `pt new` scaffolds an app and `pt dev` compiles it to
-// WASM and runs it in a local wazero sandbox over the same ABI the platform
-// will use. Phase 4 adds the local deploy claim loop and basic inspection.
+// Command pt is the Plumtree author CLI. It implements the local authoring loop
+// (`pt new` scaffolds an app; `pt dev` compiles it to WASM and runs it in a local
+// wazero sandbox over the same ABI the platform uses), the deploy + claim loop
+// (`pt deploy`, `pt claim`), and per-app capability config (`pt secret`,
+// `pt egress`).
 package main
 
 import (

@@ -48,3 +48,16 @@ All flags also read from `PLUMTREE_*` environment variables (see `-h`).
 
 In all-in-one mode the control plane embeds this `gateway` package directly via
 an in-process `Backend` adapter, so there is no HTTP hop and no token needed.
+
+## End-user authentication
+
+SSH keys are optional. A client that proves possession of a public key gets a
+stable fingerprint identity; the control plane marks it authenticated only when
+that fingerprint is registered to an owner. An unregistered but proved key is
+stable and unauthenticated. A client without a usable key takes the anonymous
+fallback and receives an ephemeral `anonymous:<session-id>` identity.
+
+The gateway deliberately does not accept SSH's `none` method: clients send
+`none` before trying their keys, so accepting it would silently turn key-bearing
+connections anonymous. Anonymous access instead uses a prompt-free
+keyboard-interactive fallback after public-key authentication has been tried.
