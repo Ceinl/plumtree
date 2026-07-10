@@ -29,7 +29,10 @@ type Server struct {
 	devToken     string
 	gatewayToken string
 	build        BuildBackend
+	buildSlots   chan struct{}
+	buildQueue   chan struct{}
 	limiter      *ipLimiter
+	suspensions  *suspensionHub
 }
 
 func New(store *control.Store, verifier TokenVerifier, appOrigin string) *Server {
@@ -49,6 +52,11 @@ type Config struct {
 	// Build, when set, compiles uploaded source server-side. When nil, deploys
 	// must carry pre-built WASM (legacy/dev path).
 	Build BuildBackend
+	// MaxConcurrentBuilds bounds simultaneous calls to Build. Zero is unlimited.
+	MaxConcurrentBuilds int
+	// MaxQueuedBuilds bounds requests waiting for a build slot. Zero rejects
+	// immediately when all build slots are occupied.
+	MaxQueuedBuilds int
 	// RateLimitPerSec caps requests per second per client IP across the
 	// dashboard and API. 0 disables HTTP rate limiting. RateLimitBurst sets the
 	// bucket depth (defaults to RateLimitPerSec).
@@ -61,15 +69,29 @@ func NewWithConfig(cfg Config) *Server {
 	if store == nil {
 		store = control.NewStore()
 	}
-	return &Server{
+	var buildSlots chan struct{}
+	var buildQueue chan struct{}
+	if cfg.MaxConcurrentBuilds > 0 {
+		buildSlots = make(chan struct{}, cfg.MaxConcurrentBuilds)
+		if cfg.MaxQueuedBuilds > 0 {
+			buildQueue = make(chan struct{}, cfg.MaxQueuedBuilds)
+		}
+	}
+	suspensions := newSuspensionHub()
+	server := &Server{
 		store:        store,
 		verifier:     cfg.Verifier,
 		appOrigin:    cfg.AppOrigin,
 		devToken:     cfg.DevToken,
 		gatewayToken: cfg.GatewayToken,
 		build:        cfg.Build,
+		buildSlots:   buildSlots,
+		buildQueue:   buildQueue,
 		limiter:      newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
+		suspensions:  suspensions,
 	}
+	store.RegisterSuspensionListener(suspensions.publish)
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -83,15 +105,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/me/handle", s.handleMeHandle)
 	mux.HandleFunc("/api/apps", s.handleApps)
 	mux.HandleFunc("/api/apps/stream", s.handleAppsStream)
-	mux.HandleFunc("/api/me/tokens", s.handleTokens)
-	mux.HandleFunc("/api/me/tokens/", s.handleTokenByID)
 	mux.HandleFunc("/api/claims/", s.handleClaimAPI)
 	mux.HandleFunc("/api/dev/deploy/", s.handleDevDeployPath)
 	mux.HandleFunc("/api/dev/deploy", s.handleDevDeploy)
+	mux.HandleFunc(gatewayapi.BasePath+"/identity", s.handleGatewayIdentity)
 	mux.HandleFunc(gatewayapi.BasePath+"/resolve", s.handleGatewayResolve)
 	mux.HandleFunc(gatewayapi.BasePath+"/sessions", s.handleGatewayStartSession)
 	mux.HandleFunc(gatewayapi.BasePath+"/sessions/", s.handleGatewaySessionByID)
 	mux.HandleFunc(gatewayapi.BasePath+"/apps/", s.handleGatewayApp)
+	mux.HandleFunc(gatewayapi.BasePath+"/suspensions", s.handleGatewaySuspensions)
+	mux.HandleFunc(gatewayapi.BasePath+"/suspensions/next", s.handleGatewaySuspensionNext)
+	mux.HandleFunc(gatewayapi.BasePath+"/suspensions/ack", s.handleGatewaySuspensionAck)
 	return securityHeaders(rateLimit(mux, s.limiter))
 }
 

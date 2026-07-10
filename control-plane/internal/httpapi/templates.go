@@ -158,21 +158,61 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
     let appsStream = null;
 
     // openAppsStream subscribes to live app updates over SSE so per-app
-    // connection counts refresh on change without re-fetching. EventSource cannot
-    // set headers, so the bearer rides along as a query param.
+    // connection counts refresh on change without re-fetching. fetch is used
+    // instead of EventSource because it keeps the bearer out of URLs.
     function openAppsStream(token) {
       closeAppsStream();
-      appsStream = new EventSource("/api/apps/stream?access_token=" + encodeURIComponent(token));
-      appsStream.onmessage = (event) => {
+      const stream = { controller: new AbortController(), closed: false };
+      appsStream = stream;
+      consumeAppsStream(token, stream);
+    }
+
+    async function consumeAppsStream(token, stream) {
+      while (!stream.closed) {
         try {
-          renderApps(JSON.parse(event.data).apps || []);
-        } catch (e) { /* ignore malformed frame */ }
-      };
+          const response = await fetch("/api/apps/stream", {
+            headers: { Authorization: "Bearer " + token, Accept: "text/event-stream" },
+            cache: "no-store",
+            signal: stream.controller.signal
+          });
+          if (!response.ok || !response.body) {
+            throw new Error("live updates unavailable (" + response.status + ")");
+          }
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffered = "";
+          while (!stream.closed) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            buffered += decoder.decode(chunk.value, { stream: true });
+            let boundary;
+            while ((boundary = buffered.indexOf("\n\n")) !== -1) {
+              const event = buffered.slice(0, boundary);
+              buffered = buffered.slice(boundary + 2);
+              const data = event.split("\n")
+                .map(line => line.replace(/\r$/, ""))
+                .filter(line => line.startsWith("data:"))
+                .map(line => line.slice(5).trimStart())
+                .join("\n");
+              if (!data) continue;
+              try {
+                renderApps(JSON.parse(data).apps || []);
+              } catch (e) { /* ignore malformed frame */ }
+            }
+          }
+        } catch (error) {
+          if (!stream.closed && error.name !== "AbortError") {
+            // Keep the dashboard live through transient network interruptions.
+          }
+        }
+        if (!stream.closed) await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
 
     function closeAppsStream() {
       if (appsStream) {
-        appsStream.close();
+        appsStream.closed = true;
+        appsStream.controller.abort();
         appsStream = null;
       }
     }

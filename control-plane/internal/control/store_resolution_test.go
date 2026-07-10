@@ -45,6 +45,18 @@ func TestKillSwitchSuspendsResolution(t *testing.T) {
 	}
 
 	handle := owner.Handle + "/counter"
+	events := make(chan SuspensionEvent, 3)
+	unregister := store.RegisterSuspensionListener(func(event SuspensionEvent) error {
+		events <- event
+		return nil
+	})
+	defer unregister()
+	wantEvent := func(scope SuspensionScope, id string) {
+		t.Helper()
+		if event := <-events; event.Scope != scope || event.ID != id {
+			t.Fatalf("suspension event = %+v, want scope=%q id=%q", event, scope, id)
+		}
+	}
 	mustResolve := func(when string) {
 		if _, _, _, _, err := store.ResolveRunnable(handle); err != nil {
 			t.Fatalf("%s: ResolveRunnable err = %v, want nil", when, err)
@@ -60,6 +72,7 @@ func TestKillSwitchSuspendsResolution(t *testing.T) {
 	if _, err := store.SetAppSuspended(app.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	wantEvent(SuspensionApp, app.ID)
 	mustSuspended("app suspended")
 	if _, err := store.SetAppSuspended(app.ID, false); err != nil {
 		t.Fatal(err)
@@ -69,6 +82,7 @@ func TestKillSwitchSuspendsResolution(t *testing.T) {
 	if _, err := store.SetOwnerSuspended(owner.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	wantEvent(SuspensionOwner, owner.ID)
 	mustSuspended("owner suspended")
 	if _, err := store.SetOwnerSuspended(owner.ID, false); err != nil {
 		t.Fatal(err)
@@ -78,6 +92,7 @@ func TestKillSwitchSuspendsResolution(t *testing.T) {
 	if err := store.SetDeploySuspended(deploy.ID, true); err != nil {
 		t.Fatal(err)
 	}
+	wantEvent(SuspensionDeploy, deploy.ID)
 	mustSuspended("deploy suspended")
 
 	reloaded, err := OpenStore(path)

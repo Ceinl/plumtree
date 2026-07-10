@@ -5,6 +5,30 @@ import (
 	"sort"
 )
 
+// ResolveSSHKey resolves a proved SSH public-key fingerprint to its registered
+// key and owner. Callers must only use this after the SSH transport has verified
+// a signature made by the corresponding private key.
+func (s *Store) ResolveSSHKey(fingerprint string) (SSHKey, Owner, error) {
+	if err := validateNonEmpty("fingerprint", fingerprint); err != nil {
+		return SSHKey{}, Owner{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keyID, ok := s.sshKeyByFingerprint[fingerprint]
+	if !ok {
+		return SSHKey{}, Owner{}, fmt.Errorf("%w: SSH key fingerprint", ErrNotFound)
+	}
+	key, ok := s.sshKeys[keyID]
+	if !ok {
+		return SSHKey{}, Owner{}, fmt.Errorf("%w: SSH key %q", ErrNotFound, keyID)
+	}
+	owner, ok := s.owners[key.OwnerID]
+	if !ok {
+		return SSHKey{}, Owner{}, fmt.Errorf("%w: owner %q", ErrNotFound, key.OwnerID)
+	}
+	return key, owner, nil
+}
+
 func (s *Store) RegisterSSHKey(in SSHKeyInput) (SSHKey, error) {
 	if err := ValidateName(in.Name); err != nil {
 		return SSHKey{}, err

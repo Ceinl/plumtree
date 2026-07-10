@@ -46,6 +46,23 @@ type persistedSecretValue struct {
 // subsequent durable mutations atomically rewrite the snapshot file.
 func OpenStore(snapshotPath string, opts ...Option) (*Store, error) {
 	s := NewStore(opts...)
+	if len(s.snapshotKey) > 0 {
+		c, err := newEnvelopeCipher(s.snapshotKey)
+		if err != nil {
+			return nil, err
+		}
+		s.snapshotCipher = c
+		s.writeSnapshot = func(path string, snap storeSnapshot) error {
+			return writeEncryptedSnapshotFile(path, snap, c)
+		}
+	}
+	if len(s.previousSnapshotKey) > 0 {
+		c, err := newEnvelopeCipher(s.previousSnapshotKey)
+		if err != nil {
+			return nil, err
+		}
+		s.previousSnapshotCipher = c
+	}
 	if snapshotPath == "" {
 		return s, nil
 	}
@@ -71,6 +88,22 @@ func (s *Store) LoadSnapshot(path string) error {
 	if err != nil {
 		return err
 	}
+	wasEncrypted := false
+	if s.snapshotCipher != nil {
+		raw := b
+		b, wasEncrypted, err = s.snapshotCipher.decrypt(raw)
+		if err != nil {
+			if s.previousSnapshotCipher == nil {
+				return fmt.Errorf("decrypt control-plane snapshot %q: %w", path, err)
+			}
+			b, wasEncrypted, err = s.previousSnapshotCipher.decrypt(raw)
+			if err != nil {
+				return fmt.Errorf("decrypt control-plane snapshot %q with current or previous key: %w", path, err)
+			}
+			// The primary key could not read it, so atomically rewrap it below.
+			wasEncrypted = false
+		}
+	}
 	var snap storeSnapshot
 	if err := json.Unmarshal(b, &snap); err != nil {
 		return fmt.Errorf("load control-plane snapshot %q: %w", path, err)
@@ -84,8 +117,8 @@ func (s *Store) LoadSnapshot(path string) error {
 	if err != nil {
 		return fmt.Errorf("load control-plane snapshot %q: %w", path, err)
 	}
-	if migrated {
-		if err := writeSnapshotFile(path, loaded.snapshotLocked()); err != nil {
+	if migrated || (s.snapshotCipher != nil && !wasEncrypted) {
+		if err := s.writeSnapshot(path, loaded.snapshotLocked()); err != nil {
 			return err
 		}
 	}
@@ -112,14 +145,66 @@ func (s *Store) LoadSnapshot(path string) error {
 	s.quotas = loaded.quotas
 	s.suspendedDeploys = loaded.suspendedDeploys
 	s.persistPath = persistPath
+	s.committedSnapshot = s.snapshotLocked()
 	return nil
 }
 
 func (s *Store) persistLocked() error {
+	candidate := s.snapshotLocked()
 	if s.persistPath == "" {
+		// Keep an in-memory checkpoint too. Besides making an in-memory store
+		// internally consistent, this gives a store that later gains a durable
+		// path a correct rollback point.
+		s.committedSnapshot = candidate
 		return nil
 	}
-	return writeSnapshotFile(s.persistPath, s.snapshotLocked())
+	// snapshotLocked makes a detached candidate. The live maps remain private
+	// under s.mu until the atomic replacement has succeeded.
+	if err := s.writeSnapshot(s.persistPath, candidate); err != nil {
+		s.restoreCommittedLocked()
+		return err
+	}
+	s.committedSnapshot = candidate
+	return nil
+}
+
+// restoreCommittedLocked rolls a failed durable mutation back to the last
+// successfully persisted checkpoint. It is deliberately map-level rather than
+// reloading the file, avoiding another I/O failure on the error path.
+// s.mu must be held by the caller.
+func (s *Store) restoreCommittedLocked() {
+	restored := NewStore(WithClock(s.now))
+	// The snapshot owns in-memory blob bytes. Recreate that store before replay
+	// so blobs introduced by the failed mutation do not survive the rollback.
+	if _, ok := s.blobs.(*memBlobStore); ok {
+		restored.blobs = newMemBlobStore()
+	} else {
+		restored.blobs = s.blobs
+	}
+	if _, err := restored.restoreSnapshot(s.committedSnapshot); err != nil {
+		// committedSnapshot was produced by snapshotLocked after a successful
+		// write, so this is unreachable. Keep the original state rather than
+		// replacing it with a partial restore if that invariant is ever broken.
+		return
+	}
+	s.seq = restored.seq
+	s.owners = restored.owners
+	s.ownerByHandle = restored.ownerByHandle
+	s.identities = restored.identities
+	s.apps = restored.apps
+	s.appByOwnerName = restored.appByOwnerName
+	s.artifacts = restored.artifacts
+	s.blobs = restored.blobs
+	s.deploys = restored.deploys
+	s.sshKeys = restored.sshKeys
+	s.sshKeyByFingerprint = restored.sshKeyByFingerprint
+	s.ciTokens = restored.ciTokens
+	s.secrets = restored.secrets
+	s.secretValues = restored.secretValues
+	s.egressAllow = restored.egressAllow
+	s.sessions = restored.sessions
+	s.quotas = restored.quotas
+	s.suspendedDeploys = restored.suspendedDeploys
 }
 
 func writeSnapshotFile(path string, snap storeSnapshot) error {
@@ -141,6 +226,41 @@ func writeSnapshotFile(path string, snap storeSnapshot) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func writeEncryptedSnapshotFile(path string, snap storeSnapshot, c *envelopeCipher) error {
+	var plaintext bytes.Buffer
+	enc := json.NewEncoder(&plaintext)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(snap); err != nil {
+		return err
+	}
+	ciphertext, err := c.encrypt(plaintext.Bytes())
+	if err != nil {
+		return fmt.Errorf("encrypt control-plane snapshot: %w", err)
+	}
+	return writeSnapshotBytes(path, ciphertext)
+}
+
+func writeSnapshotBytes(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".plumtree-state-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err
 	}

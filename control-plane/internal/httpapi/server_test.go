@@ -29,6 +29,12 @@ func TestDashboardServesShooClient(t *testing.T) {
 	if !strings.Contains(body, "https://shoo.dev/shoo.js") || !strings.Contains(body, "/api/apps") || !strings.Contains(body, "/api/me/handle") {
 		t.Fatalf("dashboard missing Shoo client or API calls")
 	}
+	if strings.Contains(body, "EventSource") || strings.Contains(body, "access_token") {
+		t.Fatalf("dashboard exposes bearer credentials through an SSE URL")
+	}
+	if !strings.Contains(body, "Authorization: \"Bearer \" + token") {
+		t.Fatalf("dashboard SSE fetch does not use the authorization header")
+	}
 }
 
 func TestClaimPageRendersUnquotedDeployID(t *testing.T) {
@@ -43,5 +49,15 @@ func TestClaimPageRendersUnquotedDeployID(t *testing.T) {
 	}
 	if !strings.Contains(body, `const claimToken = "claim-token";`) {
 		t.Fatalf("claim page token was not rendered as a plain JS string:\n%s", body)
+	}
+}
+
+func TestCITokenRoutesAreNotExposedUntilCIOperationsAuthorizeThem(t *testing.T) {
+	server := New(control.NewStore(), fakeVerifier{}, "http://localhost:8080")
+	for _, path := range []string{"/api/me/tokens", "/api/me/tokens/token_000001"} {
+		rec := serveTestRequest(t, server, http.MethodGet, path, nil, "test-token")
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, rec.Code)
+		}
 	}
 }

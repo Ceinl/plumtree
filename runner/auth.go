@@ -3,16 +3,16 @@ package runner
 import (
 	"context"
 
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
-	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 // Identity is who is connected for a session. It mirrors abi.Identity and is
 // supplied by the host (the SSH layer) per session, so unlike KV/Bus it is not
 // shared across sessions.
 type Identity struct {
-	User          string // SSH key fingerprint, or an ephemeral per-session id
+	User          string // proved SSH key fingerprint, or "anonymous:<session-id>"
 	Authenticated bool   // verified against a claimed owner key
 }
 

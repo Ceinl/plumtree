@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,6 +113,88 @@ func TestFileStorePersistsAcrossInstances(t *testing.T) {
 	}
 	if _, ok, _ := s2.Get("count"); ok {
 		t.Fatal("deleted key reappeared after reload")
+	}
+}
+
+func TestFileStoreSetRollsBackOnPersistenceFailure(t *testing.T) {
+	for _, failure := range []struct {
+		name   string
+		inject func(*FileStore, error)
+	}{
+		{"write", func(s *FileStore, err error) { s.writeFile = func(string, []byte, os.FileMode) error { return err } }},
+		{"rename", func(s *FileStore, err error) { s.rename = func(string, string) error { return err } }},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			path := t.TempDir() + "/kv.json"
+			s, err := NewFileStore(path, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Set("key", []byte("old")); err != nil {
+				t.Fatal(err)
+			}
+			beforeBytes := s.bytes
+			injected := errors.New("injected persistence failure")
+			failure.inject(s, injected)
+
+			if err := s.Set("key", []byte("new value")); !errors.Is(err, injected) {
+				t.Fatalf("Set error = %v, want injected failure", err)
+			}
+			if value, found, _ := s.Get("key"); !found || string(value) != "old" {
+				t.Fatalf("in-memory value after failed Set = %q, found=%v", value, found)
+			}
+			if s.bytes != beforeBytes {
+				t.Fatalf("byte count after failed Set = %d, want %d", s.bytes, beforeBytes)
+			}
+			persisted, err := NewFileStore(path, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, found, _ := persisted.Get("key"); !found || string(value) != "old" {
+				t.Fatalf("persisted value after failed Set = %q, found=%v", value, found)
+			}
+		})
+	}
+}
+
+func TestFileStoreDeleteRollsBackOnPersistenceFailure(t *testing.T) {
+	for _, failure := range []struct {
+		name   string
+		inject func(*FileStore, error)
+	}{
+		{"write", func(s *FileStore, err error) { s.writeFile = func(string, []byte, os.FileMode) error { return err } }},
+		{"rename", func(s *FileStore, err error) { s.rename = func(string, string) error { return err } }},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			path := t.TempDir() + "/kv.json"
+			s, err := NewFileStore(path, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Set("key", []byte("value")); err != nil {
+				t.Fatal(err)
+			}
+			beforeBytes := s.bytes
+			injected := errors.New("injected persistence failure")
+			failure.inject(s, injected)
+
+			if err := s.Delete("key"); !errors.Is(err, injected) {
+				t.Fatalf("Delete error = %v, want injected failure", err)
+			}
+			if value, found, _ := s.Get("key"); !found || string(value) != "value" {
+				t.Fatalf("in-memory value after failed Delete = %q, found=%v", value, found)
+			}
+			if s.bytes != beforeBytes {
+				t.Fatalf("byte count after failed Delete = %d, want %d", s.bytes, beforeBytes)
+			}
+			persisted, err := NewFileStore(path, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, found, _ := persisted.Get("key"); !found || string(value) != "value" {
+				t.Fatalf("persisted value after failed Delete = %q, found=%v", value, found)
+			}
+		})
 	}
 }
 

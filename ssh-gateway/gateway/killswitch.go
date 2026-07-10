@@ -20,6 +20,7 @@ type sessionEntry struct {
 	appID    string
 	deployID string
 	cancel   context.CancelFunc
+	done     chan struct{}
 }
 
 // sessionRegistry tracks live sessions so an operator kill switch can terminate
@@ -37,12 +38,18 @@ func newSessionRegistry() *sessionRegistry {
 func (r *sessionRegistry) add(sessionID string, e sessionEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if e.done == nil {
+		e.done = make(chan struct{})
+	}
 	r.sessions[sessionID] = e
 }
 
 func (r *sessionRegistry) remove(sessionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if e, ok := r.sessions[sessionID]; ok {
+		close(e.done)
+	}
 	delete(r.sessions, sessionID)
 }
 
@@ -50,9 +57,35 @@ func (r *sessionRegistry) remove(sessionID string) {
 // cancelled. Cancelling is idempotent; the session goroutine deregisters itself
 // as it unwinds.
 func (r *sessionRegistry) kill(scope KillScope, id string) int {
+	entries := r.matching(scope, id)
+	for _, e := range entries {
+		e.cancel()
+	}
+	return len(entries)
+}
+
+// killAndWait cancels matching sessions and acknowledges only after their
+// goroutines deregister. This makes a successful suspension a hard boundary:
+// no invalidated guest remains running when the caller resumes.
+func (r *sessionRegistry) killAndWait(ctx context.Context, scope KillScope, id string) (int, error) {
+	entries := r.matching(scope, id)
+	for _, e := range entries {
+		e.cancel()
+	}
+	for _, e := range entries {
+		select {
+		case <-e.done:
+		case <-ctx.Done():
+			return len(entries), ctx.Err()
+		}
+	}
+	return len(entries), nil
+}
+
+func (r *sessionRegistry) matching(scope KillScope, id string) []sessionEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	n := 0
+	var entries []sessionEntry
 	for _, e := range r.sessions {
 		var match bool
 		switch scope {
@@ -64,11 +97,10 @@ func (r *sessionRegistry) kill(scope KillScope, id string) int {
 			match = e.deployID == id
 		}
 		if match {
-			e.cancel()
-			n++
+			entries = append(entries, e)
 		}
 	}
-	return n
+	return entries
 }
 
 // killAll cancels every live session (the runner-wide kill switch).

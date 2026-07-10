@@ -1,12 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
 	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
@@ -30,6 +33,125 @@ func newGatewayBackend(t *testing.T) (gateway.Backend, *control.Store) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return httpbackend.New(srv.URL, gwToken), store
+}
+
+func TestSuspensionFansOutAndWaitsForEveryGateway(t *testing.T) {
+	store := control.NewStore()
+	handler := NewWithConfig(Config{Store: store, GatewayToken: gwToken}).Handler()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	_, appID := seedRunnable(t, store, []byte("wasm"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clients := []*httpbackend.Client{
+		httpbackend.New(srv.URL, gwToken),
+		httpbackend.New(srv.URL, gwToken),
+	}
+	received := []chan gateway.Suspension{make(chan gateway.Suspension, 1), make(chan gateway.Suspension, 1)}
+	release := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	for i, client := range clients {
+		i := i
+		if err := client.StartSuspensionWatcher(ctx, func(ctx context.Context, event gateway.Suspension) error {
+			received[i] <- event
+			select {
+			case <-release[i]:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.SetAppSuspended(appID, true)
+		done <- err
+	}()
+	for i := range received {
+		select {
+		case event := <-received[i]:
+			if event.Scope != gateway.KillApp || event.ID != appID {
+				t.Fatalf("gateway %d event = %+v", i, event)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("gateway %d did not receive suspension", i)
+		}
+	}
+	close(release[0])
+	select {
+	case err := <-done:
+		t.Fatalf("suspension returned before every gateway acknowledged: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release[1])
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("suspension did not return after all acknowledgements")
+	}
+}
+
+func TestSuspensionFanoutIncludesOwnerAppAndDeploy(t *testing.T) {
+	store := control.NewStore()
+	handler := NewWithConfig(Config{Store: store, GatewayToken: gwToken}).Handler()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	_, appID := seedRunnable(t, store, []byte("wasm"))
+	app, deploy, _, err := store.ResolveActiveDeploy("alice", "counter")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	received := []chan gateway.Suspension{make(chan gateway.Suspension, 3), make(chan gateway.Suspension, 3)}
+	for i := range received {
+		i := i
+		if err := httpbackend.New(srv.URL, gwToken).StartSuspensionWatcher(ctx, func(_ context.Context, event gateway.Suspension) error {
+			received[i] <- event
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	changes := []struct {
+		want    gateway.Suspension
+		suspend func() error
+	}{
+		{gateway.Suspension{Scope: gateway.KillOwner, ID: app.OwnerID}, func() error {
+			_, err := store.SetOwnerSuspended(app.OwnerID, true)
+			return err
+		}},
+		{gateway.Suspension{Scope: gateway.KillApp, ID: appID}, func() error {
+			_, err := store.SetAppSuspended(appID, true)
+			return err
+		}},
+		{gateway.Suspension{Scope: gateway.KillDeploy, ID: deploy.ID}, func() error {
+			return store.SetDeploySuspended(deploy.ID, true)
+		}},
+	}
+	for _, change := range changes {
+		if err := change.suspend(); err != nil {
+			t.Fatal(err)
+		}
+		for i := range received {
+			select {
+			case got := <-received[i]:
+				if got != change.want {
+					t.Fatalf("gateway %d suspension = %+v, want %+v", i, got, change.want)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("gateway %d did not receive %+v", i, change.want)
+			}
+		}
+	}
 }
 
 // seedRunnable creates an owned, active deploy and returns its handle + app ID.
@@ -117,6 +239,49 @@ func TestGatewayBackendResolveAndSessionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGatewayBackendResolvesOnlyRegisteredKeyAsAuthenticated(t *testing.T) {
+	backend, store := newGatewayBackend(t)
+	unknown, err := backend.ResolveIdentity("SHA256:unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown.User != "SHA256:unknown" || unknown.Authenticated {
+		t.Fatalf("unknown key identity = %+v", unknown)
+	}
+
+	owner, err := store.CreateOwner("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RegisterSSHKey(control.SSHKeyInput{
+		OwnerID: owner.ID, Name: "laptop", PublicKey: "ssh-ed25519 AAAATEST", Fingerprint: "SHA256:registered",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := backend.ResolveIdentity("SHA256:registered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registered.User != "SHA256:registered" || !registered.Authenticated {
+		t.Fatalf("registered key identity = %+v", registered)
+	}
+}
+
+func TestGatewayBackendResolveMultiMegabyteArtifact(t *testing.T) {
+	backend, store := newGatewayBackend(t)
+	wasm := bytes.Repeat([]byte("plumtree-wasm"), (3<<20)/len("plumtree-wasm")+1)
+	wasm = wasm[:3<<20]
+	handle, _ := seedRunnable(t, store, wasm)
+
+	run, err := backend.ResolveRunnable(handle)
+	if err != nil {
+		t.Fatalf("ResolveRunnable with %d-byte artifact: %v", len(wasm), err)
+	}
+	if !bytes.Equal(run.WASM, wasm) {
+		t.Fatalf("artifact round-trip mismatch: got %d bytes, want %d", len(run.WASM), len(wasm))
+	}
+}
+
 func TestGatewayBackendSecretsAndEgress(t *testing.T) {
 	backend, store := newGatewayBackend(t)
 	_, appID := seedRunnable(t, store, []byte("wasm"))
@@ -140,12 +305,19 @@ func TestGatewayBackendSecretsAndEgress(t *testing.T) {
 func TestGatewayBackendSuspendedAndUnknown(t *testing.T) {
 	backend, store := newGatewayBackend(t)
 	handle, appID := seedRunnable(t, store, []byte("wasm"))
+	run, err := backend.ResolveRunnable(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := store.SetAppSuspended(appID, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := backend.ResolveRunnable(handle); !errors.Is(err, gateway.ErrSuspended) {
 		t.Fatalf("suspended resolve err = %v, want ErrSuspended", err)
+	}
+	if _, err := backend.StartSession(run.AppID, run.DeployID); !errors.Is(err, gateway.ErrSuspended) {
+		t.Fatalf("suspended start err = %v, want ErrSuspended", err)
 	}
 
 	if _, err := backend.ResolveRunnable("alice/nope"); err == nil || errors.Is(err, gateway.ErrSuspended) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestServiceRoundTrip(t *testing.T) {
@@ -25,6 +26,30 @@ func TestServiceRoundTrip(t *testing.T) {
 	if res.Digest != SourceDigest(res.WASM) {
 		t.Errorf("digest mismatch over the wire")
 	}
+}
+
+func TestServiceBuildAdmissionBoundsQueue(t *testing.T) {
+	s := &Service{buildSlots: make(chan struct{}, 1), queueSlots: make(chan struct{}, 1)}
+	if !s.acquireBuild(context.Background()) {
+		t.Fatal("first build should acquire the worker")
+	}
+	second := make(chan bool, 1)
+	go func() { second <- s.acquireBuild(context.Background()) }()
+	deadline := time.Now().Add(time.Second)
+	for len(s.queueSlots) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(s.queueSlots) != 1 {
+		t.Fatal("second build did not enter the queue")
+	}
+	if s.acquireBuild(context.Background()) {
+		t.Fatal("build above the worker and queue capacity was admitted")
+	}
+	s.releaseBuild()
+	if !<-second {
+		t.Fatal("queued build was not admitted after release")
+	}
+	s.releaseBuild()
 }
 
 func TestServiceRejectsBadToken(t *testing.T) {

@@ -3,8 +3,8 @@ package sdk
 import "errors"
 
 // Identity is who is connected to the current session, returned by Whoami. User
-// is a stable opaque id — an SSH public-key fingerprint when the client offered
-// a key, otherwise an ephemeral per-session id — suitable for distinguishing
+// is a stable opaque id — a proved SSH public-key fingerprint when the client
+// authenticated with a key, otherwise an explicit "anonymous:" ephemeral id — suitable for distinguishing
 // and labelling users (e.g. a real handle in a chat instead of "user1").
 // Authenticated reports whether the platform verified the identity against a
 // claimed owner key.

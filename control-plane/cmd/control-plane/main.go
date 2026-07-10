@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +24,14 @@ import (
 	"github.com/Ceinl/plumtree/control-plane/internal/httpapi"
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
+)
+
+const (
+	httpReadHeaderTimeout = 5 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 5 * time.Minute
+	httpIdleTimeout       = 1 * time.Minute
+	httpShutdownTimeout   = 10 * time.Second
 )
 
 // buildBackend selects the source-to-WASM build implementation. A non-empty URL
@@ -78,16 +88,22 @@ func main() {
 	devToken := flag.String("dev-token", env("PLUMTREE_DEV_TOKEN", ""), "enable local dev deploy API with this token")
 	gatewayToken := flag.String("gateway-token", env("PLUMTREE_GATEWAY_TOKEN", ""), "enable the gateway API (/internal/gateway) for a standalone SSH gateway with this shared token")
 	stateFile := flag.String("state-file", env("PLUMTREE_STATE_FILE", defaultStateFile()), "persistent state file; empty disables persistence")
+	stateEncryptionKeyFile := flag.String("state-encryption-key-file", env("PLUMTREE_STATE_ENCRYPTION_KEY_FILE", ""), "file containing a base64 32-byte snapshot KEK; mount it outside the state volume")
+	previousStateEncryptionKeyFile := flag.String("previous-state-encryption-key-file", env("PLUMTREE_PREVIOUS_STATE_ENCRYPTION_KEY_FILE", ""), "previous snapshot KEK for one-time re-encryption during key rotation")
 	blobDir := flag.String("blob-dir", env("PLUMTREE_BLOB_DIR", ""), "directory for durable WASM artifact storage; empty keeps artifacts in the state file")
-	runnerWorker := flag.String("runner-worker", env("PLUMTREE_RUNNER_WORKER", ""), "path to the plumtree-runner-worker binary; set to isolate each TUI session in a separate process")
+	runnerWorker := flag.String("runner-worker", env("PLUMTREE_RUNNER_WORKER", ""), "path to the plumtree-runner-worker binary; set to isolate each app session in a separate process")
 	sshAddr := flag.String("ssh-addr", env("PLUMTREE_SSH_ADDR", "127.0.0.1:2222"), "SSH gateway listen address; empty disables SSH")
 	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", firstNonEmpty(fileCfg.SSHHost, "plumtree.dev")), "local SSH host alias written to ~/.ssh/config")
 	noSSHConfig := flag.Bool("no-ssh-config", false, "do not update ~/.ssh/config for the local SSH gateway")
 	maxFPS := flag.Int("max-fps", 60, "SSH repaint cap")
-	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", 0), "max concurrent SSH sessions on this runner; 0 = unlimited")
+	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", gateway.DefaultMaxConcurrentSessions), "max concurrent SSH sessions on this runner; 0 = unlimited")
+	sshHandshakeTimeout := flag.Duration("ssh-handshake-timeout", envDuration("PLUMTREE_SSH_HANDSHAKE_TIMEOUT", gateway.DefaultHandshakeTimeout), "maximum time allowed for an SSH handshake; negative disables")
+	sshIdleTimeout := flag.Duration("ssh-idle-timeout", envDuration("PLUMTREE_SSH_IDLE_TIMEOUT", gateway.DefaultIdleTimeout), "disconnect an established SSH connection after this much network inactivity; negative disables")
+	maxConnections := flag.Int("max-connections", envInt("PLUMTREE_MAX_CONNECTIONS", gateway.DefaultMaxConnections), "maximum admitted SSH TCP connections; negative disables")
+	maxConnectionsPerIP := flag.Int("max-connections-per-ip", envInt("PLUMTREE_MAX_CONNECTIONS_PER_IP", gateway.DefaultMaxConnectionsPerIP), "maximum admitted SSH TCP connections per client IP; negative disables")
 	maxSessionsPerAppDay := flag.Int("max-sessions-per-app-day", envInt("PLUMTREE_MAX_SESSIONS_PER_APP_DAY", firstPositiveInt(fileCfg.MaxSessionsPerAppPerDay, 50)), "max sessions per app per rolling 24h; 0 = unlimited")
-	maxDeploysPerHour := flag.Int("max-deploys-per-hour", envInt("PLUMTREE_MAX_DEPLOYS_PER_HOUR", fileCfg.MaxDeploysPerHour), "max new deploy claims across the platform per rolling hour; 0 = unlimited")
-	maxAppsPerOwner := flag.Int("max-apps-per-owner", envInt("PLUMTREE_MAX_APPS_PER_OWNER", fileCfg.MaxAppsPerOwner), "max apps a single owner may create; 0 = unlimited")
+	maxDeploysPerHour := flag.Int("max-deploys-per-hour", envInt("PLUMTREE_MAX_DEPLOYS_PER_HOUR", firstPositiveInt(fileCfg.MaxDeploysPerHour, 100)), "max new deploy claims across the platform per rolling hour; 0 = unlimited")
+	maxAppsPerOwner := flag.Int("max-apps-per-owner", envInt("PLUMTREE_MAX_APPS_PER_OWNER", firstPositiveInt(fileCfg.MaxAppsPerOwner, 5)), "max apps a single owner may create; 0 = unlimited")
 	deployClaimTTL := flag.Duration("deploy-claim-ttl", envDuration("PLUMTREE_DEPLOY_CLAIM_TTL", firstDuration(fileTTL, control.DeployClaimTTL)), "how long an unclaimed deploy may exist before garbage collection")
 	anonPreview := flag.Bool("anonymous-preview", envBool("PLUMTREE_ANONYMOUS_PREVIEW", false), "allow running any deploy unclaimed at ssh preview-<deployID>@host, in the tightest sandbox")
 	rateLimit := flag.Int("rate-limit", envInt("PLUMTREE_RATE_LIMIT", 20), "dashboard/API requests per second per client IP; 0 = unlimited")
@@ -96,7 +112,23 @@ func main() {
 	buildURL := flag.String("build-url", env("PLUMTREE_BUILD_URL", ""), "remote build-worker URL; empty uses an in-process sandboxed builder")
 	buildToken := flag.String("build-token", env("PLUMTREE_BUILD_TOKEN", ""), "shared token sent to the remote build-worker")
 	buildDevRoot := flag.String("build-dev-root", env("PLUMTREE_DEV_ROOT", ""), "local repo root whose sdk/ and tui-runtime/ tie into the build workspace so the in-process builder resolves the unpublished SDK (local dev only)")
+	maxConcurrentBuilds := flag.Int("max-concurrent-builds", envInt("PLUMTREE_MAX_CONCURRENT_BUILDS", 2), "max simultaneous source builds; 0 = unlimited")
+	maxQueuedBuilds := flag.Int("max-queued-builds", envInt("PLUMTREE_MAX_QUEUED_BUILDS", 8), "max source builds waiting for capacity; 0 rejects when busy")
+	production := flag.Bool("production", envBool("PLUMTREE_PRODUCTION", false), "enable production safety checks")
+	ackUnlimited := flag.Bool("acknowledge-unlimited-limits", envBool("PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS", false), "allow production startup with critical limits disabled")
 	flag.Parse()
+	if err := validateProductionLimits(*production, *ackUnlimited, *sshAddr != "", productionLimits{
+		maxSessions: *maxSessions, maxSessionsPerAppDay: *maxSessionsPerAppDay,
+		maxDeploysPerHour: *maxDeploysPerHour, maxAppsPerOwner: *maxAppsPerOwner,
+		maxConcurrentBuilds: *maxConcurrentBuilds, rateLimit: *rateLimit,
+		maxConnections: *maxConnections, maxConnectionsPerIP: *maxConnectionsPerIP,
+		sshHandshakeTimeout: *sshHandshakeTimeout, sshIdleTimeout: *sshIdleTimeout,
+	}); err != nil {
+		log.Fatal(err)
+	}
+	if *production && *stateFile != "" && *stateEncryptionKeyFile == "" {
+		log.Fatal("production persistent state requires -state-encryption-key-file (mount a managed secret outside the data volume)")
+	}
 
 	verifier, err := shoo.NewVerifier(shoo.Config{
 		BaseURL:   *shooBase,
@@ -113,6 +145,20 @@ func main() {
 		control.WithDeployClaimTTL(*deployClaimTTL),
 		control.WithAnonymousPreview(*anonPreview),
 	}
+	if *stateEncryptionKeyFile != "" {
+		key, err := readSnapshotEncryptionKey(*stateEncryptionKeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		storeOpts = append(storeOpts, control.WithSnapshotEncryptionKey(key))
+	}
+	if *previousStateEncryptionKeyFile != "" {
+		key, err := readSnapshotEncryptionKey(*previousStateEncryptionKeyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		storeOpts = append(storeOpts, control.WithPreviousSnapshotEncryptionKey(key))
+	}
 	if *blobDir != "" {
 		storeOpts = append(storeOpts, control.WithBlobDir(*blobDir))
 	}
@@ -127,14 +173,16 @@ func main() {
 	build := buildBackend(*buildURL, *buildToken, *buildDevRoot)
 
 	handler := httpapi.NewWithConfig(httpapi.Config{
-		Store:           store,
-		Verifier:        verifier,
-		AppOrigin:       *origin,
-		DevToken:        *devToken,
-		GatewayToken:    *gatewayToken,
-		Build:           build,
-		RateLimitPerSec: *rateLimit,
-		RateLimitBurst:  *rateBurst,
+		Store:               store,
+		Verifier:            verifier,
+		AppOrigin:           *origin,
+		DevToken:            *devToken,
+		GatewayToken:        *gatewayToken,
+		Build:               build,
+		MaxConcurrentBuilds: *maxConcurrentBuilds,
+		MaxQueuedBuilds:     *maxQueuedBuilds,
+		RateLimitPerSec:     *rateLimit,
+		RateLimitBurst:      *rateBurst,
 	}).Handler()
 	originURL := strings.TrimRight(*origin, "/")
 	fmt.Println()
@@ -175,15 +223,11 @@ func main() {
 	defer stop()
 	errCh := make(chan error, 2)
 
-	httpServer := &http.Server{Addr: *addr, Handler: handler}
+	httpServer := newHTTPServer(*addr, handler)
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
-	}()
-	go func() {
-		<-ctx.Done()
-		_ = httpServer.Shutdown(context.Background())
 	}()
 
 	if *sshAddr != "" {
@@ -192,6 +236,10 @@ func main() {
 			Limits:                runner.DefaultLimits,
 			MaxFPS:                *maxFPS,
 			MaxConcurrentSessions: *maxSessions,
+			HandshakeTimeout:      *sshHandshakeTimeout,
+			IdleTimeout:           *sshIdleTimeout,
+			MaxConnections:        *maxConnections,
+			MaxConnectionsPerIP:   *maxConnectionsPerIP,
 			StateDir:              stateDir(*stateFile),
 			RunnerWorker:          *runnerWorker,
 			Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
@@ -239,6 +287,22 @@ func main() {
 	case err := <-errCh:
 		log.Fatal(err)
 	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTP server shutdown: %v", err)
+		}
+	}
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
 	}
 }
 
@@ -304,6 +368,68 @@ func unlimitedOr(n int) string {
 		return "unlimited"
 	}
 	return strconv.Itoa(n)
+}
+
+type productionLimits struct {
+	maxSessions, maxSessionsPerAppDay, maxDeploysPerHour, maxAppsPerOwner int
+	maxConcurrentBuilds, rateLimit, maxConnections, maxConnectionsPerIP   int
+	sshHandshakeTimeout, sshIdleTimeout                                   time.Duration
+}
+
+func validateProductionLimits(production, acknowledged, sshEnabled bool, l productionLimits) error {
+	if !production || acknowledged {
+		return nil
+	}
+	var unlimited []string
+	for name, value := range map[string]int{
+		"max-sessions-per-app-day": l.maxSessionsPerAppDay, "max-deploys-per-hour": l.maxDeploysPerHour,
+		"max-apps-per-owner": l.maxAppsPerOwner, "max-concurrent-builds": l.maxConcurrentBuilds,
+		"rate-limit": l.rateLimit,
+	} {
+		if value <= 0 {
+			unlimited = append(unlimited, name)
+		}
+	}
+	if sshEnabled {
+		if l.maxSessions <= 0 {
+			unlimited = append(unlimited, "max-sessions")
+		}
+		if l.maxConnections < 0 {
+			unlimited = append(unlimited, "max-connections")
+		}
+		if l.maxConnectionsPerIP < 0 {
+			unlimited = append(unlimited, "max-connections-per-ip")
+		}
+		if l.sshHandshakeTimeout < 0 {
+			unlimited = append(unlimited, "ssh-handshake-timeout")
+		}
+		if l.sshIdleTimeout < 0 {
+			unlimited = append(unlimited, "ssh-idle-timeout")
+		}
+	}
+	if len(unlimited) == 0 {
+		return nil
+	}
+	slices.Sort(unlimited)
+	return fmt.Errorf("refusing production startup with unlimited critical limits: %s (set PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS=true to acknowledge)", strings.Join(unlimited, ", "))
+}
+
+// readSnapshotEncryptionKey reads the base64-encoded 32-byte KEK supplied by a
+// secret manager mount. Keeping the file path separate from /data prevents a
+// copied volume from being sufficient to decrypt the snapshot.
+func readSnapshotEncryptionKey(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read state encryption key %q: %w", path, err)
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b)))
+	if err != nil {
+		return nil, fmt.Errorf("decode state encryption key %q: %w", path, err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("state encryption key %q must decode to exactly 32 bytes", path)
+	}
+	return key, nil
 }
 
 func defaultStateFile() string {

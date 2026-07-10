@@ -16,8 +16,8 @@ const (
 )
 
 // Identity describes who is connected for the current session. User is a stable
-// opaque identifier (an SSH public-key fingerprint) when the client offered a
-// key, or an ephemeral per-session id otherwise. Authenticated reports whether
+// opaque identifier (an SSH public-key fingerprint) when the client proved key
+// possession, or an explicit "anonymous:" ephemeral id otherwise. Authenticated reports whether
 // the platform has verified the identity against a claimed owner key.
 type Identity struct {
 	User          string

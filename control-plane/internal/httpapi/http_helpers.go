@@ -89,11 +89,6 @@ func (s *Server) authenticate(r *http.Request) (control.Owner, shoo.Claims, erro
 	}
 	token := bearerToken(r.Header.Get("Authorization"))
 	if token == "" {
-		// EventSource (SSE) cannot set request headers, so the dashboard's
-		// stream endpoint passes the bearer as an access_token query param.
-		token = strings.TrimSpace(r.URL.Query().Get("access_token"))
-	}
-	if token == "" {
 		return control.Owner{}, shoo.Claims{}, errMissingBearer
 	}
 	claims, err := s.verifier.Verify(r.Context(), token)
@@ -145,6 +140,8 @@ func writeControlError(w http.ResponseWriter, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, control.ErrNotFound):
 		status = http.StatusNotFound
+	case errors.Is(err, control.ErrQuota):
+		status = http.StatusTooManyRequests
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }

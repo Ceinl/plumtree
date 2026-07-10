@@ -11,6 +11,17 @@ const DefaultBg = "\x1b[48;2;25;23;29m"
 const DefaultFg = "\x1b[38;2;200;200;200m"
 const DefaultDecor = ""
 
+// Screen dimension limits bound the two cell buffers allocated for a screen.
+// Keep the total-cell check separate from the axis limits so a future change
+// to either cannot accidentally reintroduce an unbounded allocation.
+const (
+	MinWidth  = 1
+	MaxWidth  = 500
+	MinHeight = 1
+	MaxHeight = 300
+	MaxCells  = 150_000
+)
+
 type Cell struct {
 	Ch    rune
 	Bg    string
@@ -32,16 +43,13 @@ func NewScreen(w, h int) *Screen {
 // NewScreenWithOutput is like NewScreen but flushes to out instead of stdout.
 // Hosted and SSH sessions render to a network connection, not the local TTY.
 func NewScreenWithOutput(w, h int, out io.Writer) *Screen {
-	s := &Screen{
-		w:   w,
-		h:   h,
-		out: out,
-	}
+	s := &Screen{out: out}
 	s.resize(w, h)
 	return s
 }
 
 func (s *Screen) resize(w, h int) {
+	w, h = boundedDimensions(w, h)
 	s.w, s.h = w, h
 	s.old = make([][]Cell, h)
 	s.cur = make([][]Cell, h)
@@ -53,6 +61,24 @@ func (s *Screen) resize(w, h int) {
 			s.cur[i][j] = Cell{Ch: ' ', Bg: DefaultBg, Fg: DefaultFg}
 		}
 	}
+}
+
+// ValidDimensions reports whether a requested screen size can be allocated
+// without normalization. Network-facing callers use this to reject invalid
+// dimensions; Screen itself still enforces the bounds at the allocation site.
+func ValidDimensions(w, h int) bool {
+	return w >= MinWidth && w <= MaxWidth &&
+		h >= MinHeight && h <= MaxHeight &&
+		w <= MaxCells/h
+}
+
+func boundedDimensions(w, h int) (int, int) {
+	w = max(MinWidth, min(w, MaxWidth))
+	h = max(MinHeight, min(h, MaxHeight))
+	if w > MaxCells/h {
+		w = MaxCells / h
+	}
+	return w, h
 }
 
 // Resize changes the screen dimensions and forces a full repaint on the next

@@ -5,6 +5,55 @@ import (
 	"time"
 )
 
+// ReserveDeployClaimQuota reserves capacity in the rolling deploy-claim rate
+// limit before expensive build work starts. The returned release function is
+// idempotent; a successful CreateDeployClaimWithArtifact consumes the ticket.
+func (s *Store) ReserveDeployClaimQuota() (uint64, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	s.deleteExpiredDeployClaimsLocked(now)
+	if err := s.checkDeployClaimRateLocked(now); err != nil {
+		return 0, nil, err
+	}
+	s.nextDeployReservation++
+	id := s.nextDeployReservation
+	s.deployClaimReservations[id] = struct{}{}
+	return id, func() {
+		s.mu.Lock()
+		delete(s.deployClaimReservations, id)
+		s.mu.Unlock()
+	}, nil
+}
+
+// AuthorizeDeployClaimUpdate validates an update and its claim proof without
+// requiring an artifact, so callers can reject it before invoking a builder.
+func (s *Store) AuthorizeDeployClaimUpdate(deployID, appName, sourceDigest, claimTokenHash string) error {
+	if err := ValidateName(appName); err != nil {
+		return err
+	}
+	if err := validateDigest("source digest", sourceDigest); err != nil {
+		return err
+	}
+	if err := validateDigest("claim token hash", claimTokenHash); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteExpiredDeployClaimsLocked(s.now())
+	deploy, ok := s.deploys[deployID]
+	if !ok {
+		return fmt.Errorf("%w: deploy %q", ErrNotFound, deployID)
+	}
+	if deploy.ClaimTokenHash == "" || deploy.ClaimTokenHash != claimTokenHash {
+		return fmt.Errorf("%w: invalid deploy claim token", ErrInvalid)
+	}
+	if deploy.AppName != "" && deploy.AppName != appName {
+		return fmt.Errorf("%w: app name cannot change for an existing deploy", ErrInvalid)
+	}
+	return nil
+}
+
 func (s *Store) CreateDeployClaim(in DeployClaimInput) (Deploy, error) {
 	if err := validateDeployClaimInput(in); err != nil {
 		return Deploy{}, err
@@ -53,7 +102,7 @@ func (s *Store) checkDeployClaimRateLocked(now time.Time) error {
 		}
 	}
 	s.recentDeployClaims = kept
-	if len(kept) >= s.maxDeployClaimsPerHour {
+	if len(kept)+len(s.deployClaimReservations) >= s.maxDeployClaimsPerHour {
 		return fmt.Errorf("%w: deploy rate limit (%d/hour) exceeded", ErrQuota, s.maxDeployClaimsPerHour)
 	}
 	return nil

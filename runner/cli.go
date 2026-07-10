@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -94,20 +95,65 @@ func runCLI(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim
 	return nil
 }
 
-// controlFilter drops C0 control bytes (except tab and newline) and DEL before
-// forwarding, neutralizing ANSI escape sequences (which begin with ESC, 0x1b).
-type controlFilter struct{ w io.Writer }
+// controlFilter forwards a CLI guest's text output with any character that could
+// drive the viewer's terminal removed. It decodes the stream as UTF-8 and drops,
+// at the rune level, C0 controls (except tab and newline), DEL, and C1 controls
+// (0x80–0x9f) — the same policy as sanitizeRune. C1 matters because 8-bit
+// terminals honor bytes like 0x9b/0x9d/0x90 as CSI/OSC/DCS introducers, so a lone
+// such byte is as dangerous as ESC; a byte-wise filter that only dropped C0 would
+// pass it. Working at the rune level (rather than dropping the raw 0x80–0x9f byte
+// range) is what preserves legitimate multibyte UTF-8, whose continuation bytes
+// share that range. Bytes that are not valid UTF-8 are dropped, and a rune split
+// across two Write calls is carried to the next so it is decoded whole.
+type controlFilter struct {
+	w   io.Writer
+	buf []byte // carried incomplete trailing UTF-8 sequence (< utf8.UTFMax bytes)
+}
 
 func (f *controlFilter) Write(p []byte) (int, error) {
-	out := make([]byte, 0, len(p))
-	for _, b := range p {
-		if (b < 0x20 && b != '\t' && b != '\n') || b == 0x7f {
+	data := p
+	if len(f.buf) > 0 {
+		data = append(f.buf, p...)
+		f.buf = nil
+	}
+	out := make([]byte, 0, len(data))
+	for len(data) > 0 {
+		r, size := utf8.DecodeRune(data)
+		if r == utf8.RuneError && size == 1 {
+			// A single unusable byte: either genuinely invalid UTF-8, or an
+			// incomplete-but-valid trailing sequence. FullRune is false only for
+			// the latter, so carry those bytes for the next Write and drop the rest.
+			if !utf8.FullRune(data) {
+				f.buf = append(f.buf, data...)
+				break
+			}
+			data = data[1:]
 			continue
 		}
-		out = append(out, b)
+		if !dropRune(r) {
+			out = append(out, data[:size]...)
+		}
+		data = data[size:]
 	}
-	if _, err := f.w.Write(out); err != nil {
-		return 0, err
+	if len(out) > 0 {
+		if _, err := f.w.Write(out); err != nil {
+			return 0, err
+		}
 	}
 	return len(p), nil
+}
+
+// dropRune reports whether r is a terminal-driving control character that must
+// not reach the viewer: C0 controls other than tab/newline, DEL, or a C1 control.
+func dropRune(r rune) bool {
+	switch {
+	case r < 0x20:
+		return r != '\t' && r != '\n'
+	case r == 0x7f:
+		return true
+	case r >= 0x80 && r <= 0x9f:
+		return true
+	default:
+		return false
+	}
 }

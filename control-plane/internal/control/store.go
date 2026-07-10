@@ -13,6 +13,20 @@ const DeployClaimTTL = 5 * time.Minute
 
 type Option func(*Store)
 
+// WithSnapshotEncryptionKey enables envelope encryption for the durable state
+// snapshot. The 32-byte KEK must come from a managed secret store or a file
+// mounted outside the state volume.
+func WithSnapshotEncryptionKey(key []byte) Option {
+	return func(s *Store) { s.snapshotKey = append([]byte(nil), key...) }
+}
+
+// WithPreviousSnapshotEncryptionKey permits a one-time startup migration from
+// a snapshot wrapped by the previous KEK. New writes always use the current
+// key configured by WithSnapshotEncryptionKey.
+func WithPreviousSnapshotEncryptionKey(key []byte) Option {
+	return func(s *Store) { s.previousSnapshotKey = append([]byte(nil), key...) }
+}
+
 // WithClock lets tests provide deterministic timestamps.
 func WithClock(now func() time.Time) Option {
 	return func(s *Store) {
@@ -78,7 +92,17 @@ type Store struct {
 	now func() time.Time
 	seq map[string]int
 
-	persistPath string
+	persistPath            string
+	snapshotKey            []byte
+	previousSnapshotKey    []byte
+	snapshotCipher         *envelopeCipher
+	previousSnapshotCipher *envelopeCipher
+	// committedSnapshot is the last state known to have reached durable storage.
+	// persistLocked writes a candidate snapshot first, then advances this
+	// checkpoint. A failed write restores it, so callers never observe a
+	// successful-looking in-memory mutation that was not made durable.
+	committedSnapshot storeSnapshot
+	writeSnapshot     func(string, storeSnapshot) error
 
 	owners        map[string]Owner
 	ownerByHandle map[string]string
@@ -117,8 +141,10 @@ type Store struct {
 	// deploy-claim rate limiting: recentDeployClaims holds the timestamps of new
 	// deploy claims in the trailing hour, gating the crown-jewel action against
 	// anonymous-deploy flooding. 0 disables the cap.
-	maxDeployClaimsPerHour int
-	recentDeployClaims     []time.Time
+	maxDeployClaimsPerHour  int
+	recentDeployClaims      []time.Time
+	deployClaimReservations map[uint64]struct{}
+	nextDeployReservation   uint64
 
 	// deployClaimTTL is how long an unclaimed deploy survives before GC.
 	// Defaults to DeployClaimTTL; set via WithDeployClaimTTL.
@@ -138,6 +164,13 @@ type Store struct {
 	// notifications can fire while a write lock is held.
 	subMu sync.Mutex
 	subs  map[*subscriber]struct{}
+
+	// suspension listeners are gateways (or a fan-out transport for gateways).
+	// A suspension mutation does not report success until every listener has
+	// acknowledged that matching live sessions have stopped.
+	suspensionMu        sync.Mutex
+	suspensionListeners map[uint64]SuspensionListener
+	nextSuspensionID    uint64
 }
 
 // subscriber is one change listener. ch is buffered to length 1 so notifications
@@ -196,30 +229,33 @@ type secretKey struct {
 
 func NewStore(opts ...Option) *Store {
 	s := &Store{
-		now:                 time.Now,
-		deployClaimTTL:      DeployClaimTTL,
-		seq:                 make(map[string]int),
-		owners:              make(map[string]Owner),
-		ownerByHandle:       make(map[string]string),
-		identities:          make(map[identityKey]AuthIdentity),
-		apps:                make(map[string]App),
-		appByOwnerName:      make(map[appKey]string),
-		artifacts:           make(map[string]Artifact),
-		blobs:               newMemBlobStore(),
-		deploys:             make(map[string]Deploy),
-		sshKeys:             make(map[string]SSHKey),
-		sshKeyByFingerprint: make(map[string]string),
-		ciTokens:            make(map[string]CIToken),
-		secrets:             make(map[secretKey]SecretMetadata),
-		secretValues:        make(map[secretKey][]byte),
-		egressAllow:         make(map[string][]string),
-		sessions:            make(map[string]Session),
-		quotas:              make(map[string]Quotas),
-		suspendedDeploys:    make(map[string]struct{}),
+		now:                     time.Now,
+		deployClaimTTL:          DeployClaimTTL,
+		seq:                     make(map[string]int),
+		owners:                  make(map[string]Owner),
+		ownerByHandle:           make(map[string]string),
+		identities:              make(map[identityKey]AuthIdentity),
+		apps:                    make(map[string]App),
+		appByOwnerName:          make(map[appKey]string),
+		artifacts:               make(map[string]Artifact),
+		blobs:                   newMemBlobStore(),
+		deploys:                 make(map[string]Deploy),
+		sshKeys:                 make(map[string]SSHKey),
+		sshKeyByFingerprint:     make(map[string]string),
+		ciTokens:                make(map[string]CIToken),
+		secrets:                 make(map[secretKey]SecretMetadata),
+		secretValues:            make(map[secretKey][]byte),
+		egressAllow:             make(map[string][]string),
+		sessions:                make(map[string]Session),
+		quotas:                  make(map[string]Quotas),
+		suspendedDeploys:        make(map[string]struct{}),
+		deployClaimReservations: make(map[uint64]struct{}),
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.committedSnapshot = s.snapshotLocked()
+	s.writeSnapshot = writeSnapshotFile
 	return s
 }
 

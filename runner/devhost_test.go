@@ -64,6 +64,46 @@ func TestControlFilterStripsEscapes(t *testing.T) {
 	}
 }
 
+func TestControlFilterDropsC1AndKeepsUTF8(t *testing.T) {
+	var buf bytes.Buffer
+	f := &controlFilter{w: &buf}
+	// 0x9b (CSI) and 0x9d (OSC) are 8-bit C1 introducers a byte-wise C0 filter
+	// would pass; "café 世 🌳" exercises 2-, 3-, and 4-byte UTF-8 that must survive.
+	in := "café \x9b31m 世 \x9d0;x\x07 🌳"
+	if _, err := f.Write([]byte(in)); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	// Scan at the rune level: a standalone C1 introducer decodes to a lone
+	// 0x80–0x9f rune, whereas the same byte values appearing as UTF-8
+	// continuation bytes inside 世/🌳 decode as part of their multibyte rune.
+	for _, r := range got {
+		if r >= 0x80 && r <= 0x9f {
+			t.Errorf("C1 rune 0x%02x leaked: %q", r, got)
+		}
+	}
+	for _, want := range []string{"café", "世", "🌳"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("multibyte %q was corrupted: %q", want, got)
+		}
+	}
+}
+
+func TestControlFilterCarriesSplitRune(t *testing.T) {
+	var buf bytes.Buffer
+	f := &controlFilter{w: &buf}
+	tree := []byte("🌳") // 4 bytes: split across two writes
+	if _, err := f.Write(tree[:2]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(tree[2:]); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "🌳" {
+		t.Errorf("split rune not reassembled: %q", got)
+	}
+}
+
 func TestTextSinkRendersGrid(t *testing.T) {
 	f := abi.Frame{W: 3, H: 2, Cells: []abi.Cell{
 		{Ch: 'a'}, {Ch: 'b'}, {Ch: 'c'},

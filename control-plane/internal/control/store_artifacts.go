@@ -50,8 +50,19 @@ func (s *Store) PutArtifactBytes(artifactID string, wasm []byte) error {
 	if digestBytes(wasm) != artifact.Digest {
 		return fmt.Errorf("%w: artifact bytes digest does not match metadata", ErrInvalid)
 	}
+	old, hadOld := s.blobs.Get(artifactID)
 	if err := s.blobs.Put(artifactID, wasm); err != nil {
 		return err
 	}
-	return s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		// Filesystem-backed blobs live outside the JSON snapshot, so restore the
+		// previous bytes explicitly when the metadata checkpoint is rejected.
+		if hadOld {
+			_ = s.blobs.Put(artifactID, old)
+		} else {
+			s.blobs.Delete(artifactID)
+		}
+		return err
+	}
+	return nil
 }

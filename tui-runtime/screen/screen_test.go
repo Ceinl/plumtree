@@ -13,6 +13,42 @@ func TestNewScreenDimensions(t *testing.T) {
 	}
 }
 
+func TestScreenDimensionsAreBoundedBeforeAllocation(t *testing.T) {
+	s := NewScreen(MaxWidth+1, MaxHeight+1)
+	if s.Width() != MaxWidth || s.Height() != MaxHeight {
+		t.Fatalf("new screen = %dx%d, want bounded %dx%d", s.Width(), s.Height(), MaxWidth, MaxHeight)
+	}
+	if got := s.Width() * s.Height(); got > MaxCells {
+		t.Fatalf("new screen allocated %d cells, max is %d", got, MaxCells)
+	}
+
+	s.Resize(-1, int(^uint(0)>>1))
+	if !ValidDimensions(s.Width(), s.Height()) {
+		t.Fatalf("resized screen has invalid dimensions %dx%d", s.Width(), s.Height())
+	}
+	if got := s.Width() * s.Height(); got > MaxCells {
+		t.Fatalf("resized screen allocated %d cells, max is %d", got, MaxCells)
+	}
+}
+
+func TestValidDimensions(t *testing.T) {
+	for _, tc := range []struct {
+		w, h int
+		want bool
+	}{
+		{1, 1, true},
+		{MaxWidth, MaxHeight, true},
+		{0, 1, false},
+		{1, 0, false},
+		{MaxWidth + 1, 1, false},
+		{1, MaxHeight + 1, false},
+	} {
+		if got := ValidDimensions(tc.w, tc.h); got != tc.want {
+			t.Errorf("ValidDimensions(%d, %d) = %v, want %v", tc.w, tc.h, got, tc.want)
+		}
+	}
+}
+
 func TestSetAndClear(t *testing.T) {
 	s := NewScreen(4, 2)
 	s.Set(1, 1, 'x', "fg", "bg", "")

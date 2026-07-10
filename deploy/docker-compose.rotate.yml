@@ -1,0 +1,11 @@
+# Use only for one key-rotation restart; see README.md.
+services:
+  control-plane:
+    environment:
+      PLUMTREE_PREVIOUS_STATE_ENCRYPTION_KEY_FILE: /run/secrets/control_plane_previous_state_kek
+    secrets:
+      - control_plane_previous_state_kek
+
+secrets:
+  control_plane_previous_state_kek:
+    file: ${PLUMTREE_PREVIOUS_STATE_ENCRYPTION_KEY_FILE:?set in .env}

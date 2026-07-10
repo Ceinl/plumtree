@@ -1,10 +1,26 @@
 package main
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestReadSnapshotEncryptionKey(t *testing.T) {
+	key := []byte("01234567890123456789012345678901")
+	path := filepath.Join(t.TempDir(), "state.kek")
+	if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(key)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSnapshotEncryptionKey(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(key) {
+		t.Fatalf("key = %q", got)
+	}
+}
 
 func TestLoadConfigParsesLimits(t *testing.T) {
 	dir := t.TempDir()

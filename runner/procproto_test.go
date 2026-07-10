@@ -21,11 +21,12 @@ func TestEncodeDecodeStartRoundTrip(t *testing.T) {
 	wasm := []byte{0x00, 0x61, 0x73, 0x6d, 1, 2, 3}
 	mask := capKV | capEnv // deliberately omit Bus/Auth/Fetch
 
-	gotLim, cli, gotMask, gotWasm, err := decodeStart(encodeStart(lim, false, mask, wasm))
+	wantArgs := []string{"one", "two words"}
+	gotLim, cli, gotMask, gotArgs, gotWasm, err := decodeStart(encodeStart(lim, true, mask, wantArgs, wasm))
 	if err != nil {
 		t.Fatalf("decodeStart: %v", err)
 	}
-	if cli {
+	if !cli {
 		t.Error("cli flag flipped")
 	}
 	if gotLim != lim {
@@ -33,6 +34,9 @@ func TestEncodeDecodeStartRoundTrip(t *testing.T) {
 	}
 	if gotMask != mask {
 		t.Errorf("capMask = %#b, want %#b", gotMask, mask)
+	}
+	if len(gotArgs) != len(wantArgs) || gotArgs[0] != wantArgs[0] || gotArgs[1] != wantArgs[1] {
+		t.Errorf("args = %q, want %q", gotArgs, wantArgs)
 	}
 	if string(gotWasm) != string(wasm) {
 		t.Errorf("wasm = %x, want %x", gotWasm, wasm)

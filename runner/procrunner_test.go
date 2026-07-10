@@ -50,6 +50,25 @@ func TestProcessRunnerCounter(t *testing.T) {
 	}
 }
 
+// CLI mode carries guest arguments/output across the process boundary and
+// proxies capabilities just like the interactive mode.
+func TestProcessRunnerCLI(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "testdata/kvguest", "GOWORK=off")
+	store := NewMemStore(0, 0)
+	var out strings.Builder
+
+	pr := NewProcessRunner(worker)
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, []string{"unused"}, &out); err != nil {
+		t.Fatalf("ProcessRunner.RunCLI: %v", err)
+	}
+	for _, want := range []string{"set=0", "get=11:hello world", "del=0"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q; full output:\n%s", want, out.String())
+		}
+	}
+}
+
 // The KV capability is proxied from the worker back to this process: a guest in
 // the worker writes through to the parent-held store, and a second worker
 // session reads it back.

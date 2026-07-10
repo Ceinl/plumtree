@@ -59,7 +59,7 @@ func TestFrameRoundTrip(t *testing.T) {
 func TestIdentityRoundTrip(t *testing.T) {
 	for _, want := range []Identity{
 		{User: "SHA256:abcdef", Authenticated: true},
-		{User: "anon-0011", Authenticated: false},
+		{User: "anonymous:0011", Authenticated: false},
 		{User: "", Authenticated: false},
 	} {
 		got, err := DecodeIdentity(EncodeIdentity(want))

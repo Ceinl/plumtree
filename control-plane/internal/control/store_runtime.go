@@ -161,6 +161,12 @@ func (s *Store) StartSession(appID, deployID string) (Session, error) {
 	if app.ActiveDeployID != deploy.ID {
 		return Session{}, fmt.Errorf("%w: deploy %q is not active for app %q", ErrInvalid, deployID, appID)
 	}
+	if s.owners[app.OwnerID].Suspended || app.Suspended {
+		return Session{}, fmt.Errorf("%w: app %q", ErrSuspended, appID)
+	}
+	if _, suspended := s.suspendedDeploys[deploy.ID]; suspended {
+		return Session{}, fmt.Errorf("%w: deploy %q", ErrSuspended, deployID)
+	}
 	if err := s.checkSessionQuotaLocked(app.OwnerID); err != nil {
 		return Session{}, err
 	}

@@ -271,15 +271,22 @@ func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error
 // of the owner's apps resolve to a runnable session.
 func (s *Store) SetOwnerSuspended(ownerID string, suspended bool) (Owner, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	owner, ok := s.owners[ownerID]
 	if !ok {
+		s.mu.Unlock()
 		return Owner{}, fmt.Errorf("%w: owner %q", ErrNotFound, ownerID)
 	}
 	owner.Suspended = suspended
 	s.owners[owner.ID] = owner
 	if err := s.persistLocked(); err != nil {
+		s.mu.Unlock()
 		return Owner{}, err
+	}
+	s.mu.Unlock()
+	if suspended {
+		if err := s.publishSuspension(SuspensionEvent{Scope: SuspensionOwner, ID: ownerID}); err != nil {
+			return owner, err
+		}
 	}
 	return owner, nil
 }
@@ -287,15 +294,22 @@ func (s *Store) SetOwnerSuspended(ownerID string, suspended bool) (Owner, error)
 // SetAppSuspended toggles the app-level kill switch.
 func (s *Store) SetAppSuspended(appID string, suspended bool) (App, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	app, ok := s.apps[appID]
 	if !ok {
+		s.mu.Unlock()
 		return App{}, fmt.Errorf("%w: app %q", ErrNotFound, appID)
 	}
 	app.Suspended = suspended
 	s.apps[app.ID] = app
 	if err := s.persistLocked(); err != nil {
+		s.mu.Unlock()
 		return App{}, err
+	}
+	s.mu.Unlock()
+	if suspended {
+		if err := s.publishSuspension(SuspensionEvent{Scope: SuspensionApp, ID: appID}); err != nil {
+			return app, err
+		}
 	}
 	return app, nil
 }
@@ -304,8 +318,8 @@ func (s *Store) SetAppSuspended(appID string, suspended bool) (App, error) {
 // unchanged; suspension is tracked separately so deploy records stay immutable.
 func (s *Store) SetDeploySuspended(deployID string, suspended bool) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, ok := s.deploys[deployID]; !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("%w: deploy %q", ErrNotFound, deployID)
 	}
 	if suspended {
@@ -313,5 +327,13 @@ func (s *Store) SetDeploySuspended(deployID string, suspended bool) error {
 	} else {
 		delete(s.suspendedDeploys, deployID)
 	}
-	return s.persistLocked()
+	if err := s.persistLocked(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	if suspended {
+		return s.publishSuspension(SuspensionEvent{Scope: SuspensionDeploy, ID: deployID})
+	}
+	return nil
 }

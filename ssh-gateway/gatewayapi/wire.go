@@ -24,6 +24,17 @@ type ResolveRequest struct {
 	Handle string `json:"handle"`
 }
 
+// IdentityRequest asks the control plane whether a public key whose possession
+// was proved during the SSH handshake belongs to a registered owner.
+type IdentityRequest struct {
+	Fingerprint string `json:"fingerprint"`
+}
+
+type IdentityResponse struct {
+	User          string `json:"user"`
+	Authenticated bool   `json:"authenticated"`
+}
+
 // ResolveResponse is a resolved runnable app. WASM is JSON-encoded as base64.
 type ResolveResponse struct {
 	AppID    string `json:"appID"`
@@ -43,6 +54,25 @@ type StartSessionRequest struct {
 // StartSessionResponse returns the new session's id.
 type StartSessionResponse struct {
 	SessionID string `json:"sessionID"`
+}
+
+type RegisterSuspensionsRequest struct {
+	GatewayID string `json:"gatewayID"`
+}
+
+type NextSuspensionRequest struct {
+	GatewayID string `json:"gatewayID"`
+}
+
+type SuspensionResponse struct {
+	DeliveryID string `json:"deliveryID"`
+	Scope      string `json:"scope"`
+	ID         string `json:"id"`
+}
+
+type AckSuspensionRequest struct {
+	GatewayID  string `json:"gatewayID"`
+	DeliveryID string `json:"deliveryID"`
 }
 
 // RecordLogRequest stores a finished session's captured output.

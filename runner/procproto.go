@@ -38,6 +38,7 @@ const (
 	opEnv     op = 11
 	opFetch   op = 12
 	opDone    op = 13 // worker -> parent: session finished (err + logs)
+	opOutput  op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
 )
 
 // maxFrame bounds a single protocol message, guarding against a corrupt length.
@@ -115,9 +116,11 @@ func capMask(caps Capabilities) byte {
 
 // startPayload encodes the session parameters the parent hands the worker.
 // Layout: [appType u8][memPages u32][frameTimeoutNs i64][sessionTimeoutNs i64]
-// [maxEventsPerSec u32][maxFramesPerSec u32][capMask u8][wasm...].
-func encodeStart(lim Limits, cli bool, caps byte, wasm []byte) []byte {
-	b := make([]byte, 0, 30+len(wasm))
+// [maxEventsPerSec u32][maxFramesPerSec u32][capMask u8][argc u32]
+// repeated [argLen u32][arg], then [wasm...]. appType is 0 for TUI and 1 for
+// CLI. Arguments are meaningful only in CLI mode.
+func encodeStart(lim Limits, cli bool, caps byte, args []string, wasm []byte) []byte {
+	b := make([]byte, 0, 34+len(wasm))
 	var appType byte
 	if cli {
 		appType = 1
@@ -129,13 +132,18 @@ func encodeStart(lim Limits, cli bool, caps byte, wasm []byte) []byte {
 	b = binary.LittleEndian.AppendUint32(b, uint32(lim.MaxEventsPerSec))
 	b = binary.LittleEndian.AppendUint32(b, uint32(lim.MaxFramesPerSec))
 	b = append(b, caps)
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(args)))
+	for _, arg := range args {
+		b = binary.LittleEndian.AppendUint32(b, uint32(len(arg)))
+		b = append(b, arg...)
+	}
 	b = append(b, wasm...)
 	return b
 }
 
-func decodeStart(b []byte) (lim Limits, cli bool, caps byte, wasm []byte, err error) {
-	if len(b) < 30 {
-		return Limits{}, false, 0, nil, errProtocol
+func decodeStart(b []byte) (lim Limits, cli bool, caps byte, args []string, wasm []byte, err error) {
+	if len(b) < 34 || b[0] > 1 {
+		return Limits{}, false, 0, nil, nil, errProtocol
 	}
 	cli = b[0] == 1
 	lim.MemoryPages = binary.LittleEndian.Uint32(b[1:5])
@@ -144,8 +152,26 @@ func decodeStart(b []byte) (lim Limits, cli bool, caps byte, wasm []byte, err er
 	lim.MaxEventsPerSec = int(binary.LittleEndian.Uint32(b[21:25]))
 	lim.MaxFramesPerSec = int(binary.LittleEndian.Uint32(b[25:29]))
 	caps = b[29]
-	wasm = append([]byte(nil), b[30:]...)
-	return lim, cli, caps, wasm, nil
+	argc := binary.LittleEndian.Uint32(b[30:34])
+	b = b[34:]
+	if uint64(argc) > uint64(len(b))/4 {
+		return Limits{}, false, 0, nil, nil, errProtocol
+	}
+	args = make([]string, 0, argc)
+	for range argc {
+		if len(b) < 4 {
+			return Limits{}, false, 0, nil, nil, errProtocol
+		}
+		n := binary.LittleEndian.Uint32(b[:4])
+		b = b[4:]
+		if uint64(n) > uint64(len(b)) {
+			return Limits{}, false, 0, nil, nil, errProtocol
+		}
+		args = append(args, string(b[:n]))
+		b = b[n:]
+	}
+	wasm = append([]byte(nil), b...)
+	return lim, cli, caps, args, wasm, nil
 }
 
 // keyValuePayload encodes [u16 keyLen][key][value] for kv_set / bus_pub.

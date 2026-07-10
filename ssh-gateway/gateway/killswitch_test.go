@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // track registers a cancellable session and reports whether it was cancelled.
@@ -10,6 +11,37 @@ func track(r *sessionRegistry, id, owner, app, deploy string) func() bool {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.add(id, sessionEntry{ownerID: owner, appID: app, deployID: deploy, cancel: cancel})
 	return func() bool { return ctx.Err() != nil }
+}
+
+func TestSessionRegistryKillWaitsForCancellationAcknowledgement(t *testing.T) {
+	r := newSessionRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	r.add("s1", sessionEntry{appID: "app1", cancel: cancel})
+	returned := make(chan error, 1)
+	go func() {
+		_, err := r.killAndWait(context.Background(), KillApp, "app1")
+		returned <- err
+	}()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("session was not cancelled")
+	}
+	select {
+	case <-returned:
+		t.Fatal("kill acknowledged before the session deregistered")
+	default:
+	}
+	r.remove("s1")
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("kill did not acknowledge deregistration")
+	}
 }
 
 func TestSessionRegistryKillsByScope(t *testing.T) {

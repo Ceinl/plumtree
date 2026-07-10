@@ -79,6 +79,9 @@ func validateDigest(label, digest string) error {
 	return nil
 }
 
+// ValidateDigest validates a SHA-256 digest supplied at an API boundary.
+func ValidateDigest(label, digest string) error { return validateDigest(label, digest) }
+
 func validateSecretKey(key string) error {
 	if !secretPattern.MatchString(key) {
 		return fmt.Errorf("%w: secret key must match [A-Z][A-Z0-9_]*", ErrInvalid)

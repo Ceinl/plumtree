@@ -75,6 +75,30 @@ func TestAuthAndSecretMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveSSHKey(t *testing.T) {
+	store := NewStore()
+	owner, err := store.CreateOwner("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := store.RegisterSSHKey(SSHKeyInput{
+		OwnerID: owner.ID, Name: "laptop", PublicKey: "ssh-ed25519 AAAATEST", Fingerprint: "SHA256:registered",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, gotOwner, err := store.ResolveSSHKey(registered.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.ID != registered.ID || gotOwner.ID != owner.ID {
+		t.Fatalf("resolved key=%+v owner=%+v", key, gotOwner)
+	}
+	if _, _, err := store.ResolveSSHKey("SHA256:unknown"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown fingerprint error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSecretValues(t *testing.T) {
 	store := NewStore()
 	owner, _ := store.CreateOwner("alice")

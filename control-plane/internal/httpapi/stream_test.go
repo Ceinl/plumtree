@@ -111,7 +111,12 @@ func TestAppsStreamPushesOnSessionStart(t *testing.T) {
 	srv := httptest.NewServer(server.Handler())
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Get(srv.URL + "/api/apps/stream?access_token=test")
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/apps/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer test")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,5 +138,13 @@ func TestAppsStreamPushesOnSessionStart(t *testing.T) {
 	updated := nextStreamFrame(t, reader)
 	if len(updated) != 1 || updated[0].ConnectionsToday != 1 {
 		t.Fatalf("pushed frame = %+v, want one app with 1 connection", updated)
+	}
+}
+
+func TestAppsStreamRejectsQueryStringCredential(t *testing.T) {
+	server := New(control.NewStore(), fakeVerifier{claims: shoo.Claims{PairwiseSub: "ps_test"}}, "http://localhost:8080")
+	rec := serveTestRequest(t, server, http.MethodGet, "/api/apps/stream?access_token=test", nil, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }

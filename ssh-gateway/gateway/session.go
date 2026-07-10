@@ -11,6 +11,7 @@ import (
 
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
+	"github.com/Ceinl/plumtree/tui-runtime/screen"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
 )
@@ -27,7 +28,7 @@ type windowChange struct {
 	WidthPx, HeightPx uint32
 }
 
-func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, run Runnable, identity runner.Identity) {
+func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, handle string, identity runner.Identity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -42,31 +43,36 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 	for req := range reqs {
 		switch req.Type {
 		case "pty-req":
-			var p ptyRequest
-			if err := ssh.Unmarshal(req.Payload, &p); err == nil {
-				mu.Lock()
-				w, h = int(p.Columns), int(p.Rows)
-				mu.Unlock()
+			p, err := parsePTYRequest(req.Payload)
+			if err != nil {
+				req.Reply(false, nil)
+				continue
 			}
+			mu.Lock()
+			w, h = int(p.Columns), int(p.Rows)
+			mu.Unlock()
 			req.Reply(true, nil)
 		case "window-change":
-			var p windowChange
-			if err := ssh.Unmarshal(req.Payload, &p); err == nil {
-				mu.Lock()
-				w, h = int(p.Columns), int(p.Rows)
-				mu.Unlock()
-				select {
-				case winch <- syscall.SIGWINCH:
-				default:
-				}
+			p, err := parseWindowChange(req.Payload)
+			if err != nil {
+				req.Reply(false, nil)
+				continue
 			}
+			mu.Lock()
+			w, h = int(p.Columns), int(p.Rows)
+			mu.Unlock()
+			select {
+			case winch <- syscall.SIGWINCH:
+			default:
+			}
+			req.Reply(true, nil)
 		case "shell", "exec":
 			req.Reply(true, nil)
 			if started {
 				continue
 			}
 			started = true
-			go s.startSession(ctx, cancel, ch, run, identity, size, winch)
+			go s.startSession(ctx, cancel, ch, handle, identity, size, winch)
 		case "env":
 			req.Reply(true, nil)
 		default:
@@ -76,9 +82,42 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 	cancel()
 }
 
-func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, run Runnable, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
+func parsePTYRequest(payload []byte) (ptyRequest, error) {
+	var p ptyRequest
+	if err := ssh.Unmarshal(payload, &p); err != nil {
+		return p, fmt.Errorf("invalid pty request: %w", err)
+	}
+	if err := validateRequestDimensions(p.Columns, p.Rows); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func parseWindowChange(payload []byte) (windowChange, error) {
+	var p windowChange
+	if err := ssh.Unmarshal(payload, &p); err != nil {
+		return p, fmt.Errorf("invalid window-change request: %w", err)
+	}
+	if err := validateRequestDimensions(p.Columns, p.Rows); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func validateRequestDimensions(columns, rows uint32) error {
+	// Compare as uint32 before converting to int so this remains safe on 32-bit
+	// builds as well as the current 64-bit gateway targets.
+	if columns < screen.MinWidth || columns > screen.MaxWidth ||
+		rows < screen.MinHeight || rows > screen.MaxHeight ||
+		uint64(columns)*uint64(rows) > screen.MaxCells {
+		return fmt.Errorf("terminal dimensions %dx%d outside allowed range", columns, rows)
+	}
+	return nil
+}
+
+func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
 	if !s.acquireSlot() {
-		s.logf("reject %q: runner at capacity (%d sessions)", run.AppName, s.MaxConcurrentSessions)
+		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.MaxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
 		ch.Close()
 		cancel()
@@ -86,11 +125,29 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 	}
 	defer s.releaseSlot()
 
+	// Artifact resolution can materialize a large WASM blob. Do it only after
+	// runner capacity is reserved, and keep the result scoped to this session
+	// rather than to the longer-lived SSH connection.
+	run, err := s.Backend.ResolveRunnable(handle)
+	if err != nil {
+		s.logf("resolve %q failed: %v", handle, err)
+		msg := fmt.Sprintf("app %q is not available", handle)
+		if errors.Is(err, ErrSuspended) {
+			msg = fmt.Sprintf("app %q is temporarily unavailable (suspended)", handle)
+		}
+		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
+		ch.Close()
+		cancel()
+		return
+	}
+
 	sessionID, err := s.Backend.StartSession(run.AppID, run.DeployID)
 	if err != nil {
 		s.logf("start session %q: %v", run.AppName, err)
 		msg := "session unavailable; try again later"
-		if errors.Is(err, ErrQuota) {
+		if errors.Is(err, ErrSuspended) {
+			msg = fmt.Sprintf("app %q is temporarily unavailable (suspended)", handle)
+		} else if errors.Is(err, ErrQuota) {
 			msg = "this app has reached its daily connection limit; try again later"
 		}
 		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
@@ -125,7 +182,13 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 		lim = runner.DefaultLimits
 	}
 	if appType == "cli" {
-		if err := s.Runner.RunCLI(ctx, wasm, lim, caps, nil, ch); err != nil {
+		var err error
+		if s.RunnerWorker != "" {
+			err = runner.NewProcessRunner(s.RunnerWorker).RunCLI(ctx, wasm, lim, caps, nil, ch)
+		} else {
+			err = s.Runner.RunCLI(ctx, wasm, lim, caps, nil, ch)
+		}
+		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
 		return "", false

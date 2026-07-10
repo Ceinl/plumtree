@@ -39,10 +39,25 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-
-	artifact, failure, err := s.createDeployArtifact(r.Context(), req)
+	if err := s.validateDevDeployRequest(req); err != nil {
+		writeControlError(w, err)
+		return
+	}
+	claimToken, err := newClaimToken()
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	reservation, releaseReservation, err := s.store.ReserveDeployClaimQuota()
+	if err != nil {
+		writeControlError(w, err)
+		return
+	}
+	defer releaseReservation()
+
+	artifactIn, wasm, failure, err := s.buildDeployArtifact(r.Context(), req)
+	if err != nil {
+		writeBuildAdmissionError(w, err)
 		return
 	}
 	if failure != nil {
@@ -50,15 +65,9 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claimToken, err := newClaimToken()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	deploy, err := s.store.CreateDeployClaim(control.DeployClaimInput{
+	_, deploy, err := s.store.CreateDeployClaimWithArtifact(reservation, artifactIn, wasm, control.DeployClaimInput{
 		AppName:        req.AppName,
 		AppType:        req.AppType,
-		ArtifactID:     artifact.ID,
 		SourceDigest:   req.SourceDigest,
 		ClaimTokenHash: hashClaimToken(claimToken),
 	})
@@ -143,10 +152,19 @@ func (s *Server) handleDevDeployUpdate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := s.validateDevDeployRequest(req); err != nil {
+		writeControlError(w, err)
+		return
+	}
+	claimTokenHash := hashClaimToken(claimToken)
+	if err := s.store.AuthorizeDeployClaimUpdate(deployID, req.AppName, req.SourceDigest, claimTokenHash); err != nil {
+		writeDeployClaimError(w, err)
+		return
+	}
 
-	artifact, failure, err := s.createDeployArtifact(r.Context(), req)
+	artifactIn, wasm, failure, err := s.buildDeployArtifact(r.Context(), req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeBuildAdmissionError(w, err)
 		return
 	}
 	if failure != nil {
@@ -154,12 +172,11 @@ func (s *Server) handleDevDeployUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app, deploy, claimed, err := s.store.UpdateDeployClaim(deployID, control.DeployClaimInput{
+	_, app, deploy, claimed, err := s.store.UpdateDeployClaimWithArtifact(deployID, artifactIn, wasm, control.DeployClaimInput{
 		AppName:        req.AppName,
 		AppType:        req.AppType,
-		ArtifactID:     artifact.ID,
 		SourceDigest:   req.SourceDigest,
-		ClaimTokenHash: hashClaimToken(claimToken),
+		ClaimTokenHash: claimTokenHash,
 	})
 	if err != nil {
 		writeDeployClaimError(w, err)

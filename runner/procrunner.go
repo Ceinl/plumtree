@@ -12,8 +12,8 @@ import (
 )
 
 // ProcessRunner runs a guest in a separate worker process and serves its host
-// calls from this process. It is a drop-in for the in-process Run on the TUI
-// path: the worker owns the wazero sandbox (limits, watchdog, the untrusted
+// calls from this process. It is a drop-in for the in-process TUI and CLI
+// paths: the worker owns the wazero sandbox (limits, watchdog, the untrusted
 // guest) while the parent owns the Source, Sink, and capabilities. The two speak
 // the lock-step procproto over the worker's stdin/stdout.
 //
@@ -34,6 +34,17 @@ func NewProcessRunner(workerPath string) *ProcessRunner {
 // the guest exits. It returns the same errors as the in-process Run (a guest
 // failure, ErrFrameDeadline surfaced by the worker, or ctx.Err()).
 func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, src Source, sink Sink, logs io.Writer) error {
+	return pr.run(ctx, wasm, lim, caps, false, nil, src, sink, nil, logs)
+}
+
+// RunCLI spawns a worker for one non-interactive CLI invocation. Guest output
+// is filtered inside the worker and streamed back to out over the process
+// protocol; args become the guest's command-line arguments.
+func (pr *ProcessRunner) RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
+	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, out, nil)
+}
+
+func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, out, logs io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -51,12 +62,17 @@ func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps 
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	defer func() { _ = cmd.Wait() }()
+	// Cancel before waiting so a parent-side I/O/protocol error also terminates a
+	// worker that may be blocked waiting for its opResp.
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+	}()
 
 	// Bus delivery rides the recv channel: bind the real subscription to the
 	// real Source so src.Next returns KindMessage events, exactly as in-process.
 	var sub Subscriber
-	if caps.Bus != nil {
+	if !cli && caps.Bus != nil {
 		sub = caps.Bus.Open()
 		defer sub.Close()
 		if bb, ok := src.(BusBinder); ok {
@@ -64,7 +80,7 @@ func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps 
 		}
 	}
 
-	if err := writeMsg(stdin, opStart, encodeStart(lim, false, capMask(caps), wasm)); err != nil {
+	if err := writeMsg(stdin, opStart, encodeStart(lim, cli, capMask(caps), args, wasm)); err != nil {
 		return err
 	}
 
@@ -96,16 +112,19 @@ func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps 
 			}
 			return nil
 		}
-		if err := pr.serve(ctx, stdin, o, payload, caps, src, sink, sub); err != nil {
+		if err := pr.serve(ctx, stdin, o, payload, caps, src, sink, sub, out); err != nil {
 			return err
 		}
 	}
 }
 
 // serve handles one worker request and writes the opResp reply.
-func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber) error {
+func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber, out io.Writer) error {
 	switch o {
 	case opRecv:
+		if src == nil {
+			return errProtocol
+		}
 		ev, ok := src.Next(ctx)
 		if !ok {
 			return writeMsg(w, opResp, []byte{0})
@@ -113,6 +132,9 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		return writeMsg(w, opResp, append([]byte{1}, abi.EncodeEvent(ev)...))
 
 	case opPresent:
+		if sink == nil {
+			return errProtocol
+		}
 		if f, err := abi.DecodeFrame(payload); err == nil {
 			sink.Present(f)
 		}
@@ -190,6 +212,15 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 
 	case opFetch:
 		return pr.serveFetch(ctx, w, payload, caps)
+
+	case opOutput:
+		if out == nil {
+			return errProtocol
+		}
+		if _, err := out.Write(payload); err != nil {
+			return err
+		}
+		return writeMsg(w, opResp, nil)
 
 	default:
 		return errProtocol

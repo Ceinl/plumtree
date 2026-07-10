@@ -24,14 +24,9 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	if o != opStart {
 		return errProtocol
 	}
-	lim, cli, capBits, wasm, err := decodeStart(payload)
+	lim, cli, capBits, args, wasm, err := decodeStart(payload)
 	if err != nil {
 		return err
-	}
-	if cli {
-		// The process runner currently isolates the interactive TUI path; CLI
-		// apps run in-process. Report a clean error to the parent.
-		return writeMsg(out, opDone, encodeDone("process runner: CLI not supported", nil))
 	}
 
 	// Install a proxy only for capabilities the parent actually holds. A
@@ -56,7 +51,12 @@ func RunWorker(in io.Reader, out io.Writer) error {
 		caps.Fetch = proxyFetch{rpc}
 	}
 	logs := &boundedBuffer{max: maxSessionLog}
-	runErr := Run(context.Background(), wasm, lim, caps, &proxySource{rpc}, &proxySink{rpc}, logs)
+	var runErr error
+	if cli {
+		runErr = RunCLI(context.Background(), wasm, lim, caps, args, proxyOutput{rpc})
+	} else {
+		runErr = Run(context.Background(), wasm, lim, caps, &proxySource{rpc}, &proxySink{rpc}, logs)
+	}
 
 	errStr := ""
 	if runErr != nil {
@@ -106,6 +106,15 @@ func (s *proxySource) Next(context.Context) (abi.Event, bool) {
 type proxySink struct{ rpc *workerRPC }
 
 func (s *proxySink) Present(f abi.Frame) { _, _ = s.rpc.call(opPresent, abi.EncodeFrame(f)) }
+
+type proxyOutput struct{ rpc *workerRPC }
+
+func (w proxyOutput) Write(p []byte) (int, error) {
+	if _, err := w.rpc.call(opOutput, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
 
 type proxyKV struct{ rpc *workerRPC }
 

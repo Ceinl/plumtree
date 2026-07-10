@@ -15,18 +15,36 @@ import (
 // separate from the control plane, so untrusted compilation never shares an
 // address space with app metadata, auth state, or secrets.
 type Service struct {
-	builder *Builder
+	builder interface {
+		Build(context.Context, Request) (Result, error)
+	}
 	// token, when set, is required in the X-Plumtree-Build-Token header. The
 	// control plane is the only intended caller.
 	token string
 	// maxBody bounds the request body independently of the source-size check,
 	// guarding the JSON decode itself.
-	maxBody int64
+	maxBody    int64
+	buildSlots chan struct{}
+	queueSlots chan struct{}
 }
 
 // NewService wraps a Builder. An empty token disables auth (local/dev use).
 func NewService(builder *Builder, token string) *Service {
-	return &Service{builder: builder, token: token, maxBody: builder.cfg.MaxSourceBytes*2 + (1 << 20)}
+	return NewServiceWithLimits(builder, token, 2, 8)
+}
+
+// NewServiceWithLimits wraps a Builder with bounded build admission. At most
+// maxConcurrent builds execute and maxQueued additional requests wait. A zero
+// queue rejects immediately when all workers are busy.
+func NewServiceWithLimits(builder *Builder, token string, maxConcurrent, maxQueued int) *Service {
+	s := &Service{builder: builder, token: token, maxBody: builder.cfg.MaxSourceBytes*2 + (1 << 20)}
+	if maxConcurrent > 0 {
+		s.buildSlots = make(chan struct{}, maxConcurrent)
+	}
+	if maxQueued > 0 {
+		s.queueSlots = make(chan struct{}, maxQueued)
+	}
+	return s
 }
 
 // Handler returns the service's HTTP routes.
@@ -54,6 +72,11 @@ func (s *Service) handleBuild(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if !s.acquireBuild(r.Context()) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "build queue is full"})
+		return
+	}
+	defer s.releaseBuild()
 	res, err := s.builder.Build(r.Context(), req)
 	if err != nil {
 		// Worker-internal error: the build could not be attempted.
@@ -61,6 +84,38 @@ func (s *Service) handleBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Service) acquireBuild(ctx context.Context) bool {
+	if s.buildSlots == nil {
+		return true
+	}
+	select {
+	case s.buildSlots <- struct{}{}:
+		return true
+	default:
+	}
+	if s.queueSlots == nil {
+		return false
+	}
+	select {
+	case s.queueSlots <- struct{}{}:
+	default:
+		return false
+	}
+	defer func() { <-s.queueSlots }()
+	select {
+	case s.buildSlots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *Service) releaseBuild() {
+	if s.buildSlots != nil {
+		<-s.buildSlots
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

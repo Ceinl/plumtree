@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
-	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 // Store is per-app scoped key/value storage, handed to a guest as the KV
@@ -223,8 +223,10 @@ func (s *MemStore) snapshot() map[string][]byte {
 // expected to be UTF-8 (JSON object keys); values may be arbitrary bytes.
 type FileStore struct {
 	*MemStore
-	mu   sync.Mutex // serializes file writes
-	path string
+	txnMu     sync.Mutex // serializes mutations, snapshots, and rollback
+	path      string
+	writeFile func(string, []byte, os.FileMode) error
+	rename    func(string, string) error
 }
 
 // NewFileStore opens (or creates) a file-backed store at path, loading any
@@ -243,28 +245,76 @@ func NewFileStore(path string, maxKeys, maxBytes int) (*FileStore, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	return &FileStore{MemStore: ms, path: path}, nil
+	return &FileStore{
+		MemStore:  ms,
+		path:      path,
+		writeFile: os.WriteFile,
+		rename:    os.Rename,
+	}, nil
 }
 
 func (s *FileStore) Set(key string, value []byte) error {
-	if err := s.MemStore.Set(key, value); err != nil {
+	s.txnMu.Lock()
+	defer s.txnMu.Unlock()
+
+	s.MemStore.mu.Lock()
+	defer s.MemStore.mu.Unlock()
+	previous, existed := s.m[key]
+	previousBytes := s.bytes
+	newBytes := s.bytes + len(value) - len(previous)
+	if !existed {
+		newBytes += len(key)
+		if s.maxKeys > 0 && len(s.m)+1 > s.maxKeys {
+			return ErrQuota
+		}
+	}
+	if s.maxBytes > 0 && newBytes > s.maxBytes {
+		return ErrQuota
+	}
+	s.m[key] = value
+	s.bytes = newBytes
+	if err := s.persistLocked(); err != nil {
+		if existed {
+			s.m[key] = previous
+		} else {
+			delete(s.m, key)
+		}
+		s.bytes = previousBytes
 		return err
 	}
-	return s.persist()
+	return nil
 }
 
 func (s *FileStore) Delete(key string) error {
-	if err := s.MemStore.Delete(key); err != nil {
+	s.txnMu.Lock()
+	defer s.txnMu.Unlock()
+
+	s.MemStore.mu.Lock()
+	defer s.MemStore.mu.Unlock()
+	previous, existed := s.m[key]
+	if !existed {
+		return nil
+	}
+	previousBytes := s.bytes
+	delete(s.m, key)
+	s.bytes -= len(key) + len(previous)
+	if err := s.persistLocked(); err != nil {
+		s.m[key] = previous
+		s.bytes = previousBytes
 		return err
 	}
-	return s.persist()
+	return nil
 }
 
-// persist writes a snapshot atomically (temp file + rename).
-func (s *FileStore) persist() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := json.Marshal(s.snapshot())
+// persistLocked writes the current in-memory snapshot atomically. Both txnMu
+// and MemStore.mu must be held by the caller, making mutation and snapshot one
+// transaction: a failed write can restore the exact previous entry and count.
+func (s *FileStore) persistLocked() error {
+	raw := make(map[string][]byte, len(s.m))
+	for k, v := range s.m {
+		raw[k] = append([]byte(nil), v...)
+	}
+	data, err := json.Marshal(raw)
 	if err != nil {
 		return err
 	}
@@ -272,8 +322,9 @@ func (s *FileStore) persist() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	defer os.Remove(tmp)
+	if err := s.writeFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	return s.rename(tmp, s.path)
 }

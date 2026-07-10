@@ -66,6 +66,35 @@ func (s *Server) handleGatewayResolve(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleGatewayIdentity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeGateway(w, r) {
+		return
+	}
+	var req gatewayapi.IdentityRequest
+	if err := readGatewayJSON(w, r, &req); err != nil {
+		writeGatewayError(w, http.StatusBadRequest, "", err.Error())
+		return
+	}
+	req.Fingerprint = strings.TrimSpace(req.Fingerprint)
+	if req.Fingerprint == "" {
+		writeGatewayError(w, http.StatusBadRequest, "", "fingerprint is required")
+		return
+	}
+	_, _, err := s.store.ResolveSSHKey(req.Fingerprint)
+	if err != nil && !errors.Is(err, control.ErrNotFound) {
+		writeControlError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, gatewayapi.IdentityResponse{
+		User:          req.Fingerprint,
+		Authenticated: err == nil,
+	})
+}
+
 func (s *Server) handleGatewayStartSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -81,6 +110,10 @@ func (s *Server) handleGatewayStartSession(w http.ResponseWriter, r *http.Reques
 	}
 	session, err := s.store.StartSession(req.AppID, req.DeployID)
 	if err != nil {
+		if errors.Is(err, control.ErrSuspended) {
+			writeGatewayError(w, http.StatusForbidden, gatewayapi.CodeSuspended, err.Error())
+			return
+		}
 		if errors.Is(err, control.ErrQuota) {
 			writeGatewayError(w, http.StatusTooManyRequests, gatewayapi.CodeQuota, err.Error())
 			return
