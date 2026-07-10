@@ -6,7 +6,6 @@ use (
 	./pt
 	./runner
 	./sdk
-	./spike
 	./ssh-gateway
 	./tui-runtime
 )
