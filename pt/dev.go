@@ -85,9 +85,10 @@ func devCapabilities(proj string) (runner.Capabilities, error) {
 	// connections to the same app exchange live pub/sub messages. Auth reports a
 	// fixed local identity in dev (there is no platform identity locally).
 	return runner.Capabilities{
-		KV:   kv,
-		Bus:  runner.NewMemBus(),
-		Auth: runner.StaticAuth{Identity: runner.Identity{User: "local"}},
+		KV:      kv,
+		Bus:     runner.NewMemBus(),
+		Auth:    runner.StaticAuth{Identity: runner.Identity{User: "local"}},
+		Goodbye: new(string),
 	}, nil
 }
 

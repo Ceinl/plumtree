@@ -1,6 +1,8 @@
 go 1.26
 
 use (
+	./_devtest/goodbye-tui
+	./_devtest/goodbye-cli
 	./build-worker
 	./control-plane
 	./pt

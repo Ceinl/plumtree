@@ -97,9 +97,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			return err
 		}
 		if o == opDone {
-			errStr, logBytes, ok := decodeDone(payload)
+			errStr, goodbye, logBytes, ok := decodeDone(payload)
 			if !ok {
 				return errProtocol
+			}
+			if caps.Goodbye != nil {
+				*caps.Goodbye = goodbye
 			}
 			if logs != nil && len(logBytes) > 0 {
 				_, _ = logs.Write(logBytes)

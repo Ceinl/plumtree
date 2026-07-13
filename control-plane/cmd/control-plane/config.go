@@ -30,7 +30,7 @@ type fileConfig struct {
 	DeployClaimTTL string `json:"deployClaimTtl"`
 	// MaxAppsPerOwner caps how many apps a single owner may create. 0 means
 	// unlimited. Maps to -max-apps-per-owner / PLUMTREE_MAX_APPS_PER_OWNER.
-	MaxAppsPerOwner int `json:"maxAppsPerOwner"`
+	MaxAppsPerOwner int `json:"maxAppsPerOwner,omitempty"` // default 25
 	// MaxSessionsPerAppPerDay caps new sessions (SSH connections) per app in any
 	// rolling 24h. 0 means unlimited; unset falls back to the built-in default.
 	// Maps to -max-sessions-per-app-day / PLUMTREE_MAX_SESSIONS_PER_APP_DAY.

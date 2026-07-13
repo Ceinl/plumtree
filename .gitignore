@@ -1,7 +1,6 @@
 .DS_Store
 
 # Local Plumtree state
-_devtest/
 .plumtree/
 **/.plumtree/
 .env.plumtree.server.local

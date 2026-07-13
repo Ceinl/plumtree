@@ -174,6 +174,7 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 	hostMod = registerAuth(hostMod, caps.Auth)
 	hostMod = registerEnv(hostMod, caps.Env)
 	hostMod = registerFetch(hostMod, caps.Fetch)
+	hostMod = registerGoodbye(hostMod, caps.Goodbye)
 	if _, err := hostMod.Instantiate(runCtx); err != nil {
 		return fmt.Errorf("install host module: %w", err)
 	}

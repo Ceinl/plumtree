@@ -179,6 +179,9 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (in
 		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, s.Caps, nil, ch); err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
+		if s.Caps.Goodbye != nil && *s.Caps.Goodbye != "" {
+			fmt.Fprintf(ch, "\r\n%s\r\n", *s.Caps.Goodbye)
+		}
 		return
 	}
 

@@ -191,6 +191,9 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
+		if caps.Goodbye != nil && *caps.Goodbye != "" {
+			fmt.Fprintf(ch, "\r\n%s\r\n", *caps.Goodbye)
+		}
 		return "", false
 	}
 
@@ -199,7 +202,13 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 		w, h = 80, 24
 	}
 	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
-	defer io.WriteString(ch, terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
+	defer func() {
+		msg := terminal.SHOW_CURSOR + terminal.CLOSE_ALT
+		if caps.Goodbye != nil && *caps.Goodbye != "" {
+			msg += "\r\n" + *caps.Goodbye + "\r\n"
+		}
+		io.WriteString(ch, msg)
+	}()
 
 	src := &runner.TTYSource{
 		Keys:    keyboard.ListenReader(ctx, ch),

@@ -53,6 +53,7 @@ func runCLI(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim
 		NewFunctionBuilder().WithFunc(func(context.Context, api.Module, int32, int32) int32 { return -1 }).Export("recv").
 		NewFunctionBuilder().WithFunc(func(context.Context, api.Module, int32, int32) {}).Export("present")
 	hostMod = registerKV(hostMod, caps.KV)
+	hostMod = registerGoodbye(hostMod, caps.Goodbye)
 	// A CLI guest has no session loop to receive messages, but may publish; give
 	// it the bus with a nil subscription (bus_sub becomes a no-op error).
 	var busSub Subscriber

@@ -1,0 +1,38 @@
+# goodbye-cli
+
+Plumtree cli app.
+
+## Layout
+
+- `plumtree.json` - committed app manifest. Keep the name and type in sync with the app.
+- `app/main.go` - application entrypoint.
+- `AGENTS.md` - notes for coding agents working in this project.
+- `.plumtree/` - local deploy metadata written by `pt deploy`; do not commit it.
+
+## Run Locally
+
+```bash
+pt dev Alice
+```
+
+## Deterministic Check
+
+```bash
+pt dev Alice
+```
+
+## Deploy
+
+The control-plane URL and deploy token come from the environment
+(`PLUMTREE_SERVER_URL`, `PLUMTREE_DEV_TOKEN`) — set them once locally, or as
+GitHub Actions secrets in CI:
+
+```bash
+export PLUMTREE_SERVER_URL=http://127.0.0.1:18080
+export PLUMTREE_DEV_TOKEN=local-dev
+pt deploy
+pt claim
+```
+
+After the first claim, later deploys (locally or from CI) reuse the deploy id in
+`.plumtree/deploy.json` to update the same app.

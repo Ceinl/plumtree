@@ -4,6 +4,9 @@ package abi
 // same ptr/len convention as recv/present: the guest passes pointers into its
 // own linear memory and the host reads/writes raw key/value bytes.
 
+// GoodbyeMaxLen caps the length of a goodbye message set by the guest.
+const GoodbyeMaxLen = 4096
+
 const (
 	// KVMaxKey caps a key's length in bytes.
 	KVMaxKey = 256
