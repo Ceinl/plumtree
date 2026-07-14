@@ -152,7 +152,7 @@ func TestResolveRunnableReturnsArtifactBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, gotDeploy, _, gotWASM, err := store.ResolveRunnable("counter")
+	_, gotDeploy, _, gotWASM, err := store.ResolveRunnable("alice/counter")
 	if err != nil {
 		t.Fatal(err)
 	}
