@@ -51,7 +51,7 @@ func DecodeFrame(b []byte) (Frame, error) {
 		H:    int(binary.LittleEndian.Uint16(b[6:8])),
 	}
 	n := f.W * f.H
-	if len(b) < frameHeaderLen+n*cellLen {
+	if len(b) != frameHeaderLen+n*cellLen {
 		return Frame{}, ErrSize
 	}
 	f.Cells = make([]Cell, n)

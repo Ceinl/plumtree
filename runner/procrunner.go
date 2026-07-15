@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
@@ -23,11 +26,25 @@ type ProcessRunner struct {
 	// WorkerPath is the runner-worker executable to spawn (see
 	// cmd/plumtree-runner-worker).
 	WorkerPath string
+	// WorkerEndpoint is a remote runner-broker endpoint. Supported forms are
+	// unix:///path/to/socket and tcp://host:port. Production uses a Unix socket
+	// into a separate, networkless container so a native WASM-runtime escape
+	// cannot inherit the gateway's credentials, filesystem, or network.
+	WorkerEndpoint string
+	// WorkerToken authenticates the gateway to a remote runner broker.
+	WorkerToken string
 }
 
 // NewProcessRunner returns a ProcessRunner that spawns workerPath per session.
 func NewProcessRunner(workerPath string) *ProcessRunner {
 	return &ProcessRunner{WorkerPath: workerPath}
+}
+
+// NewRemoteProcessRunner returns a ProcessRunner backed by a runner broker.
+// The broker owns the disposable worker process; this process retains all app
+// capabilities and communicates with it over the existing lock-step protocol.
+func NewRemoteProcessRunner(endpoint, token string) *ProcessRunner {
+	return &ProcessRunner{WorkerEndpoint: endpoint, WorkerToken: token}
 }
 
 // Run spawns a worker for one TUI session and serves its capability calls until
@@ -45,28 +62,20 @@ func (pr *ProcessRunner) RunCLI(ctx context.Context, wasm []byte, lim Limits, ca
 }
 
 func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, out, logs io.Writer) error {
+	if err := validateLimits(lim); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, pr.WorkerPath)
-	stdin, err := cmd.StdinPipe()
+	worker, err := pr.startWorker(ctx)
 	if err != nil {
+		cancel()
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr := &boundedBuffer{max: 8 << 10}
-	cmd.Stderr = stderr
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	// Cancel before waiting so a parent-side I/O/protocol error also terminates a
-	// worker that may be blocked waiting for its opResp.
+	// Cancel before closing/waiting so a parent-side I/O/protocol error also
+	// terminates a worker that may be blocked waiting for its opResp.
 	defer func() {
 		cancel()
-		_ = cmd.Wait()
+		worker.close()
 	}()
 
 	// Bus delivery rides the recv channel: bind the real subscription to the
@@ -80,25 +89,25 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 		}
 	}
 
-	if err := writeMsg(stdin, opStart, encodeStart(lim, cli, capMask(caps), args, wasm)); err != nil {
+	if err := writeMsg(worker.in, opStart, encodeStart(lim, cli, capMask(caps), args, wasm)); err != nil {
 		return err
 	}
 
 	for {
-		o, payload, err := readMsg(stdout)
+		o, payload, err := readMsgBounded(worker.out, maxWorkerPayload)
 		if err != nil {
 			// Worker exited or pipe closed. Prefer the caller's cancellation cause.
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return fmt.Errorf("runner worker exited unexpectedly: %s", stderr.String())
+				return fmt.Errorf("runner worker exited unexpectedly: %s", worker.failure())
 			}
 			return err
 		}
 		if o == opDone {
 			errStr, logBytes, ok := decodeDone(payload)
-			if !ok {
+			if !ok || len(errStr) > maxWorkerError || len(logBytes) > maxSessionLog {
 				return errProtocol
 			}
 			if logs != nil && len(logBytes) > 0 {
@@ -112,10 +121,130 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			}
 			return nil
 		}
-		if err := pr.serve(ctx, stdin, o, payload, caps, src, sink, sub, out); err != nil {
+		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, out); err != nil {
 			return err
 		}
 	}
+}
+
+const (
+	maxEncodedFrame = 8 + 150_000*11
+	maxWorkerOutput = 64 << 10
+	maxWorkerError  = 64 << 10
+	maxEncodedFetch = 2 + abi.FetchMaxMethod + 2 + abi.FetchMaxURL + 4 + abi.FetchMaxBody
+)
+
+func maxWorkerPayload(o op) uint32 {
+	switch o {
+	case opRecv, opAuth:
+		return 0
+	case opPresent:
+		return maxEncodedFrame
+	case opKVGet, opKVDel:
+		return abi.KVMaxKey
+	case opKVSet:
+		return 2 + abi.KVMaxKey + abi.KVMaxValue
+	case opBusSub:
+		return abi.BusMaxTopic
+	case opBusPub:
+		return 2 + abi.BusMaxTopic + abi.BusMaxData
+	case opEnv:
+		return abi.EnvMaxKey
+	case opFetch:
+		return maxEncodedFetch
+	case opDone:
+		return 4 + maxWorkerError + maxSessionLog
+	case opOutput:
+		return maxWorkerOutput
+	default:
+		return 0
+	}
+}
+
+type workerTransport struct {
+	in      io.Writer
+	out     io.Reader
+	close   func()
+	failure func() string
+}
+
+func (pr *ProcessRunner) startWorker(ctx context.Context) (*workerTransport, error) {
+	if pr.WorkerPath != "" && pr.WorkerEndpoint != "" {
+		return nil, errors.New("runner: configure either a local worker path or a remote worker endpoint, not both")
+	}
+	if pr.WorkerEndpoint != "" {
+		return pr.dialWorker(ctx)
+	}
+	if pr.WorkerPath == "" {
+		return nil, errors.New("runner: worker path or endpoint is required")
+	}
+
+	workDir, err := os.MkdirTemp("", "plumtree-runner-*")
+	if err != nil {
+		return nil, fmt.Errorf("runner: create worker scratch dir: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, pr.WorkerPath)
+	cmd.Dir = workDir
+	// Never inherit gateway credentials or operator-controlled loader settings.
+	// This is defense in depth for local process mode; production additionally
+	// places the broker and workers in their own networkless container.
+	cmd.Env = []string{
+		"HOME=" + workDir,
+		"TMPDIR=" + workDir,
+		"PATH=/usr/local/bin:/usr/bin:/bin",
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		_ = os.RemoveAll(workDir)
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = os.RemoveAll(workDir)
+		return nil, err
+	}
+	stderr := &boundedBuffer{max: 8 << 10}
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(workDir)
+		return nil, err
+	}
+	return &workerTransport{
+		in:  stdin,
+		out: stdout,
+		close: func() {
+			_ = stdin.Close()
+			_ = stdout.Close()
+			_ = cmd.Wait()
+			_ = os.RemoveAll(workDir)
+		},
+		failure: stderr.String,
+	}, nil
+}
+
+func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, error) {
+	network, address, ok := strings.Cut(pr.WorkerEndpoint, "://")
+	if !ok || (network != "unix" && network != "tcp") || address == "" {
+		return nil, fmt.Errorf("runner: invalid worker endpoint %q (want unix:///path or tcp://host:port)", pr.WorkerEndpoint)
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	if err != nil {
+		return nil, fmt.Errorf("runner: connect to broker: %w", err)
+	}
+	if err := writeBrokerAuth(conn, pr.WorkerToken); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("runner: authenticate to broker: %w", err)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	return &workerTransport{
+		in:  conn,
+		out: conn,
+		close: func() {
+			stop()
+			_ = conn.Close()
+		},
+		failure: func() string { return "remote broker closed the session" },
+	}, nil
 }
 
 // serve handles one worker request and writes the opResp reply.
@@ -135,13 +264,15 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		if sink == nil {
 			return errProtocol
 		}
-		if f, err := abi.DecodeFrame(payload); err == nil {
-			sink.Present(f)
+		f, err := abi.DecodeFrame(payload)
+		if err != nil || !validFrame(f) {
+			return errProtocol
 		}
+		sink.Present(f)
 		return writeMsg(w, opResp, nil)
 
 	case opKVGet:
-		if caps.KV == nil {
+		if caps.KV == nil || len(payload) == 0 || len(payload) > abi.KVMaxKey {
 			return writeMsg(w, opResp, []byte{2})
 		}
 		val, found, err := caps.KV.Get(string(payload))
@@ -156,7 +287,7 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 
 	case opKVSet:
 		key, val, ok := decodeKeyValue(payload)
-		if !ok || caps.KV == nil {
+		if !ok || caps.KV == nil || len(key) == 0 || len(key) > abi.KVMaxKey || len(val) > abi.KVMaxValue {
 			return writeMsg(w, opResp, []byte{2})
 		}
 		if err := caps.KV.Set(key, val); err != nil {
@@ -168,7 +299,7 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		return writeMsg(w, opResp, []byte{0})
 
 	case opKVDel:
-		if caps.KV == nil {
+		if caps.KV == nil || len(payload) == 0 || len(payload) > abi.KVMaxKey {
 			return writeMsg(w, opResp, []byte{2})
 		}
 		if err := caps.KV.Delete(string(payload)); err != nil {
@@ -177,6 +308,9 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		return writeMsg(w, opResp, []byte{0})
 
 	case opBusSub:
+		if len(payload) == 0 || len(payload) > abi.BusMaxTopic {
+			return errProtocol
+		}
 		if sub != nil {
 			sub.Subscribe(string(payload))
 		}
@@ -185,7 +319,10 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 	case opBusPub:
 		topic, data, ok := decodeKeyValue(payload)
 		n := 0
-		if ok && caps.Bus != nil {
+		if !ok || len(topic) == 0 || len(topic) > abi.BusMaxTopic || len(data) > abi.BusMaxData {
+			return errProtocol
+		}
+		if caps.Bus != nil {
 			n = caps.Bus.Publish(topic, data)
 		}
 		var out [4]byte
@@ -193,6 +330,9 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		return writeMsg(w, opResp, out[:])
 
 	case opAuth:
+		if len(payload) != 0 {
+			return errProtocol
+		}
 		if caps.Auth == nil {
 			return writeMsg(w, opResp, []byte{0})
 		}
@@ -201,6 +341,9 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		return writeMsg(w, opResp, append([]byte{1}, enc...))
 
 	case opEnv:
+		if len(payload) == 0 || len(payload) > abi.EnvMaxKey {
+			return errProtocol
+		}
 		if caps.Env == nil {
 			return writeMsg(w, opResp, []byte{0})
 		}
@@ -214,7 +357,7 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		return pr.serveFetch(ctx, w, payload, caps)
 
 	case opOutput:
-		if out == nil {
+		if out == nil || len(payload) > maxWorkerOutput {
 			return errProtocol
 		}
 		if _, err := out.Write(payload); err != nil {
@@ -225,6 +368,10 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 	default:
 		return errProtocol
 	}
+}
+
+func validFrame(f abi.Frame) bool {
+	return f.W >= 1 && f.W <= 500 && f.H >= 1 && f.H <= 300 && f.W <= 150_000/f.H && len(f.Cells) == f.W*f.H
 }
 
 // boundedBuffer captures up to max bytes of worker stderr (panics, fatal logs)
@@ -253,7 +400,7 @@ func (pr *ProcessRunner) serveFetch(ctx context.Context, w io.Writer, payload []
 		return writeMsg(w, opResp, []byte{4})
 	}
 	req, err := abi.DecodeFetchRequest(payload)
-	if err != nil {
+	if err != nil || len(req.Method) > abi.FetchMaxMethod || len(req.URL) > abi.FetchMaxURL || len(req.Body) > abi.FetchMaxBody {
 		return writeMsg(w, opResp, []byte{3})
 	}
 	resp, err := caps.Fetch.Fetch(ctx, req)

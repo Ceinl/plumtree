@@ -142,7 +142,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       </div>
     </main>
   </div>
-  <script>
+  <script nonce="{{.CSPNonce}}">
     const login = document.getElementById("login");
     const signout = document.getElementById("signout");
     const owner = document.getElementById("owner");

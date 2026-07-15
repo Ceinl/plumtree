@@ -63,7 +63,7 @@ func devWorkspace(proj string) (path string, cleanup func(), ok bool) {
 	if err != nil {
 		return "", nil, false
 	}
-	content := fmt.Sprintf("go 1.26\n\nuse (\n\t%s\n\t%s\n\t%s\n)\n", proj, sdk, runtime)
+	content := fmt.Sprintf("go 1.26.5\n\nuse (\n\t%s\n\t%s\n\t%s\n)\n", proj, sdk, runtime)
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
 		os.Remove(f.Name())

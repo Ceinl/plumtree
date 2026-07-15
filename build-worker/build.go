@@ -285,7 +285,7 @@ func (b *Builder) writeWorkspace(sandbox, srcDir string) (string, error) {
 		return "", nil
 	}
 	var sb strings.Builder
-	sb.WriteString("go 1.26\n\nuse (\n")
+	sb.WriteString("go 1.26.5\n\nuse (\n")
 	sb.WriteString("\t" + resolvePath(srcDir) + "\n")
 	for _, m := range b.cfg.WorkspaceModules {
 		sb.WriteString("\t" + resolvePath(m) + "\n")

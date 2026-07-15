@@ -1,0 +1,21 @@
+# Hostile WASM runtime boundary. The broker and disposable workers have no
+# gateway credentials, persistent data, or network namespace in production.
+FROM golang:1.26.5-alpine3.24 AS build
+WORKDIR /src
+COPY . .
+RUN cd runner && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-broker ./cmd/plumtree-runner-broker \
+    && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-worker ./cmd/plumtree-runner-worker
+
+FROM alpine:3.24.1
+RUN mkdir -p /run/plumtree /scratch && chmod 0700 /run/plumtree /scratch
+COPY --from=build /out/plumtree-runner-broker /out/plumtree-runner-worker /usr/local/bin/
+ENV HOME=/scratch \
+    TMPDIR=/scratch \
+    PLUMTREE_RUNNER_LISTEN=unix:///run/plumtree/runner.sock \
+    PLUMTREE_RUNNER_WORKER=/usr/local/bin/plumtree-runner-worker \
+    PLUMTREE_RUNNER_SCRATCH=/scratch \
+    PLUMTREE_RUNNER_UID_BASE=66000 \
+    PLUMTREE_RUNNER_SOCKET_UID=65532 \
+    PLUMTREE_RUNNER_SOCKET_GID=65532
+VOLUME /run/plumtree
+ENTRYPOINT ["plumtree-runner-broker"]

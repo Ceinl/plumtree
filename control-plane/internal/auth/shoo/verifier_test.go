@@ -85,6 +85,28 @@ func TestVerifierRejectsWrongAudience(t *testing.T) {
 	}
 }
 
+func TestVerifierRejectsOversizedTokenAndJWKS(t *testing.T) {
+	verifier, err := NewVerifier(Config{AppOrigin: "https://plumtree.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifier.Verify(context.Background(), strings.Repeat("x", maxTokenBytes+1)); err == nil {
+		t.Fatal("oversized token was accepted")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"keys":[]}` + strings.Repeat(" ", maxJWKSBytes)))
+	}))
+	defer srv.Close()
+	verifier, err = NewVerifier(Config{BaseURL: srv.URL, AppOrigin: "https://plumtree.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.refreshKeys(context.Background()); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized JWKS error = %v", err)
+	}
+}
+
 func testKey(t *testing.T) (*ecdsa.PrivateKey, map[string]any) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

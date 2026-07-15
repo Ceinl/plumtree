@@ -64,14 +64,20 @@ func collectSourceFiles(proj string) ([]string, error) {
 	var files []string
 	for _, root := range sourceRoots {
 		full := filepath.Join(proj, root)
-		info, err := os.Stat(full)
+		info, err := os.Lstat(full)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return nil, err
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("source root %q must not be a symlink", root)
+		}
 		if !info.IsDir() {
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("source root %q must be a regular file or directory", root)
+			}
 			files = append(files, root)
 			continue
 		}
@@ -109,6 +115,7 @@ func extractSource(archive []byte, dst string, maxBytes int64, maxFiles int) (in
 	tr := tar.NewReader(bytes.NewReader(archive))
 	var total int64
 	var count int
+	seen := make(map[string]bool)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -122,7 +129,15 @@ func extractSource(archive []byte, dst string, maxBytes int64, maxFiles int) (in
 			// files, and refusing the rest blocks symlink-escape tricks.
 			continue
 		}
-		clean, err := safeJoin(dst, hdr.Name)
+		archivePath, err := normalizeSourcePath(hdr.Name)
+		if err != nil {
+			return total, err
+		}
+		if seen[archivePath] {
+			return total, fmt.Errorf("duplicate archive entry %q", hdr.Name)
+		}
+		seen[archivePath] = true
+		clean, err := safeJoin(dst, archivePath)
 		if err != nil {
 			return total, err
 		}
@@ -151,6 +166,37 @@ func extractSource(archive []byte, dst string, maxBytes int64, maxFiles int) (in
 		}
 	}
 	return total, nil
+}
+
+func normalizeSourcePath(name string) (string, error) {
+	norm := strings.ReplaceAll(name, `\`, "/")
+	if path.IsAbs(norm) {
+		return "", fmt.Errorf("archive entry %q is an absolute path", name)
+	}
+	for _, seg := range strings.Split(norm, "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("archive entry %q escapes build root", name)
+		}
+	}
+	clean := path.Clean(norm)
+	if clean == "." {
+		return "", fmt.Errorf("archive entry %q has no file name", name)
+	}
+	top, _, _ := strings.Cut(clean, "/")
+	allowed := false
+	for _, root := range sourceRoots {
+		if top == root {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return "", fmt.Errorf("archive entry %q is outside allowed source roots", name)
+	}
+	if (top == "go.mod" || top == "go.sum" || top == "plumtree.json") && clean != top {
+		return "", fmt.Errorf("archive entry %q treats file root %q as a directory", name, top)
+	}
+	return clean, nil
 }
 
 // safeJoin resolves name under root, rejecting absolute paths and any ".."

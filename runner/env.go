@@ -3,9 +3,9 @@ package runner
 import (
 	"context"
 
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
-	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 // Env is the read-only secret/environment capability for a session. Values are

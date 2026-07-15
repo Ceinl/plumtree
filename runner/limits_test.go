@@ -2,10 +2,29 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
 )
+
+func TestInvalidLimitsReturnErrorsInsteadOfPanicking(t *testing.T) {
+	for _, lim := range []Limits{
+		{},
+		{MemoryPages: MaxMemoryPages + 1},
+		{MemoryPages: 1, SessionTimeout: -1},
+		{MemoryPages: 1, MaxFramesPerSec: -1},
+	} {
+		if err := validateLimits(lim); err == nil {
+			t.Errorf("validateLimits(%+v) succeeded", lim)
+		}
+	}
+	if err := RunCLI(context.Background(), nil, Limits{}, Capabilities{}, nil, io.Discard); err == nil {
+		t.Fatal("RunCLI accepted zero memory limit")
+	} else if errors.Is(err, context.Canceled) {
+		t.Fatalf("RunCLI returned unrelated error: %v", err)
+	}
+}
 
 // A guest that yields every frame but never finishes is killed at the total
 // session budget, even though no single frame trips the per-frame watchdog.

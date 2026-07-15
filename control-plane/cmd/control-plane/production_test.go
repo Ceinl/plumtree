@@ -43,6 +43,11 @@ func TestValidateProductionLimitsChecksEmbeddedSSHOnlyWhenEnabled(t *testing.T) 
 		t.Fatalf("disabled embedded SSH should not require SSH limits: %v", err)
 	}
 	if err := validateProductionLimits(true, false, true, limits); err == nil {
-		t.Fatal("enabled embedded SSH should require a session limit")
+		t.Fatal("enabled embedded SSH should require a remote runner")
+	}
+	limits.runnerEndpoint = "unix:///run/plumtree/runner.sock"
+	limits.runnerToken = "secret"
+	if err := validateProductionLimits(true, false, true, limits); err == nil || !strings.Contains(err.Error(), "max-sessions") {
+		t.Fatalf("error = %v, want session limit after runner validation", err)
 	}
 }

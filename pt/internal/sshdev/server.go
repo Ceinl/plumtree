@@ -23,12 +23,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 
+	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
-	"github.com/Ceinl/plumtree/runner"
 )
 
 // Server serves one app over SSH.
@@ -37,7 +36,7 @@ type Server struct {
 	Runner  *runner.Runner
 	Limits  runner.Limits
 	Caps    runner.Capabilities // host capabilities shared across all sessions
-	AppType string // "tui" or "cli"
+	AppType string              // "tui" or "cli"
 	AppName string
 	MaxFPS  int
 	Logf    func(format string, args ...any)
@@ -147,7 +146,10 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				w, h = int(p.Columns), int(p.Rows)
 				mu.Unlock()
 				select {
-				case winch <- syscall.SIGWINCH:
+				// TTYSource treats this channel as a resize notification; the
+				// concrete signal value is irrelevant. os.Interrupt keeps this
+				// development server portable to Windows as well.
+				case winch <- os.Interrupt:
 				default:
 				}
 			}

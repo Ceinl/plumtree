@@ -9,7 +9,8 @@ Owns:
 - Go `crypto/ssh` server.
 - app handle parsing and PTY/session lifecycle.
 - key input, resize, signal, and disconnect forwarding.
-- the per-session WASM sandbox (in-process, or isolated via the runner worker).
+- delegation of the per-session WASM sandbox to the production runner broker
+  (or a local worker/in-process runtime for development only).
 - per-app KV stores (`--state-dir`) and the in-memory pub/sub bus.
 - streaming host-rendered terminal output.
 
@@ -41,10 +42,13 @@ ssh-gateway \
   -gateway-token "$PLUMTREE_GATEWAY_TOKEN" \
   -ssh-addr 0.0.0.0:2222 \
   -state-dir /var/lib/plumtree-gateway \
-  -runner-worker /usr/local/bin/plumtree-runner-worker
+  -runner-endpoint unix:///run/plumtree/runner.sock \
+  -runner-token "$PLUMTREE_RUNNER_TOKEN"
 ```
 
 All flags also read from `PLUMTREE_*` environment variables (see `-h`).
+Production refuses to start without the remote broker boundary; the local
+`-runner-worker` mode shares the gateway's OS authority and is for development.
 
 In all-in-one mode the control plane embeds this `gateway` package directly via
 an in-process `Backend` adapter, so there is no HTTP hop and no token needed.

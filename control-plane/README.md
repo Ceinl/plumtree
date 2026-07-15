@@ -16,8 +16,9 @@ Owns:
 - per-app egress allowlist (injected into claimed apps as `ctx.Fetch`).
 - quotas and authz, incl. `--max-deploys-per-hour` rate limiting and the
   per-app daily session cap.
-- optional out-of-process WASM isolation via `--runner-worker <path>` (spawns a
-  `plumtree-runner-worker` per TUI session).
+- optional remote WASM isolation for embedded SSH via `--runner-endpoint` and
+  `--runner-token`; production embedded SSH requires it. Local development may
+  use the weaker `--runner-worker <path>` subprocess fallback.
 - optional anonymous preview run via `--anonymous-preview` (run any deploy
   unclaimed at `ssh preview-<deployID>@host` in the tightest sandbox).
 - HTTP dashboard/API for owners to inspect their apps, plus claim-token
