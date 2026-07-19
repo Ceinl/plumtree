@@ -48,8 +48,9 @@ allowlist.
 
 Workflow authority is shared deliberately:
 
-- action callers create tasks in `pending` and advance `todo → in-progress → in-review`;
-- only the app owner, using TUI controls, advances `pending → todo` and `in-review → done`;
+- callers can move their own Personal-board tasks through the entire workflow;
+- on project boards, action callers create tasks in `pending` and advance `todo → in-progress → in-review`;
+- only the app owner, using TUI controls, advances project tasks through `pending → todo` and `in-review → done`;
 - callers pass `expected_status` on advancement, so concurrent stale updates
   return a typed `conflict` rather than chaining or losing an update.
 

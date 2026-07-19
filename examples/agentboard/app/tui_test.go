@@ -68,14 +68,26 @@ func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
 }
 
 func TestTaskCardsAcceptMouseClicks(t *testing.T) {
+	cleanStore(t)
+	t.Cleanup(func() { cleanStore(t) })
+	identity := sdk.Identity{User: memberFingerprint, Kind: sdk.IdentitySSHKey}
+	personal, err := ensurePersonalBoard(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := createTask(personal, identity, "First", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := createTask(personal, identity, "Second", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	model := boardModel{
 		initialized: true,
-		identity:    sdk.Identity{Kind: sdk.IdentitySSHKey, Authenticated: true},
-		boards:      []Board{{ID: "personal", Type: "user", Name: "Personal"}},
-		tasks: []Task{
-			{ID: "task-000001", Title: "First", Status: "pending", Revision: 1},
-			{ID: "task-000002", Title: "Second", Status: "pending", Revision: 1},
-		},
+		identity:    identity,
+		boards:      []Board{personal},
+		tasks:       []Task{first, second},
 	}
 
 	component := model.View()
@@ -85,8 +97,7 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 		t.Fatal("board root does not route mouse input")
 	}
 	// The second pending card occupies the first lane below the first card and
-	// its spacer. A member cannot advance pending, but clicking must still select
-	// it and consume both halves of the click.
+	// its spacer. Clicking selects and advances this identity's personal task.
 	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 13, Action: layout.MouseDown}) {
 		t.Fatal("task card did not consume mouse down")
 	}
@@ -96,21 +107,30 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 	if model.taskIndex != 1 {
 		t.Fatalf("selected task = %d, want 1", model.taskIndex)
 	}
-	if !strings.Contains(model.err, "awaiting app-owner review") {
-		t.Fatalf("blocked click feedback = %q", model.err)
+	if model.tasks[1].Status != "todo" {
+		t.Fatalf("clicked task status = %q, want todo", model.tasks[1].Status)
 	}
 }
 
 func TestRoleCorrectTUITransitions(t *testing.T) {
-	member := boardModel{}
+	member := boardModel{boards: []Board{{Type: "project"}}}
 	if member.canAdvance("pending") || member.canAdvance("in-review") ||
 		!member.canAdvance("todo") || !member.canAdvance("in-progress") {
 		t.Fatal("member transition affordances do not match agent workflow")
 	}
-	owner := boardModel{identity: sdk.Identity{OwnsApp: true}}
+	owner := boardModel{identity: sdk.Identity{OwnsApp: true}, boards: []Board{{Type: "project"}}}
 	if !owner.canAdvance("pending") || !owner.canAdvance("in-review") ||
 		owner.canAdvance("todo") || owner.canAdvance("in-progress") {
 		t.Fatal("owner transition affordances do not match review workflow")
+	}
+	personal := boardModel{boards: []Board{{Type: "user"}}}
+	for _, status := range []string{"pending", "todo", "in-progress", "in-review"} {
+		if !personal.canAdvance(status) {
+			t.Fatalf("personal transition from %s is unavailable", status)
+		}
+	}
+	if personal.canAdvance("done") {
+		t.Fatal("completed personal task can advance")
 	}
 }
 

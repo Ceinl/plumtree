@@ -97,7 +97,11 @@ func appActions() sdk.Actions {
 			if err != nil {
 				return nil, err
 			}
-			task, err := advanceTask(board, id, args.TaskID, args.ExpectedStatus, actorAgent)
+			actor := actorAgent
+			if board.Type == "user" {
+				actor = actorPersonal
+			}
+			task, err := advanceTask(board, id, args.TaskID, args.ExpectedStatus, actor)
 			return map[string]any{"caller": identityRef(id), "board": board, "task": task}, err
 		},
 		"create_project_board": func(_ sdk.Ctx, raw json.RawMessage) (any, error) {

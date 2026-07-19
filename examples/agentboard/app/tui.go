@@ -117,11 +117,26 @@ func (m *boardModel) selectBoard(index int) {
 	m.reload()
 }
 
-func (m *boardModel) canAdvance(status string) bool {
-	if m.identity.OwnsApp {
-		return status == "pending" || status == "in-review"
+func (m *boardModel) selectedBoardType() string {
+	if len(m.boards) == 0 || m.selected < 0 || m.selected >= len(m.boards) {
+		return ""
 	}
-	return status == "todo" || status == "in-progress"
+	return m.boards[m.selected].Type
+}
+
+func (m *boardModel) transitionActor() transitionActor {
+	if m.selectedBoardType() == "user" {
+		return actorPersonal
+	}
+	if m.identity.OwnsApp {
+		return actorOwner
+	}
+	return actorAgent
+}
+
+func (m *boardModel) canAdvance(status string) bool {
+	_, err := nextStatus(m.transitionActor(), status)
+	return err == nil
 }
 
 func (m *boardModel) advance(index int) {
@@ -129,11 +144,7 @@ func (m *boardModel) advance(index int) {
 		return
 	}
 	board, task := m.boards[m.selected], m.tasks[index]
-	actor := actorAgent
-	if m.identity.OwnsApp {
-		actor = actorOwner
-	}
-	if _, err := advanceTask(board, m.identity, task.ID, task.Status, actor); err != nil {
+	if _, err := advanceTask(board, m.identity, task.ID, task.Status, m.transitionActor()); err != nil {
 		m.err = err.Error()
 		return
 	}
@@ -147,6 +158,10 @@ func (m *boardModel) activateTask(index int) {
 	m.taskIndex = index
 	if m.canAdvance(m.tasks[index].Status) {
 		m.advance(index)
+		return
+	}
+	if m.selectedBoardType() == "user" {
+		m.err = "this task is complete"
 		return
 	}
 	switch m.tasks[index].Status {
@@ -231,9 +246,13 @@ func (m *boardModel) header() tui.Component {
 	header.AppendChild(brand)
 	header.AppendChild(spacer(tui.Px(1), tui.Grow, headerBackground))
 
-	modeLabel, modeDetail := "MEMBER MODE", "read and move your tasks"
-	if m.identity.OwnsApp {
+	modeLabel, modeDetail := "USER MODE", "SSH identity"
+	if m.selectedBoardType() == "user" {
+		modeLabel, modeDetail = "PERSONAL MODE", "move your private tasks"
+	} else if m.selectedBoardType() == "project" && m.identity.OwnsApp {
 		modeLabel, modeDetail = "OWNER MODE", "review gates enabled"
+	} else if m.selectedBoardType() == "project" {
+		modeLabel, modeDetail = "MEMBER MODE", "work on shared tasks"
 	}
 	modeStyle := styled([3]uint8{25, 26, 37}, [3]uint8{151, 154, 177}, tui.Bold)
 	mode := fixedBox(tui.Grow, tui.Grow, modeStyle)
@@ -382,11 +401,14 @@ func (m *boardModel) footer() tui.Component {
 	footer.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
 	footer.SetStyle(footerBackground)
 
-	context := "MEMBER  ·  click or Enter moves todo and active tasks"
+	context := "USER  ·  connected with your SSH identity"
 	hints := "←/→ board  ↑/↓ task  ↵/click  q"
-	if m.identity.OwnsApp {
+	if m.selectedBoardType() == "user" {
+		context = "PERSONAL  ·  click or Enter advances your task"
+	} else if m.selectedBoardType() == "project" && m.identity.OwnsApp {
 		context = "OWNER  ·  click or Enter advances review gates"
-		hints = "←/→ board  ↑/↓ task  ↵/click  q"
+	} else if m.selectedBoardType() == "project" {
+		context = "MEMBER  ·  click or Enter moves todo and active tasks"
 	}
 	left := fixedBox(tui.Grow, tui.Grow, footerBackground)
 	left.AppendChild(text(context, footerBackground, components.AlignLeft))

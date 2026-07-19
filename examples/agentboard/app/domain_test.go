@@ -94,6 +94,18 @@ func TestWorkflowAndIndependentCounters(t *testing.T) {
 	if err != nil || personalTask.ID != "task-000001" {
 		t.Fatalf("personal task = %+v, %v", personalTask, err)
 	}
+	for _, status := range []string{"pending", "todo", "in-progress", "in-review"} {
+		personalTask, err = advanceTask(personal, member, personalTask.ID, status, actorPersonal)
+		if err != nil {
+			t.Fatalf("personal transition from %s: %v", status, err)
+		}
+	}
+	if personalTask.Status != "done" {
+		t.Fatalf("personal task status = %q, want done", personalTask.Status)
+	}
+	if _, err := advanceTask(personal, sdk.Identity{User: otherFingerprint, Kind: sdk.IdentitySSHKey}, personalTask.ID, "done", actorPersonal); err == nil {
+		t.Fatal("another identity advanced a personal task")
+	}
 	projectTask, err = advanceTask(project, ownerIdentity(), projectTask.ID, "pending", actorOwner)
 	if err != nil || projectTask.Status != "todo" {
 		t.Fatalf("owner transition = %+v, %v", projectTask, err)

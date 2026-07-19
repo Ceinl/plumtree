@@ -281,11 +281,24 @@ func createTask(board Board, id sdk.Identity, title, description string) (Task, 
 type transitionActor string
 
 const (
-	actorAgent transitionActor = "agent"
-	actorOwner transitionActor = "owner"
+	actorAgent    transitionActor = "agent"
+	actorOwner    transitionActor = "owner"
+	actorPersonal transitionActor = "personal"
 )
 
 func nextStatus(actor transitionActor, current string) (string, error) {
+	if actor == actorPersonal {
+		switch current {
+		case "pending":
+			return "todo", nil
+		case "todo":
+			return "in-progress", nil
+		case "in-progress":
+			return "in-review", nil
+		case "in-review":
+			return "done", nil
+		}
+	}
 	if actor == actorAgent {
 		switch current {
 		case "todo":
@@ -305,6 +318,11 @@ func nextStatus(actor transitionActor, current string) (string, error) {
 }
 
 func advanceTask(board Board, id sdk.Identity, taskID, expectedStatus string, actor transitionActor) (Task, error) {
+	if actor == actorPersonal {
+		if board.Type != "user" || board.OwnerHash != identityHash(id.User) {
+			return Task{}, actionError("unauthorized", "only the personal-board owner can perform this transition")
+		}
+	}
 	if actor == actorOwner && !id.OwnsApp {
 		return Task{}, actionError("unauthorized", "only the app owner can perform human transitions")
 	}
