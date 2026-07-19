@@ -202,9 +202,17 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (in
 }
 
 func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) {
+	caps := s.Caps
+	// Server capabilities are shared by every development connection. Keep the
+	// guest-written goodbye message session-local so concurrent clients cannot
+	// race or inherit one another's message.
+	caps.Goodbye = new(string)
 	if s.AppType == "cli" || len(args) > 0 {
-		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, s.Caps, args, ch); err != nil {
+		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch); err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
+		}
+		if *caps.Goodbye != "" && (len(args) == 0 || args[0] != abi.ActionArgPrefix) {
+			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
 		return
 	}
@@ -217,7 +225,13 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 	// Set up the client's terminal (alt screen, hidden cursor) and tear it down
 	// afterward. Output is host-generated; the guest never writes ANSI.
 	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
-	defer io.WriteString(ch, terminal.DISABLE_MOUSE+terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
+	defer func() {
+		msg := terminal.DISABLE_MOUSE + terminal.SHOW_CURSOR + terminal.CLOSE_ALT
+		if *caps.Goodbye != "" {
+			msg += "\r\n" + runner.SanitizeTerminalText(*caps.Goodbye) + "\r\n"
+		}
+		_, _ = io.WriteString(ch, msg)
+	}()
 
 	src := &runner.TTYSource{
 		Keys:    keyboard.ListenReader(ctx, ch),
@@ -228,7 +242,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 	sink := runner.NewTTYSinkWriter(w, h, s.MaxFPS, ch)
 
 	var logs bytes.Buffer
-	err := s.Runner.Run(ctx, s.Wasm, s.Limits, s.Caps, src, sink, &logs)
+	err := s.Runner.Run(ctx, s.Wasm, s.Limits, caps, src, sink, &logs)
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
 		// Clean exit or normal client disconnect — nothing to report.

@@ -106,9 +106,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			return err
 		}
 		if o == opDone {
-			errStr, logBytes, ok := decodeDone(payload)
-			if !ok || len(errStr) > maxWorkerError || len(logBytes) > maxSessionLog {
+			errStr, goodbye, logBytes, ok := decodeDone(payload)
+			if !ok || len(errStr) > maxWorkerError || len(goodbye) > abi.GoodbyeMaxLen || len(logBytes) > maxSessionLog {
 				return errProtocol
+			}
+			if caps.Goodbye != nil {
+				*caps.Goodbye = goodbye
 			}
 			if logs != nil && len(logBytes) > 0 {
 				_, _ = logs.Write(logBytes)
@@ -157,7 +160,7 @@ func maxWorkerPayload(o op) uint32 {
 	case opFetch:
 		return maxEncodedFetch
 	case opDone:
-		return 4 + maxWorkerError + maxSessionLog
+		return 8 + maxWorkerError + abi.GoodbyeMaxLen + maxSessionLog
 	case opOutput:
 		return maxWorkerOutput
 	default:

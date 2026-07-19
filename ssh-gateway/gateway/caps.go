@@ -16,7 +16,7 @@ func (s *Server) capsFor(appID, ownerID string) runner.Capabilities {
 	if appID == "" {
 		return runner.Capabilities{}
 	}
-	caps := runner.Capabilities{KV: s.kvFor(appID), Bus: s.busFor(appID)}
+	caps := runner.Capabilities{KV: s.kvFor(appID), Bus: s.busFor(appID), Goodbye: new(string)}
 	if ownerID != "" {
 		if secrets := s.Backend.SecretsForApp(appID); len(secrets) > 0 {
 			caps.Env = runner.MapEnv(secrets)

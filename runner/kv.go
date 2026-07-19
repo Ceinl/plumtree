@@ -55,6 +55,11 @@ type Capabilities struct {
 	// Fetch is the gated outbound-HTTP capability, or nil for default-deny egress
 	// (the common case; only claimed apps with an allowlist get one).
 	Fetch Fetcher
+	// Goodbye is an optional message set by the guest, displayed on the user's
+	// terminal after the session ends (after the alt-screen is closed). The
+	// host allocates Goodbye = new(string) before calling Run and reads the
+	// result after Run returns.
+	Goodbye *string
 }
 
 // ErrQuota reports that a Set would exceed the store's aggregate key or byte

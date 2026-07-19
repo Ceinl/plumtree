@@ -54,8 +54,8 @@ func TestExampleConfigIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MaxAppsPerOwner != 5 || cfg.MaxSessionsPerAppPerDay != 100 {
-		t.Fatalf("example limits = %d apps / %d sessions, want 5 / 100",
+	if cfg.MaxAppsPerOwner != 25 || cfg.MaxSessionsPerAppPerDay != 100 {
+		t.Fatalf("example limits = %d apps / %d sessions, want 25 / 100",
 			cfg.MaxAppsPerOwner, cfg.MaxSessionsPerAppPerDay)
 	}
 }

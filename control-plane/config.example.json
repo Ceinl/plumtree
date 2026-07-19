@@ -2,7 +2,7 @@
   "publicOrigin": "https://plumtree.dev",
   "sshHost": "plumtree.dev",
   "deployClaimTtl": "5m",
-  "maxAppsPerOwner": 5,
+  "maxAppsPerOwner": 25,
   "maxSessionsPerAppPerDay": 100,
   "maxDeploysPerHour": 100
 }

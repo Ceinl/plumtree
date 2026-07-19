@@ -92,11 +92,15 @@ func TestRunSessionTUIEnablesAndDisablesMouse(t *testing.T) {
 		t.Fatal(err)
 	}
 	ch := &testChannel{}
+	goodbye := "safe\x1b[31mtext"
 	s := &Server{Runner: runner.New(), MaxFPS: 60}
-	s.runSession(context.Background(), ch, wasm, "tui", runner.Capabilities{}, func() (int, int) { return 30, 10 }, nil)
+	s.runSession(context.Background(), ch, wasm, "tui", runner.Capabilities{Goodbye: &goodbye}, func() (int, int) { return 30, 10 }, nil)
 	got := ch.String()
 	if !strings.Contains(got, "\x1b[?1006h") || !strings.Contains(got, "\x1b[?1006l") {
 		t.Fatalf("mouse setup/teardown missing: %q", got)
+	}
+	if !strings.Contains(got, "safe [31mtext") || strings.Contains(got, "safe\x1b[31mtext") {
+		t.Fatalf("goodbye was not displayed safely: %q", got)
 	}
 }
 
@@ -111,9 +115,11 @@ func TestRunSessionActionUsesCLIForTUIApp(t *testing.T) {
 		KV: runner.NewMemStore(0, 0), Bus: runner.NewMemBus(),
 		Auth: runner.StaticAuth{Identity: runner.Identity{User: "SHA256:owner-key-0123456789012345", Kind: runner.IdentitySSHKey, OwnsApp: true}},
 	}
+	goodbye := "must not corrupt the JSON action envelope"
+	caps.Goodbye = &goodbye
 	s := &Server{Runner: runner.New()}
 	s.runSessionArgs(context.Background(), ch, wasm, "tui", caps, nil, nil, []string{abi.ActionArgPrefix, "get_identity", `{}`})
-	if got := ch.String(); !strings.Contains(got, `"ok":true`) || strings.Contains(got, terminal.OPEN_ALT) {
+	if got := ch.String(); !strings.Contains(got, `"ok":true`) || strings.Contains(got, terminal.OPEN_ALT) || strings.Contains(got, goodbye) {
 		t.Fatalf("action output = %q", got)
 	}
 }

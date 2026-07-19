@@ -100,6 +100,19 @@ func TestProcessRunnerActionCapabilityParity(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerGoodbyeCapabilityParity(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../_devtest/goodbye-cli/app")
+	goodbye := ""
+	pr := NewProcessRunner(worker)
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if goodbye != "Goodbye from goodbye-cli!" {
+		t.Fatalf("isolated goodbye = %q", goodbye)
+	}
+}
+
 // CLI mode carries guest arguments/output across the process boundary and
 // proxies capabilities just like the interactive mode.
 func TestProcessRunnerCLI(t *testing.T) {

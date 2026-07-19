@@ -63,6 +63,17 @@ func TestReadWorkerMessageRejectsOperationOversizeBeforePayload(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeDoneRoundTrip(t *testing.T) {
+	payload := encodeDone("guest failed", "thanks", []byte("logs"))
+	errText, goodbye, logs, ok := decodeDone(payload)
+	if !ok || errText != "guest failed" || goodbye != "thanks" || string(logs) != "logs" {
+		t.Fatalf("decodeDone = %q, %q, %q, %v", errText, goodbye, logs, ok)
+	}
+	if _, _, _, ok := decodeDone(payload[:len(payload)-1-len("thanks")]); ok {
+		t.Fatal("truncated done payload accepted")
+	}
+}
+
 // capMask reflects exactly the capabilities present in the set, so the worker
 // installs a proxy for those and only those.
 func TestCapMask(t *testing.T) {

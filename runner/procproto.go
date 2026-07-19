@@ -240,22 +240,35 @@ func decodeKVCAS(b []byte) (key string, expected [32]byte, value []byte, ok bool
 	return key, expected, b[2+n+len(expected):], true
 }
 
-// donePayload encodes the terminal result: [u32 errLen][err][logs].
-func encodeDone(errStr string, logs []byte) []byte {
-	b := make([]byte, 0, 4+len(errStr)+len(logs))
+// donePayload encodes [u32 errLen][err][u32 goodbyeLen][goodbye][logs].
+func encodeDone(errStr, goodbye string, logs []byte) []byte {
+	b := make([]byte, 0, 8+len(errStr)+len(goodbye)+len(logs))
 	b = binary.LittleEndian.AppendUint32(b, uint32(len(errStr)))
 	b = append(b, errStr...)
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(goodbye)))
+	b = append(b, goodbye...)
 	b = append(b, logs...)
 	return b
 }
 
-func decodeDone(b []byte) (errStr string, logs []byte, ok bool) {
+func decodeDone(b []byte) (errStr string, goodbye string, logs []byte, ok bool) {
 	if len(b) < 4 {
-		return "", nil, false
+		return "", "", nil, false
 	}
 	n := int(binary.LittleEndian.Uint32(b[0:4]))
 	if len(b) < 4+n {
-		return "", nil, false
+		return "", "", nil, false
 	}
-	return string(b[4 : 4+n]), b[4+n:], true
+	errStr = string(b[4 : 4+n])
+	b = b[4+n:]
+	if len(b) < 4 {
+		return "", "", nil, false
+	}
+	n = int(binary.LittleEndian.Uint32(b[0:4]))
+	if len(b) < 4+n {
+		return "", "", nil, false
+	}
+	goodbye = string(b[4 : 4+n])
+	logs = b[4+n:]
+	return errStr, goodbye, logs, true
 }

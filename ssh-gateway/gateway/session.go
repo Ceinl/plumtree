@@ -229,6 +229,9 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
 		}
+		if caps.Goodbye != nil && *caps.Goodbye != "" && (len(args) == 0 || args[0] != abi.ActionArgPrefix) {
+			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
+		}
 		return "", false
 	}
 
@@ -237,7 +240,13 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 		w, h = 80, 24
 	}
 	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
-	defer io.WriteString(ch, terminal.DISABLE_MOUSE+terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
+	defer func() {
+		msg := terminal.DISABLE_MOUSE + terminal.SHOW_CURSOR + terminal.CLOSE_ALT
+		if caps.Goodbye != nil && *caps.Goodbye != "" {
+			msg += "\r\n" + runner.SanitizeTerminalText(*caps.Goodbye) + "\r\n"
+		}
+		io.WriteString(ch, msg)
+	}()
 
 	src := &runner.TTYSource{
 		Keys:    keyboard.ListenReader(ctx, ch),

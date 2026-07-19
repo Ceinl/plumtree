@@ -51,6 +51,7 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	if capBits&capFetch != 0 {
 		caps.Fetch = proxyFetch{rpc}
 	}
+	caps.Goodbye = new(string)
 	logs := &boundedBuffer{max: maxSessionLog}
 	var runErr error
 	if cli {
@@ -63,7 +64,7 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	if runErr != nil {
 		errStr = runErr.Error()
 	}
-	return writeMsg(out, opDone, encodeDone(errStr, []byte(logs.String())))
+	return writeMsg(out, opDone, encodeDone(errStr, *caps.Goodbye, []byte(logs.String())))
 }
 
 // maxSessionLog bounds the guest log captured and shipped to the parent.

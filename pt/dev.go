@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -67,7 +68,9 @@ func cmdDev(args []string) error {
 
 	switch man.Type {
 	case "cli":
-		return runner.RunCLI(ctx, wasm, lim, caps, fs.Args(), os.Stdout)
+		err := runner.RunCLI(ctx, wasm, lim, caps, fs.Args(), os.Stdout)
+		writeGoodbye(os.Stdout, caps)
+		return err
 	default:
 		if *headless {
 			return runHeadless(ctx, wasm, lim, caps, *script, *cols, *rows)
@@ -88,9 +91,10 @@ func devCapabilities(proj string) (runner.Capabilities, error) {
 	// connections to the same app exchange live pub/sub messages. Auth reports a
 	// fixed local identity in dev (there is no platform identity locally).
 	return runner.Capabilities{
-		KV:   kv,
-		Bus:  runner.NewMemBus(),
-		Auth: runner.StaticAuth{Identity: runner.Identity{User: "local", Authenticated: true, Kind: runner.IdentitySSHKey, OwnsApp: true}},
+		KV:      kv,
+		Bus:     runner.NewMemBus(),
+		Auth:    runner.StaticAuth{Identity: runner.Identity{User: "local", Authenticated: true, Kind: runner.IdentitySSHKey, OwnsApp: true}},
+		Goodbye: new(string),
 	}, nil
 }
 
@@ -152,6 +156,7 @@ func runHeadless(ctx context.Context, wasm []byte, lim runner.Limits, caps runne
 	if logs.Len() > 0 {
 		fmt.Printf("\n[app logs]\n%s\n", logs.String())
 	}
+	writeGoodbye(os.Stdout, caps)
 	return err
 }
 
@@ -191,5 +196,12 @@ func runTTY(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 	if logs.Len() > 0 {
 		fmt.Fprintf(os.Stderr, "\n[app logs]\n%s\n", logs.String())
 	}
+	writeGoodbye(os.Stdout, caps)
 	return err
+}
+
+func writeGoodbye(w io.Writer, caps runner.Capabilities) {
+	if caps.Goodbye != nil && *caps.Goodbye != "" {
+		fmt.Fprintf(w, "\n%s\n", runner.SanitizeTerminalText(*caps.Goodbye))
+	}
 }

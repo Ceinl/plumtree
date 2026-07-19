@@ -88,6 +88,17 @@ func TestActionInvocationUsesTUICapabilities(t *testing.T) {
 	}
 }
 
+func TestGoodbyeCapabilityInProcess(t *testing.T) {
+	wasm := buildGuest(t, "../_devtest/goodbye-cli/app")
+	goodbye := ""
+	if err := RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if goodbye != "Goodbye from goodbye-cli!" {
+		t.Fatalf("goodbye = %q", goodbye)
+	}
+}
+
 func frameText(f abi.Frame) string {
 	var b strings.Builder
 	for y := 0; y < f.H; y++ {
