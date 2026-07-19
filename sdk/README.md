@@ -47,7 +47,7 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 | Import | Responsibility |
 | --- | --- |
 | `github.com/Ceinl/plumtree/sdk` | `RunTUI`, `CLI`, `Model`, `Event`/`KeyMsg`/`ResizeMsg`/`MessageMsg`, `Meta`, `Quit`, `Ctx`/`Out`. |
-| `github.com/Ceinl/plumtree/sdk` (capabilities) | `KVGet`/`KVSet`/`KVDelete` (durable state); `Subscribe`/`Publish` + `MessageMsg` (live pub/sub); `Whoami` (SSH-key identity); `Env` (claimed-only secrets); `Fetch`/`Get` (claimed-only gated egress). The same calls work natively and hosted. |
+| `github.com/Ceinl/plumtree/sdk` (capabilities) | `KVGet`/`KVSet`/`KVDelete`/`KVList`/`KVCompareAndSwap` (durable state); `Subscribe`/`Publish` + `MessageMsg` (live pub/sub); `Whoami` (SSH-key identity); `Env` (claimed-only secrets); `Fetch`/`Get` (claimed-only gated egress). The same calls work natively and hosted. |
 | `github.com/Ceinl/plumtree/sdk/tui` | Layout primitives (`Component`, `Unit`, `Direction`, `Style`, …) re-exported from the runtime. |
 | `github.com/Ceinl/plumtree/sdk/tui/components` | Default widgets: `Div`, `Text`, `Button`. |
 | `github.com/Ceinl/plumtree/sdk/abi` | The versioned WASM wire format (events in, structured frames out). Canonical home of the ABI. |
@@ -64,3 +64,12 @@ The guest returns structured cells (rune + RGB + decoration), never raw ANSI;
 the host owns all terminal output. Build and run apps with `pt dev`.
 
 Does not own: platform capability implementations, SSH serving, deploy storage.
+
+## KV collection and concurrency semantics
+
+`KVList(prefix, limit)` returns lexicographically ordered keys and requires a
+limit from 1 through 256. An empty prefix lists the app's private namespace.
+`KVCompareAndSwap` compares the SHA-256 hash of the current value atomically;
+use `KVHash(value)` for an existing value or the zero `[32]byte{}` hash to
+create only when absent. A stale expectation returns `ErrKVConflict` and leaves
+state unchanged. Existing key/value and aggregate store quotas still apply.

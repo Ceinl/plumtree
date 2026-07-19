@@ -3,6 +3,7 @@
 package sdk
 
 import (
+	"crypto/sha256"
 	"runtime"
 	"unsafe"
 
@@ -20,6 +21,12 @@ func hostKVSet(keyPtr, keyLen, valPtr, valLen int32) int32
 
 //go:wasmimport plumtree kv_delete
 func hostKVDelete(keyPtr, keyLen int32) int32
+
+//go:wasmimport plumtree kv_list
+func hostKVList(prefixPtr, prefixLen, limit, outPtr, outCap int32) int32
+
+//go:wasmimport plumtree kv_compare_and_swap
+func hostKVCompareAndSwap(keyPtr, keyLen, expectedPtr, valPtr, valLen int32) int32
 
 func bytePtr(b []byte) int32 {
 	if len(b) == 0 {
@@ -76,6 +83,43 @@ func kvDelete(key string) error {
 	return kvErr(r)
 }
 
+func kvList(prefix string, limit int) ([]string, error) {
+	if len(prefix) > abi.KVMaxKey || limit < 1 || limit > abi.KVMaxList {
+		return nil, ErrKVTooLarge
+	}
+	p := []byte(prefix)
+	buf := make([]byte, 1024)
+	for {
+		n := hostKVList(bytePtr(p), int32(len(p)), int32(limit), bytePtr(buf), int32(len(buf)))
+		runtime.KeepAlive(p)
+		switch {
+		case n < 0:
+			return nil, kvErr(n)
+		case int(n) <= len(buf):
+			keys, err := abi.DecodeKVList(buf[:n])
+			runtime.KeepAlive(buf)
+			if err != nil {
+				return nil, ErrKVUnavailable
+			}
+			return keys, nil
+		default:
+			buf = make([]byte, n)
+		}
+	}
+}
+
+func kvCompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	if len(key) == 0 || len(key) > abi.KVMaxKey || len(value) > abi.KVMaxValue {
+		return ErrKVTooLarge
+	}
+	k := []byte(key)
+	r := hostKVCompareAndSwap(bytePtr(k), int32(len(k)), bytePtr(expected[:]), bytePtr(value), int32(len(value)))
+	runtime.KeepAlive(k)
+	runtime.KeepAlive(expected)
+	runtime.KeepAlive(value)
+	return kvErr(r)
+}
+
 // kvErr maps a host result code to an SDK error. KVOk and KVErrNotFound map to
 // nil (callers handle not-found via the ok return of kvGet).
 func kvErr(code int32) error {
@@ -86,6 +130,8 @@ func kvErr(code int32) error {
 		return ErrKVTooLarge
 	case abi.KVErrQuota:
 		return ErrKVQuota
+	case abi.KVErrConflict:
+		return ErrKVConflict
 	default:
 		return ErrKVUnavailable
 	}

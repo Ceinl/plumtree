@@ -1,6 +1,8 @@
 package sdk
 
 import (
+	"crypto/sha256"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -44,5 +46,32 @@ func TestKVNativeSizeLimits(t *testing.T) {
 	big := make([]byte, abi.KVMaxValue+1)
 	if err := KVSet("big", big); err != ErrKVTooLarge {
 		t.Errorf("oversize value err = %v, want ErrKVTooLarge", err)
+	}
+}
+
+func TestKVNativeListAndCompareAndSwap(t *testing.T) {
+	for _, key := range []string{"native-list/b", "native-list/a", "native-list/c"} {
+		_ = KVDelete(key)
+		t.Cleanup(func() { _ = KVDelete(key) })
+	}
+	var absent [sha256.Size]byte
+	if err := KVCompareAndSwap("native-list/b", absent, []byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := KVCompareAndSwap("native-list/b", absent, []byte("stale")); err != ErrKVConflict {
+		t.Fatalf("stale err = %v", err)
+	}
+	if err := KVCompareAndSwap("native-list/b", KVHash([]byte("one")), []byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	_ = KVSet("native-list/a", []byte("a"))
+	_ = KVSet("native-list/c", []byte("c"))
+	keys, err := KVList("native-list/", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"native-list/a", "native-list/b"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("keys = %#v, want %#v", keys, want)
 	}
 }

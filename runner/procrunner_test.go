@@ -74,7 +74,7 @@ func TestProcessRunnerCLI(t *testing.T) {
 	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, []string{"unused"}, &out); err != nil {
 		t.Fatalf("ProcessRunner.RunCLI: %v", err)
 	}
-	for _, want := range []string{"set=0", "get=11:hello world", "del=0"} {
+	for _, want := range []string{"set=0", "get=11:hello world", "cas-stale=-5", "list=created,greeting", "del=0"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q; full output:\n%s", want, out.String())
 		}
@@ -104,7 +104,7 @@ func TestRemoteProcessRunnerCLI(t *testing.T) {
 	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, nil, &out); err != nil {
 		t.Fatalf("remote ProcessRunner.RunCLI: %v", err)
 	}
-	for _, want := range []string{"set=0", "get=11:hello world", "del=0"} {
+	for _, want := range []string{"set=0", "get=11:hello world", "cas-stale=-5", "list=created,greeting", "del=0"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q; full output:\n%s", want, out.String())
 		}
