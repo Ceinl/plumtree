@@ -16,8 +16,10 @@ import (
 const topic = "room"
 
 type chat struct {
-	user  string
-	lines []string
+	user    string
+	kind    sdk.IdentityKind
+	ownsApp bool
+	lines   []string
 }
 
 func (c *chat) Update(ev sdk.Event) {
@@ -42,6 +44,7 @@ func (c *chat) View() tui.Component {
 	root.SetSize(tui.Grow, tui.Grow)
 
 	root.AppendChild(components.NewText("user: " + c.user))
+	root.AppendChild(components.NewText(fmt.Sprintf("identity: %s owner=%t", c.kind, c.ownsApp)))
 	if v, ok, _ := sdk.Env("ROOM_NAME"); ok {
 		root.AppendChild(components.NewText("room: " + v))
 	}
@@ -56,6 +59,8 @@ func main() {
 	c := &chat{user: "?"}
 	if id, err := sdk.Whoami(); err == nil {
 		c.user = id.User
+		c.kind = id.Kind
+		c.ownsApp = id.OwnsApp
 	}
 	_ = sdk.Subscribe(topic)
 	sdk.RunTUI(c, sdk.Meta{Name: "buschat", Type: "tui"})

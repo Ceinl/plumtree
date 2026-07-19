@@ -22,14 +22,14 @@ type StoreBackend struct {
 func New(store *control.Store) gateway.Backend { return StoreBackend{Store: store} }
 
 func (b StoreBackend) ResolveIdentity(fingerprint string) (runner.Identity, error) {
-	_, _, err := b.Store.ResolveSSHKey(fingerprint)
+	_, owner, err := b.Store.ResolveSSHKey(fingerprint)
 	if errors.Is(err, control.ErrNotFound) {
-		return runner.Identity{User: fingerprint}, nil
+		return runner.Identity{User: fingerprint, Kind: runner.IdentitySSHKey}, nil
 	}
 	if err != nil {
 		return runner.Identity{}, err
 	}
-	return runner.Identity{User: fingerprint, Authenticated: true}, nil
+	return runner.Identity{User: fingerprint, Authenticated: true, Kind: runner.IdentitySSHKey, OwnerID: owner.ID}, nil
 }
 
 func (b StoreBackend) StartSuspensionWatcher(ctx context.Context, handle func(context.Context, gateway.Suspension) error) error {

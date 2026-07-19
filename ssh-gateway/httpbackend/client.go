@@ -43,7 +43,7 @@ func (c *Client) ResolveIdentity(fingerprint string) (runner.Identity, error) {
 	if err != nil {
 		return runner.Identity{}, err
 	}
-	return runner.Identity{User: resp.User, Authenticated: resp.Authenticated}, nil
+	return runner.Identity{User: resp.User, Authenticated: resp.Authenticated, Kind: runner.IdentitySSHKey, OwnerID: resp.OwnerID}, nil
 }
 
 // New returns a Client targeting baseURL with the shared gateway token.

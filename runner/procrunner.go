@@ -369,7 +369,7 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 			return writeMsg(w, opResp, []byte{0})
 		}
 		id := caps.Auth.Whoami()
-		enc := abi.EncodeIdentity(abi.Identity{User: id.User, Authenticated: id.Authenticated})
+		enc := abi.EncodeIdentity(abi.Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindToABI(id.Kind), OwnsApp: id.OwnsApp})
 		return writeMsg(w, opResp, append([]byte{1}, enc...))
 
 	case opEnv:

@@ -102,6 +102,9 @@ func TestServeOverSSH(t *testing.T) {
 	if !waitForContains(&out, "Count: 0", 3*time.Second) {
 		t.Fatalf("did not receive initial frame; got %q", out.String())
 	}
+	if !strings.Contains(out.String(), "\x1b[?1006h") {
+		t.Fatalf("mouse reporting was not enabled: %q", out.String())
+	}
 
 	// Drive input, then quit. If keystrokes weren't wired, the session would
 	// hang until the test times out.
@@ -115,6 +118,9 @@ func TestServeOverSSH(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("session did not end after 'q' — input not delivered?")
+	}
+	if !strings.Contains(out.String(), "\x1b[?1006l") {
+		t.Fatalf("mouse reporting was not disabled: %q", out.String())
 	}
 }
 

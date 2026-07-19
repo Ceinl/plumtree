@@ -290,3 +290,14 @@ func (d *Div) AppendChild(children layout.Component) {
 	children.SetParent(d)
 	d.children = append(d.children, children)
 }
+
+// HandleMouse routes to children in reverse render order, so overlapping
+// components receive events topmost-first.
+func (d *Div) HandleMouse(ev layout.MouseEvent) bool {
+	for i := len(d.children) - 1; i >= 0; i-- {
+		if handler, ok := d.children[i].(layout.MouseHandler); ok && handler.HandleMouse(ev) {
+			return true
+		}
+	}
+	return false
+}

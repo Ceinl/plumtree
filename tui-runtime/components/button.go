@@ -137,6 +137,17 @@ func (b *Button) HandleMouseUp(x, y int) bool {
 	return true
 }
 
+func (b *Button) HandleMouse(ev layout.MouseEvent) bool {
+	switch ev.Action {
+	case layout.MouseDown:
+		return b.HandleMouseDown(ev.X, ev.Y)
+	case layout.MouseUp:
+		return b.HandleMouseUp(ev.X, ev.Y)
+	default:
+		return false
+	}
+}
+
 func (b *Button) Render(s *screen.Screen) {
 	if b.w <= 0 || b.h <= 0 {
 		return

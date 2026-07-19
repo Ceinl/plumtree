@@ -62,6 +62,19 @@ func TestProcessRunnerCounter(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../sdk/examples/mousebutton")
+	var sink capture
+	pr := NewProcessRunner(worker)
+	if err := pr.Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !frameWith(sink.frames, "clicked=1 events=2") {
+		t.Fatalf("isolated hosted click missing; last frame:\n%s", frameText(sink.frames[len(sink.frames)-1]))
+	}
+}
+
 // CLI mode carries guest arguments/output across the process boundary and
 // proxies capabilities just like the interactive mode.
 func TestProcessRunnerCLI(t *testing.T) {
@@ -177,13 +190,13 @@ func TestProcessRunnerProxiesAllCapabilities(t *testing.T) {
 	}}
 	caps := Capabilities{
 		Bus:  bus,
-		Auth: StaticAuth{Identity: Identity{User: "alice"}},
+		Auth: StaticAuth{Identity: Identity{User: "alice", Kind: IdentitySSHKey, Authenticated: true, OwnsApp: true}},
 		Env:  MapEnv{"ROOM_NAME": "lobby"},
 	}
 	if err := pr.Run(context.Background(), wasm, DefaultLimits, caps, src, &sink, io.Discard); err != nil {
 		t.Fatalf("ProcessRunner.Run: %v", err)
 	}
-	for _, want := range []string{"hello", "messages: 1", "user: alice", "room: lobby"} {
+	for _, want := range []string{"hello", "messages: 1", "user: alice", "identity: ssh-key owner=true", "room: lobby"} {
 		if !frameWith(sink.frames, want) {
 			t.Fatalf("missing %q across the process boundary; last frame:\n%s",
 				want, frameText(sink.frames[len(sink.frames)-1]))

@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/tui-runtime/layout"
 	"github.com/Ceinl/plumtree/tui-runtime/screen"
 )
 
@@ -30,6 +31,8 @@ var evbuf [4096]byte
 // signals stop (recv < 0) or the model calls Quit.
 func RunTUI(m Model, _ Meta) {
 	w, h := 0, 0
+	var previous layout.Component
+	var mouseDispatch mouseDispatcher
 	evPtr := int32(uintptr(unsafe.Pointer(&evbuf[0])))
 
 	for {
@@ -43,15 +46,23 @@ func RunTUI(m Model, _ Meta) {
 					w, h = e.W, e.H
 				}
 				if sev, ok := eventFromABI(e); ok {
+					if mouse, ok := sev.(MouseMsg); ok {
+						if handler, ok := previous.(layout.MouseHandler); ok {
+							mouseDispatch.Dispatch(handler, mouse)
+						} else {
+							mouseDispatch.Dispatch(nil, mouse)
+						}
+					}
 					m.Update(sev)
 				}
 			}
 		}
 
 		scr := screen.NewScreen(w, h)
-		if root := m.View(); root != nil && w > 0 && h > 0 {
-			root.Layout(0, 0, w, h)
-			root.Render(scr)
+		previous = m.View()
+		if previous != nil && w > 0 && h > 0 {
+			previous.Layout(0, 0, w, h)
+			previous.Render(scr)
 		}
 		out := abi.EncodeFrame(toFrame(scr, quitRequested))
 		hostPresent(int32(uintptr(unsafe.Pointer(&out[0]))), int32(len(out)))
@@ -70,6 +81,8 @@ func eventFromABI(e abi.Event) (Event, bool) {
 		return ResizeMsg{W: e.W, H: e.H}, true
 	case abi.KindMessage:
 		return MessageMsg{Topic: e.Topic, Data: e.Data}, true
+	case abi.KindMouse:
+		return MouseMsg{X: e.MouseX, Y: e.MouseY, Button: MouseButton(e.Button), Action: MouseAction(e.Action)}, true
 	case abi.KindKey:
 		// handled below
 	default:

@@ -11,7 +11,16 @@ import "errors"
 type Identity struct {
 	User          string
 	Authenticated bool
+	Kind          IdentityKind
+	OwnsApp       bool
 }
+
+type IdentityKind string
+
+const (
+	IdentitySSHKey    IdentityKind = "ssh-key"
+	IdentityAnonymous IdentityKind = "anonymous"
+)
 
 // ErrAuthUnavailable means the running context provides no auth capability.
 var ErrAuthUnavailable = errors.New("sdk: auth capability unavailable")

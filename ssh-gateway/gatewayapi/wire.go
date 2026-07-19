@@ -33,6 +33,7 @@ type IdentityRequest struct {
 type IdentityResponse struct {
 	User          string `json:"user"`
 	Authenticated bool   `json:"authenticated"`
+	OwnerID       string `json:"ownerID,omitempty"`
 }
 
 // ResolveResponse is a resolved runnable app. WASM is JSON-encoded as base64.

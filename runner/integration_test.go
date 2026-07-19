@@ -38,6 +38,39 @@ type capture struct{ frames []abi.Frame }
 
 func (c *capture) Present(f abi.Frame) { c.frames = append(c.frames, f) }
 
+type eventListSource struct {
+	events []abi.Event
+	i      int
+}
+
+func (s *eventListSource) Next(context.Context) (abi.Event, bool) {
+	if s.i >= len(s.events) {
+		return abi.Event{}, false
+	}
+	event := s.events[s.i]
+	s.i++
+	return event, true
+}
+
+func mouseClickEvents() []abi.Event {
+	return []abi.Event{
+		{Kind: abi.KindResize, W: 24, H: 6},
+		{Kind: abi.KindMouse, MouseX: 10, MouseY: 4, Button: abi.MouseButtonLeft, Action: abi.MouseDown},
+		{Kind: abi.KindMouse, MouseX: 10, MouseY: 4, Button: abi.MouseButtonLeft, Action: abi.MouseUp},
+	}
+}
+
+func TestHostedSDKButtonMouseClick(t *testing.T) {
+	wasm := buildGuest(t, "../sdk/examples/mousebutton")
+	var sink capture
+	if err := Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !frameWith(sink.frames, "clicked=1 events=2") {
+		t.Fatalf("hosted click missing; last frame:\n%s", frameText(sink.frames[len(sink.frames)-1]))
+	}
+}
+
 func frameText(f abi.Frame) string {
 	var b strings.Builder
 	for y := 0; y < f.H; y++ {

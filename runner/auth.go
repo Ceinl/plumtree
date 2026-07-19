@@ -14,6 +14,40 @@ import (
 type Identity struct {
 	User          string // proved SSH key fingerprint, or "anonymous:<session-id>"
 	Authenticated bool   // verified against a claimed owner key
+	Kind          IdentityKind
+	OwnsApp       bool
+	// OwnerID is control-plane metadata used only by the gateway to derive
+	// OwnsApp after resolving an app. It is never encoded into the guest ABI.
+	OwnerID string
+}
+
+type IdentityKind string
+
+const (
+	IdentitySSHKey    IdentityKind = "ssh-key"
+	IdentityAnonymous IdentityKind = "anonymous"
+)
+
+func identityKindToABI(kind IdentityKind) abi.IdentityKind {
+	switch kind {
+	case IdentitySSHKey:
+		return abi.IdentitySSHKey
+	case IdentityAnonymous:
+		return abi.IdentityAnonymous
+	default:
+		return abi.IdentityUnknown
+	}
+}
+
+func identityKindFromABI(kind abi.IdentityKind) IdentityKind {
+	switch kind {
+	case abi.IdentitySSHKey:
+		return IdentitySSHKey
+	case abi.IdentityAnonymous:
+		return IdentityAnonymous
+	default:
+		return ""
+	}
 }
 
 // Auth is the per-session identity capability handed to a guest. Implementations
@@ -38,7 +72,7 @@ func registerAuth(b wazero.HostModuleBuilder, auth Auth) wazero.HostModuleBuilde
 				return abi.AuthErrInternal
 			}
 			id := auth.Whoami()
-			enc := abi.EncodeIdentity(abi.Identity{User: id.User, Authenticated: id.Authenticated})
+			enc := abi.EncodeIdentity(abi.Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindToABI(id.Kind), OwnsApp: id.OwnsApp})
 			n := int32(len(enc))
 			// Too big for the guest buffer: report the needed length, write
 			// nothing, let the guest grow and retry (mirrors kv_get).
