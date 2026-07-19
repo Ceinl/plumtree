@@ -92,6 +92,17 @@ func (s *Screen) Resize(w, h int) {
 func (s *Screen) Width() int  { return s.w }
 func (s *Screen) Height() int { return s.h }
 
+// CellAt returns the current cell at x,y without copying the full screen.
+// Callers that need an owned frame should continue to use Snapshot. Hosted
+// renderers use CellAt while serializing a frame so long-lived sessions do not
+// allocate a second terminal-sized grid on every refresh.
+func (s *Screen) CellAt(x, y int) Cell {
+	if x < 0 || x >= s.w || y < 0 || y >= s.h {
+		return Cell{}
+	}
+	return s.cur[y][x]
+}
+
 // Snapshot returns a deep copy of the current cell grid (h rows of w cells,
 // row-major). It lets a host or serializer read what the component tree
 // rendered without going through Flush — the basis for hosted mode, where the

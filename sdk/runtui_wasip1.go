@@ -33,6 +33,9 @@ func RunTUI(m Model, _ Meta) {
 	w, h := 0, 0
 	var previous layout.Component
 	var mouseDispatch mouseDispatcher
+	var scr *screen.Screen
+	var encoded []byte
+	converter := newFrameConverter()
 	evPtr := int32(uintptr(unsafe.Pointer(&evbuf[0])))
 
 	for {
@@ -58,15 +61,19 @@ func RunTUI(m Model, _ Meta) {
 			}
 		}
 
-		scr := screen.NewScreen(w, h)
+		if scr == nil || scr.Width() != w || scr.Height() != h {
+			scr = screen.NewScreen(w, h)
+		} else {
+			scr.Clear()
+		}
 		previous = m.View()
 		if previous != nil && w > 0 && h > 0 {
 			previous.Layout(0, 0, w, h)
 			previous.Render(scr)
 		}
-		out := abi.EncodeFrame(toFrame(scr, quitRequested))
-		hostPresent(int32(uintptr(unsafe.Pointer(&out[0]))), int32(len(out)))
-		runtime.KeepAlive(out)
+		encoded = abi.AppendFrame(encoded[:0], converter.frame(scr, quitRequested))
+		hostPresent(int32(uintptr(unsafe.Pointer(&encoded[0]))), int32(len(encoded)))
+		runtime.KeepAlive(encoded)
 
 		if quitRequested {
 			return
@@ -127,32 +134,42 @@ var abiKeyMap = map[abi.KeyType]Key{
 // toFrame converts a rendered cell buffer into a structured ABI frame, parsing
 // the runtime's SGR color/decoration strings into structured values so no raw
 // escape reaches the wire.
-func toFrame(scr *screen.Screen, quit bool) abi.Frame {
-	grid := scr.Snapshot()
-	h := len(grid)
-	w := 0
-	if h > 0 {
-		w = len(grid[0])
+type frameConverter struct {
+	cells []abi.Cell
+}
+
+func newFrameConverter() *frameConverter {
+	return &frameConverter{}
+}
+
+func (c *frameConverter) frame(scr *screen.Screen, quit bool) abi.Frame {
+	w, h := scr.Width(), scr.Height()
+	n := w * h
+	if cap(c.cells) < n {
+		c.cells = make([]abi.Cell, n)
+	} else {
+		c.cells = c.cells[:n]
 	}
-	f := abi.Frame{W: w, H: h, Quit: quit, Cells: make([]abi.Cell, 0, w*h)}
+	index := 0
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			sc := grid[y][x]
-			fg, ok := abi.ParseSGRColor(sc.Fg)
-			if !ok {
-				fg = abi.RGB{R: 200, G: 200, B: 200}
-			}
-			bg, ok := abi.ParseSGRColor(sc.Bg)
-			if !ok {
-				bg = abi.RGB{R: 25, G: 23, B: 29}
-			}
-			f.Cells = append(f.Cells, abi.Cell{
+			sc := scr.CellAt(x, y)
+			c.cells[index] = abi.Cell{
 				Ch:    sc.Ch,
-				Fg:    fg,
-				Bg:    bg,
+				Fg:    frameColor(sc.Fg, abi.RGB{R: 200, G: 200, B: 200}),
+				Bg:    frameColor(sc.Bg, abi.RGB{R: 25, G: 23, B: 29}),
 				Decor: abi.ParseSGRDecor(sc.Decor),
-			})
+			}
+			index++
 		}
 	}
-	return f
+	return abi.Frame{W: w, H: h, Quit: quit, Cells: c.cells}
+}
+
+func frameColor(sgr string, fallback abi.RGB) abi.RGB {
+	color, ok := abi.ParseSGRColor(sgr)
+	if !ok {
+		return fallback
+	}
+	return color
 }

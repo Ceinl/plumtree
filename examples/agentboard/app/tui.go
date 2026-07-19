@@ -117,13 +117,25 @@ func (m *boardModel) selectBoard(index int) {
 	m.reload()
 }
 
-func (m *boardModel) ownerAdvance(index int) {
-	if !m.identity.OwnsApp || index < 0 || index >= len(m.tasks) {
+func (m *boardModel) canAdvance(status string) bool {
+	if m.identity.OwnsApp {
+		return status == "pending" || status == "in-review"
+	}
+	return status == "todo" || status == "in-progress"
+}
+
+func (m *boardModel) advance(index int) {
+	if index < 0 || index >= len(m.tasks) || !m.canAdvance(m.tasks[index].Status) {
 		return
 	}
 	board, task := m.boards[m.selected], m.tasks[index]
-	if _, err := advanceTask(board, m.identity, task.ID, task.Status, actorOwner); err != nil {
+	actor := actorAgent
+	if m.identity.OwnsApp {
+		actor = actorOwner
+	}
+	if _, err := advanceTask(board, m.identity, task.ID, task.Status, actor); err != nil {
 		m.err = err.Error()
+		return
 	}
 	m.reload()
 }
@@ -156,7 +168,7 @@ func (m *boardModel) Update(ev sdk.Event) {
 				m.taskIndex++
 			}
 		case sdk.KeyEnter:
-			m.ownerAdvance(m.taskIndex)
+			m.advance(m.taskIndex)
 		}
 	}
 }
@@ -318,35 +330,30 @@ func (m *boardModel) taskCard(index int, theme statusTheme) tui.Component {
 	task := m.tasks[index]
 	selected := index == m.taskIndex
 	normal := styled(theme.softBackground, [3]uint8{214, 216, 227})
-	label := fmt.Sprintf("%s  ·  r%d\n%s", shortTaskID(task.ID), task.Revision, task.Title)
 
 	card := fixedBox(tui.Grow, tui.Px(3), normal)
 	if selected {
 		card.SetStyle(selectedCard)
-		label = "◆ " + label
 	}
 	card.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(1), Right: tui.Px(1)})
 
-	ownerAction := m.identity.OwnsApp && (task.Status == "pending" || task.Status == "in-review")
-	if ownerAction {
-		buttonLabel := fmt.Sprintf("%s  →  %s", shortTaskID(task.ID), task.Title)
-		if selected {
-			buttonLabel = "◆ " + buttonLabel
-		}
-		button := components.NewButton(buttonLabel)
-		button.SetStyles(normal, selectedCard, pressedCard)
-		button.SetFocused(selected)
-		button.OnClick = func() { m.ownerAdvance(index) }
-		card.SetPadding(tui.Padding{})
-		card.AppendChild(button)
-		return card
+	marker := "·"
+	if m.canAdvance(task.Status) {
+		marker = "→"
 	}
-
-	style := normal
+	buttonLabel := fmt.Sprintf("%s  %s  %s", shortTaskID(task.ID), marker, task.Title)
 	if selected {
-		style = selectedCard
+		buttonLabel = "◆ " + buttonLabel
 	}
-	card.AppendChild(text(label, style, components.AlignLeft))
+	button := components.NewButton(buttonLabel)
+	button.SetStyles(normal, selectedCard, pressedCard)
+	button.SetFocused(selected)
+	button.OnClick = func() {
+		m.taskIndex = index
+		m.advance(index)
+	}
+	card.SetPadding(tui.Padding{})
+	card.AppendChild(button)
 	return card
 }
 
@@ -357,11 +364,11 @@ func (m *boardModel) footer() tui.Component {
 	footer.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
 	footer.SetStyle(footerBackground)
 
-	context := "MEMBER  ·  task moves are available through actions"
-	hints := "←/→ board  ↑/↓ task  q quit"
+	context := "MEMBER  ·  click or Enter moves todo and active tasks"
+	hints := "←/→ board  ↑/↓ task  ↵/click  q"
 	if m.identity.OwnsApp {
-		context = "OWNER  ·  Enter advances pending and review gates"
-		hints = "←/→ board  ↑/↓ task  ↵ move  q quit"
+		context = "OWNER  ·  click or Enter advances review gates"
+		hints = "←/→ board  ↑/↓ task  ↵/click  q"
 	}
 	left := fixedBox(tui.Grow, tui.Grow, footerBackground)
 	left.AppendChild(text(context, footerBackground, components.AlignLeft))

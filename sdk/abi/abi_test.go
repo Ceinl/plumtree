@@ -58,6 +58,21 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAppendFrameReusesBuffer(t *testing.T) {
+	frame := Frame{W: 1, H: 1, Cells: []Cell{{Ch: 'x', Fg: RGB{1, 2, 3}}}}
+	buffer := make([]byte, 0, len(EncodeFrame(frame)))
+	first := AppendFrame(buffer, frame)
+	first[0] = 0
+	second := AppendFrame(first[:0], frame)
+	if &first[0] != &second[0] {
+		t.Fatal("AppendFrame allocated instead of reusing the supplied buffer")
+	}
+	decoded, err := DecodeFrame(second)
+	if err != nil || !reflect.DeepEqual(decoded, frame) {
+		t.Fatalf("reused frame = %+v, %v; want %+v", decoded, err, frame)
+	}
+}
+
 func TestIdentityRoundTrip(t *testing.T) {
 	for _, want := range []Identity{
 		{User: "SHA256:abcdef", Authenticated: true, Kind: IdentitySSHKey, OwnsApp: true},

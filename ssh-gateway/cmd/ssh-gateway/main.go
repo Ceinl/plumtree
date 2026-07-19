@@ -35,9 +35,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	limits := runner.DefaultLimits
+	limits.SessionTimeout = flags.sessionTimeout
 	gw := &gateway.Server{
 		Backend:               httpbackend.New(flags.controlURL, flags.gatewayToken),
-		Limits:                runner.DefaultLimits,
+		Limits:                limits,
 		MaxFPS:                flags.maxFPS,
 		MaxConcurrentSessions: flags.maxSessions,
 		HandshakeTimeout:      flags.handshakeTimeout,
@@ -82,6 +84,7 @@ type config struct {
 	runnerToken         string
 	maxFPS              int
 	maxSessions         int
+	sessionTimeout      time.Duration
 	handshakeTimeout    time.Duration
 	idleTimeout         time.Duration
 	maxConnections      int
@@ -100,6 +103,7 @@ func parseFlags() config {
 	runnerToken := flag.String("runner-token", env("PLUMTREE_RUNNER_TOKEN", ""), "shared token for the remote runner broker")
 	maxFPS := flag.Int("max-fps", envInt("PLUMTREE_MAX_FPS", 60), "SSH repaint cap")
 	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", gateway.DefaultMaxConcurrentSessions), "max concurrent SSH sessions on this gateway; 0 = unlimited")
+	sessionTimeout := flag.Duration("session-timeout", envDuration("PLUMTREE_SESSION_TIMEOUT", runner.DefaultLimits.SessionTimeout), "maximum lifetime of one app session; 0 disables")
 	handshakeTimeout := flag.Duration("handshake-timeout", envDuration("PLUMTREE_SSH_HANDSHAKE_TIMEOUT", gateway.DefaultHandshakeTimeout), "maximum time allowed for an SSH handshake; negative disables")
 	idleTimeout := flag.Duration("idle-timeout", envDuration("PLUMTREE_SSH_IDLE_TIMEOUT", gateway.DefaultIdleTimeout), "disconnect an established SSH connection after this much network inactivity; negative disables")
 	maxConnections := flag.Int("max-connections", envInt("PLUMTREE_MAX_CONNECTIONS", gateway.DefaultMaxConnections), "maximum admitted TCP connections; negative disables")
@@ -117,6 +121,7 @@ func parseFlags() config {
 		runnerToken:         *runnerToken,
 		maxFPS:              *maxFPS,
 		maxSessions:         *maxSessions,
+		sessionTimeout:      *sessionTimeout,
 		handshakeTimeout:    *handshakeTimeout,
 		idleTimeout:         *idleTimeout,
 		maxConnections:      *maxConnections,
@@ -145,6 +150,9 @@ func validateProductionLimits(cfg config) error {
 	var unlimited []string
 	if cfg.maxSessions <= 0 {
 		unlimited = append(unlimited, "max-sessions")
+	}
+	if cfg.sessionTimeout <= 0 {
+		unlimited = append(unlimited, "session-timeout")
 	}
 	if cfg.maxConnections < 0 {
 		unlimited = append(unlimited, "max-connections")

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Ceinl/plumtree/sdk"
+	"github.com/Ceinl/plumtree/tui-runtime/layout"
 	"github.com/Ceinl/plumtree/tui-runtime/screen"
 )
 
@@ -43,7 +44,7 @@ func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
 		"DONE  1",
 		"→  Approve",
 		"#000001",
-		"Enter advances pending and review gates",
+		"click or Enter advances review gates",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame does not contain %q:\n%s", want, frame)
@@ -63,6 +64,50 @@ func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
 	headerLine := lineContaining(lines, "PENDING  1")
 	if headerLine < 0 || headerLine > 9 {
 		t.Fatalf("workflow lanes should begin near the top, got row %d:\n%s", headerLine, frame)
+	}
+}
+
+func TestTaskCardsAcceptMouseClicks(t *testing.T) {
+	model := boardModel{
+		initialized: true,
+		identity:    sdk.Identity{Kind: sdk.IdentitySSHKey, Authenticated: true},
+		boards:      []Board{{ID: "personal", Type: "user", Name: "Personal"}},
+		tasks: []Task{
+			{ID: "task-000001", Title: "First", Status: "pending", Revision: 1},
+			{ID: "task-000002", Title: "Second", Status: "pending", Revision: 1},
+		},
+	}
+
+	component := model.View()
+	component.Layout(0, 0, 140, 30)
+	handler, ok := component.(layout.MouseHandler)
+	if !ok {
+		t.Fatal("board root does not route mouse input")
+	}
+	// The second pending card occupies the first lane below the first card and
+	// its spacer. A member cannot advance pending, but clicking must still select
+	// it and consume both halves of the click.
+	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 13, Action: layout.MouseDown}) {
+		t.Fatal("task card did not consume mouse down")
+	}
+	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 13, Action: layout.MouseUp}) {
+		t.Fatal("task card did not consume mouse up")
+	}
+	if model.taskIndex != 1 {
+		t.Fatalf("selected task = %d, want 1", model.taskIndex)
+	}
+}
+
+func TestRoleCorrectTUITransitions(t *testing.T) {
+	member := boardModel{}
+	if member.canAdvance("pending") || member.canAdvance("in-review") ||
+		!member.canAdvance("todo") || !member.canAdvance("in-progress") {
+		t.Fatal("member transition affordances do not match agent workflow")
+	}
+	owner := boardModel{identity: sdk.Identity{OwnsApp: true}}
+	if !owner.canAdvance("pending") || !owner.canAdvance("in-review") ||
+		owner.canAdvance("todo") || owner.canAdvance("in-progress") {
+		t.Fatal("owner transition affordances do not match review workflow")
 	}
 }
 

@@ -6,6 +6,8 @@ ORIGIN ?= http://localhost:18080
 DEV_TOKEN ?= local-dev
 SSH_ADDR ?= 127.0.0.1:2222
 SSH_HOST ?= plumtree.dev
+SESSION_TIMEOUT ?= 0
+SSH_IDLE_TIMEOUT ?= -1
 BUILD_DEV_ROOT ?= $(abspath $(CURDIR))
 STATE_DIR ?= $(HOME)/Library/Application Support/plumtree
 STATE_FILE ?= $(STATE_DIR)/control-plane-state.json
@@ -42,7 +44,9 @@ run-server:
 		-dev-token $(DEV_TOKEN) \
 		-build-dev-root "$(BUILD_DEV_ROOT)" \
 		-ssh-addr $(SSH_ADDR) \
-		-ssh-host $(SSH_HOST)
+		-ssh-host $(SSH_HOST) \
+		-session-timeout $(SESSION_TIMEOUT) \
+		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT)
 
 run-server-memory:
 	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
@@ -52,6 +56,8 @@ run-server-memory:
 		-build-dev-root "$(BUILD_DEV_ROOT)" \
 		-ssh-addr $(SSH_ADDR) \
 		-ssh-host $(SSH_HOST) \
+		-session-timeout $(SESSION_TIMEOUT) \
+		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT) \
 		-state-file ""
 
 seed-server:
@@ -62,6 +68,8 @@ seed-server:
 		-build-dev-root "$(BUILD_DEV_ROOT)" \
 		-ssh-addr $(SSH_ADDR) \
 		-ssh-host $(SSH_HOST) \
+		-session-timeout $(SESSION_TIMEOUT) \
+		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT) \
 		-seed-demo
 
 clear-server:

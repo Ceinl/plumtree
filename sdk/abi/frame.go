@@ -14,7 +14,21 @@ const flagQuit byte = 1 << 0
 //
 // followed by W*H cells, each: rune int32 | fg RGB | bg RGB | decor uint8.
 func EncodeFrame(f Frame) []byte {
-	b := make([]byte, frameHeaderLen+len(f.Cells)*cellLen)
+	return AppendFrame(nil, f)
+}
+
+// AppendFrame serializes f into dst, reusing dst's allocation when it has
+// enough capacity. Long-lived hosted TUI guests use this to keep repaint memory
+// bounded instead of growing the WASM heap with a new frame buffer each tick.
+func AppendFrame(dst []byte, f Frame) []byte {
+	size := frameHeaderLen + len(f.Cells)*cellLen
+	if cap(dst) < size {
+		dst = make([]byte, size)
+	} else {
+		dst = dst[:size]
+		clear(dst)
+	}
+	b := dst
 	b[0] = magicFrame
 	b[1] = Version
 	if f.Quit {

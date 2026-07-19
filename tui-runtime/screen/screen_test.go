@@ -87,6 +87,17 @@ func TestSnapshotCopiesGrid(t *testing.T) {
 	}
 }
 
+func TestCellAtReadsWithoutSnapshot(t *testing.T) {
+	s := NewScreen(3, 2)
+	s.Set(2, 1, 'z', "fg", "bg", "d")
+	if got := s.CellAt(2, 1); got != (Cell{Ch: 'z', Fg: "fg", Bg: "bg", Decor: "d"}) {
+		t.Fatalf("CellAt(2,1) = %+v", got)
+	}
+	if got := s.CellAt(-1, 0); got != (Cell{}) {
+		t.Fatalf("out-of-bounds CellAt = %+v", got)
+	}
+}
+
 func TestSetOutOfBoundsIsIgnored(t *testing.T) {
 	s := NewScreen(2, 2)
 	s.Set(-1, 0, 'a', "", "", "")

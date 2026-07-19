@@ -99,6 +99,7 @@ func main() {
 	noSSHConfig := flag.Bool("no-ssh-config", false, "do not update ~/.ssh/config for the local SSH gateway")
 	maxFPS := flag.Int("max-fps", 60, "SSH repaint cap")
 	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", gateway.DefaultMaxConcurrentSessions), "max concurrent SSH sessions on this runner; 0 = unlimited")
+	sessionTimeout := flag.Duration("session-timeout", envDuration("PLUMTREE_SESSION_TIMEOUT", runner.DefaultLimits.SessionTimeout), "maximum lifetime of one app session; 0 disables")
 	sshHandshakeTimeout := flag.Duration("ssh-handshake-timeout", envDuration("PLUMTREE_SSH_HANDSHAKE_TIMEOUT", gateway.DefaultHandshakeTimeout), "maximum time allowed for an SSH handshake; negative disables")
 	sshIdleTimeout := flag.Duration("ssh-idle-timeout", envDuration("PLUMTREE_SSH_IDLE_TIMEOUT", gateway.DefaultIdleTimeout), "disconnect an established SSH connection after this much network inactivity; negative disables")
 	maxConnections := flag.Int("max-connections", envInt("PLUMTREE_MAX_CONNECTIONS", gateway.DefaultMaxConnections), "maximum admitted SSH TCP connections; negative disables")
@@ -125,7 +126,8 @@ func main() {
 		maxConcurrentBuilds: *maxConcurrentBuilds, rateLimit: *rateLimit,
 		maxConnections: *maxConnections, maxConnectionsPerIP: *maxConnectionsPerIP,
 		sshHandshakeTimeout: *sshHandshakeTimeout, sshIdleTimeout: *sshIdleTimeout,
-		runnerWorker: *runnerWorker, runnerEndpoint: *runnerEndpoint, runnerToken: *runnerToken,
+		runnerSessionTimeout: *sessionTimeout,
+		runnerWorker:         *runnerWorker, runnerEndpoint: *runnerEndpoint, runnerToken: *runnerToken,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -234,9 +236,11 @@ func main() {
 	}()
 
 	if *sshAddr != "" {
+		limits := runner.DefaultLimits
+		limits.SessionTimeout = *sessionTimeout
 		gw := &gateway.Server{
 			Backend:               gatewaybackend.New(store),
-			Limits:                runner.DefaultLimits,
+			Limits:                limits,
 			MaxFPS:                *maxFPS,
 			MaxConcurrentSessions: *maxSessions,
 			HandshakeTimeout:      *sshHandshakeTimeout,
@@ -379,6 +383,7 @@ type productionLimits struct {
 	maxSessions, maxSessionsPerAppDay, maxDeploysPerHour, maxAppsPerOwner int
 	maxConcurrentBuilds, rateLimit, maxConnections, maxConnectionsPerIP   int
 	sshHandshakeTimeout, sshIdleTimeout                                   time.Duration
+	runnerSessionTimeout                                                  time.Duration
 	runnerWorker, runnerEndpoint, runnerToken                             string
 }
 
@@ -423,6 +428,9 @@ func validateProductionLimits(production, acknowledged, sshEnabled bool, l produ
 		}
 		if l.sshIdleTimeout < 0 {
 			unlimited = append(unlimited, "ssh-idle-timeout")
+		}
+		if l.runnerSessionTimeout <= 0 {
+			unlimited = append(unlimited, "session-timeout")
 		}
 	}
 	if len(unlimited) == 0 {

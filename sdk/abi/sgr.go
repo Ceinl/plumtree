@@ -2,7 +2,6 @@ package abi
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -13,14 +12,20 @@ func ParseSGRColor(s string) (RGB, bool) {
 	if !ok {
 		return RGB{}, false
 	}
-	parts := strings.Split(body, ";")
-	if len(parts) != 5 || parts[1] != "2" || (parts[0] != "38" && parts[0] != "48") {
+	var values [5]int
+	position := 0
+	for index := range values {
+		value, next, valid := nextSGRNumber(body, position)
+		if !valid {
+			return RGB{}, false
+		}
+		values[index], position = value, next
+	}
+	if position != len(body)+1 || values[1] != 2 || (values[0] != 38 && values[0] != 48) {
 		return RGB{}, false
 	}
-	r, e1 := strconv.Atoi(parts[2])
-	g, e2 := strconv.Atoi(parts[3])
-	bl, e3 := strconv.Atoi(parts[4])
-	if e1 != nil || e2 != nil || e3 != nil || !byteRange(r) || !byteRange(g) || !byteRange(bl) {
+	r, g, bl := values[2], values[3], values[4]
+	if !byteRange(r) || !byteRange(g) || !byteRange(bl) {
 		return RGB{}, false
 	}
 	return RGB{uint8(r), uint8(g), uint8(bl)}, true
@@ -37,17 +42,46 @@ func ParseSGRDecor(s string) uint8 {
 		return 0
 	}
 	var d uint8
-	for _, p := range strings.Split(body, ";") {
-		switch p {
-		case "1":
+	for position := 0; position <= len(body); {
+		value, next, valid := nextSGRNumber(body, position)
+		if !valid {
+			return 0
+		}
+		switch value {
+		case 1:
 			d |= DecorBold
-		case "3":
+		case 3:
 			d |= DecorItalic
-		case "4":
+		case 4:
 			d |= DecorUnderline
 		}
+		position = next
 	}
 	return d
+}
+
+// nextSGRNumber parses one non-negative decimal field without allocating.
+// next is one byte past the following semicolon, or len(body)+1 for the final
+// field, which lets callers distinguish an exact field count from a prefix.
+func nextSGRNumber(body string, start int) (value, next int, ok bool) {
+	if start < 0 || start >= len(body) {
+		return 0, 0, false
+	}
+	position := start
+	for ; position < len(body) && body[position] != ';'; position++ {
+		digit := body[position]
+		if digit < '0' || digit > '9' {
+			return 0, 0, false
+		}
+		value = value*10 + int(digit-'0')
+		if value > 999 {
+			return 0, 0, false
+		}
+	}
+	if position == start {
+		return 0, 0, false
+	}
+	return value, position + 1, true
 }
 
 func sgrBody(s string) (string, bool) {

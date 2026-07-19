@@ -23,6 +23,7 @@ func TestValidateProductionLimitsRefusesUnlimited(t *testing.T) {
 		maxAppsPerOwner: 5, maxConcurrentBuilds: 2, rateLimit: 20,
 		maxConnections: 1024, maxConnectionsPerIP: 32,
 		sshHandshakeTimeout: 10 * time.Second, sshIdleTimeout: 5 * time.Minute,
+		runnerSessionTimeout: 30 * time.Minute,
 	}
 	limits.maxDeploysPerHour = 0
 	err := validateProductionLimits(true, false, false, limits)
