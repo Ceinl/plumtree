@@ -61,3 +61,31 @@ type MessageMsg struct {
 }
 
 func (MessageMsg) isEvent() {}
+
+type MouseButton uint8
+
+const (
+	MouseButtonNone MouseButton = iota
+	MouseButtonLeft
+)
+
+type MouseAction uint8
+
+const (
+	MouseDown MouseAction = iota + 1
+	MouseUp
+	MouseDrag
+	MouseWheelUp
+	MouseWheelDown
+)
+
+// MouseMsg reports a mouse action at zero-based terminal cell coordinates.
+// SDK buttons automatically receive down/up events; Model.Update still gets the
+// message so custom components can inspect it.
+type MouseMsg struct {
+	X, Y   int
+	Button MouseButton
+	Action MouseAction
+}
+
+func (MouseMsg) isEvent() {}

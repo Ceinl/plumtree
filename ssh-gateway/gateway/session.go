@@ -140,6 +140,7 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 		cancel()
 		return
 	}
+	identity = appRelativeIdentity(identity, run.OwnerID)
 
 	sessionID, err := s.Backend.StartSession(run.AppID, run.DeployID)
 	if err != nil {
@@ -177,6 +178,12 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 	cancel()
 }
 
+func appRelativeIdentity(identity runner.Identity, appOwnerID string) runner.Identity {
+	identity.OwnsApp = identity.OwnerID != "" && identity.OwnerID == appOwnerID
+	identity.OwnerID = ""
+	return identity
+}
+
 func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal) (string, bool) {
 	lim := s.Limits
 	if lim.MemoryPages == 0 {
@@ -199,8 +206,8 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 	if w <= 0 || h <= 0 {
 		w, h = 80, 24
 	}
-	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
-	defer io.WriteString(ch, terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
+	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
+	defer io.WriteString(ch, terminal.DISABLE_MOUSE+terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
 
 	src := &runner.TTYSource{
 		Keys:    keyboard.ListenReader(ctx, ch),

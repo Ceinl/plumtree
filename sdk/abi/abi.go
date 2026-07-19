@@ -34,7 +34,9 @@ import (
 // that delivers a published message to a subscribed guest. KindMessage is the
 // first variable-length Event: it carries a topic and payload after the fixed
 // header, so DecodeEvent reads past EventLen for that kind only.
-const Version uint8 = 2
+// v3 adds KindMouse. The fixed header remains 13 bytes; mouse events encode
+// button/action plus cell coordinates in fields unused by other event kinds.
+const Version uint8 = 3
 
 const (
 	magicEvent byte = 0x01
@@ -55,6 +57,25 @@ const (
 	// same app. Topic and Data carry the payload; it is variable length on the
 	// wire (see EncodeEvent).
 	KindMessage Kind = 3
+	// KindMouse reports a terminal mouse action at zero-based cell coordinates.
+	KindMouse Kind = 4
+)
+
+type MouseButton uint8
+
+const (
+	MouseButtonNone MouseButton = iota
+	MouseButtonLeft
+)
+
+type MouseAction uint8
+
+const (
+	MouseDown MouseAction = iota + 1
+	MouseUp
+	MouseDrag
+	MouseWheelUp
+	MouseWheelDown
 )
 
 // KeyType is the ABI-stable key classification. It intentionally mirrors the
@@ -102,13 +123,16 @@ type RGB struct{ R, G, B uint8 }
 // Event is an input event sent host -> guest. W/H are set only for KindResize;
 // Topic/Data only for KindMessage.
 type Event struct {
-	Kind  Kind
-	Key   KeyType
-	Ch    rune
-	Mods  Mods
-	W, H  int
-	Topic string // KindMessage: the topic the message was published to
-	Data  []byte // KindMessage: the message payload
+	Kind           Kind
+	Key            KeyType
+	Ch             rune
+	Mods           Mods
+	W, H           int
+	Topic          string // KindMessage: the topic the message was published to
+	Data           []byte // KindMessage: the message payload
+	MouseX, MouseY int
+	Button         MouseButton
+	Action         MouseAction
 }
 
 // Cell is one rendered character: a rune plus structured styling. No ANSI.

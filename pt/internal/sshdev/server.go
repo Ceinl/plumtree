@@ -191,8 +191,8 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (in
 
 	// Set up the client's terminal (alt screen, hidden cursor) and tear it down
 	// afterward. Output is host-generated; the guest never writes ANSI.
-	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
-	defer io.WriteString(ch, terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
+	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
+	defer io.WriteString(ch, terminal.DISABLE_MOUSE+terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
 
 	src := &runner.TTYSource{
 		Keys:    keyboard.ListenReader(ctx, ch),

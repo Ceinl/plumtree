@@ -84,7 +84,7 @@ func (s *Server) handleGatewayIdentity(w http.ResponseWriter, r *http.Request) {
 		writeGatewayError(w, http.StatusBadRequest, "", "fingerprint is required")
 		return
 	}
-	_, _, err := s.store.ResolveSSHKey(req.Fingerprint)
+	_, owner, err := s.store.ResolveSSHKey(req.Fingerprint)
 	if err != nil && !errors.Is(err, control.ErrNotFound) {
 		writeControlError(w, err)
 		return
@@ -92,6 +92,7 @@ func (s *Server) handleGatewayIdentity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, gatewayapi.IdentityResponse{
 		User:          req.Fingerprint,
 		Authenticated: err == nil,
+		OwnerID:       owner.ID,
 	})
 }
 

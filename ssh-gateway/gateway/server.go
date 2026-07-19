@@ -238,14 +238,14 @@ func (s *Server) identityFromConn(c *ssh.ServerConn) runner.Identity {
 			}
 			// Resolution failures fail closed. Possession of the key is proved,
 			// but the gateway must not assert that it belongs to a platform owner.
-			return runner.Identity{User: fp}
+			return runner.Identity{User: fp, Kind: runner.IdentitySSHKey}
 		}
 	}
 	sid := c.SessionID()
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
-	return runner.Identity{User: "anonymous:" + hex.EncodeToString(sid)}
+	return runner.Identity{User: "anonymous:" + hex.EncodeToString(sid), Kind: runner.IdentityAnonymous}
 }
 
 func HostFromListen(listenHost string) string {

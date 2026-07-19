@@ -90,7 +90,7 @@ func devCapabilities(proj string) (runner.Capabilities, error) {
 	return runner.Capabilities{
 		KV:   kv,
 		Bus:  runner.NewMemBus(),
-		Auth: runner.StaticAuth{Identity: runner.Identity{User: "local"}},
+		Auth: runner.StaticAuth{Identity: runner.Identity{User: "local", Authenticated: true, Kind: runner.IdentitySSHKey, OwnsApp: true}},
 	}, nil
 }
 

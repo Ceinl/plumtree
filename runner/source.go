@@ -108,7 +108,7 @@ func (s *TTYSource) Next(ctx context.Context) (abi.Event, bool) {
 				s.stop()
 				return abi.Event{}, false
 			}
-			if ae, ok := mapKey(ev); ok {
+			if ae, ok := mapInput(ev); ok {
 				return ae, true
 			}
 			// Unmapped (mouse/paste/unknown): keep waiting.
@@ -124,7 +124,24 @@ func (s *TTYSource) stop() {
 }
 
 // mapKey translates a runtime keyboard event to an ABI event.
-func mapKey(ev keyboard.Event) (abi.Event, bool) {
+func mapInput(ev keyboard.Event) (abi.Event, bool) {
+	if ev.Mouse {
+		action := map[keyboard.EventType]abi.MouseAction{
+			keyboard.KeyMouseLeftDown:  abi.MouseDown,
+			keyboard.KeyMouseLeftUp:    abi.MouseUp,
+			keyboard.KeyMouseLeftDrag:  abi.MouseDrag,
+			keyboard.KeyMouseWheelUp:   abi.MouseWheelUp,
+			keyboard.KeyMouseWheelDown: abi.MouseWheelDown,
+		}[ev.Type]
+		if action == 0 {
+			return abi.Event{}, false
+		}
+		button := abi.MouseButtonNone
+		if ev.Type == keyboard.KeyMouseLeftDown || ev.Type == keyboard.KeyMouseLeftUp || ev.Type == keyboard.KeyMouseLeftDrag {
+			button = abi.MouseButtonLeft
+		}
+		return abi.Event{Kind: abi.KindMouse, MouseX: ev.MouseX, MouseY: ev.MouseY, Button: button, Action: action}, true
+	}
 	var m abi.Mods
 	if ev.Shift {
 		m |= abi.ModShift

@@ -83,6 +83,21 @@ func TestRunSessionProductionCLIUsesWorker(t *testing.T) {
 	}
 }
 
+func TestRunSessionTUIEnablesAndDisablesMouse(t *testing.T) {
+	wasmPath := buildTestBinary(t, "../../sdk/examples/counter", ".", []string{"GOOS=wasip1", "GOARCH=wasm"})
+	wasm, err := os.ReadFile(wasmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := &testChannel{}
+	s := &Server{Runner: runner.New(), MaxFPS: 60}
+	s.runSession(context.Background(), ch, wasm, "tui", runner.Capabilities{}, func() (int, int) { return 30, 10 }, nil)
+	got := ch.String()
+	if !strings.Contains(got, "\x1b[?1006h") || !strings.Contains(got, "\x1b[?1006l") {
+		t.Fatalf("mouse setup/teardown missing: %q", got)
+	}
+}
+
 func buildTestBinary(t *testing.T, dir, pkg string, extraEnv []string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "built")
@@ -96,12 +111,15 @@ func buildTestBinary(t *testing.T, dir, pkg string, extraEnv []string) string {
 }
 
 type testChannel struct {
-	bytes.Buffer
+	stdout bytes.Buffer
 	stderr bytes.Buffer
 }
 
-func (c *testChannel) Close() error      { return nil }
-func (c *testChannel) CloseWrite() error { return nil }
+func (c *testChannel) Read([]byte) (int, error)    { return 0, io.EOF }
+func (c *testChannel) Write(p []byte) (int, error) { return c.stdout.Write(p) }
+func (c *testChannel) String() string              { return c.stdout.String() }
+func (c *testChannel) Close() error                { return nil }
+func (c *testChannel) CloseWrite() error           { return nil }
 func (c *testChannel) SendRequest(string, bool, []byte) (bool, error) {
 	return false, nil
 }

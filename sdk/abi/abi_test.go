@@ -15,6 +15,8 @@ func TestEventRoundTrip(t *testing.T) {
 		{Kind: KindResize, W: 120, H: 40},
 		{Kind: KindMessage, Topic: "room", Data: []byte("hello 世界")},
 		{Kind: KindMessage, Topic: "", Data: nil},
+		{Kind: KindMouse, MouseX: 12, MouseY: 7, Button: MouseButtonLeft, Action: MouseDown},
+		{Kind: KindMouse, MouseX: 12, MouseY: 7, Button: MouseButtonLeft, Action: MouseUp},
 	}
 	for _, want := range cases {
 		got, err := DecodeEvent(EncodeEvent(want))
@@ -58,8 +60,8 @@ func TestFrameRoundTrip(t *testing.T) {
 
 func TestIdentityRoundTrip(t *testing.T) {
 	for _, want := range []Identity{
-		{User: "SHA256:abcdef", Authenticated: true},
-		{User: "anonymous:0011", Authenticated: false},
+		{User: "SHA256:abcdef", Authenticated: true, Kind: IdentitySSHKey, OwnsApp: true},
+		{User: "anonymous:0011", Authenticated: false, Kind: IdentityAnonymous},
 		{User: "", Authenticated: false},
 	} {
 		got, err := DecodeIdentity(EncodeIdentity(want))

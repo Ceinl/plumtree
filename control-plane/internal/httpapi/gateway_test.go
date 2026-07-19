@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
 	"github.com/Ceinl/plumtree/ssh-gateway/httpbackend"
 )
@@ -245,7 +246,7 @@ func TestGatewayBackendResolvesOnlyRegisteredKeyAsAuthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unknown.User != "SHA256:unknown" || unknown.Authenticated {
+	if unknown.User != "SHA256:unknown" || unknown.Authenticated || unknown.Kind != runner.IdentitySSHKey || unknown.OwnerID != "" {
 		t.Fatalf("unknown key identity = %+v", unknown)
 	}
 
@@ -262,7 +263,7 @@ func TestGatewayBackendResolvesOnlyRegisteredKeyAsAuthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registered.User != "SHA256:registered" || !registered.Authenticated {
+	if registered.User != "SHA256:registered" || !registered.Authenticated || registered.Kind != runner.IdentitySSHKey || registered.OwnerID != owner.ID {
 		t.Fatalf("registered key identity = %+v", registered)
 	}
 }

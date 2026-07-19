@@ -203,7 +203,7 @@ func (a proxyAuth) Whoami() Identity {
 	if err != nil {
 		return Identity{}
 	}
-	return Identity{User: id.User, Authenticated: id.Authenticated}
+	return Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindFromABI(id.Kind), OwnsApp: id.OwnsApp}
 }
 
 type proxyEnv struct{ rpc *workerRPC }
