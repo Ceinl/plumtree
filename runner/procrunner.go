@@ -144,6 +144,10 @@ func maxWorkerPayload(o op) uint32 {
 		return abi.KVMaxKey
 	case opKVSet:
 		return 2 + abi.KVMaxKey + abi.KVMaxValue
+	case opKVList:
+		return 2 + abi.KVMaxKey
+	case opKVCAS:
+		return 2 + abi.KVMaxKey + abi.KVHashSize + abi.KVMaxValue
 	case opBusSub:
 		return abi.BusMaxTopic
 	case opBusPub:
@@ -306,6 +310,34 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 			return writeMsg(w, opResp, []byte{2})
 		}
 		return writeMsg(w, opResp, []byte{0})
+
+	case opKVList:
+		prefix, limit, ok := decodeKVListRequest(payload)
+		if !ok || caps.KV == nil || len(prefix) > abi.KVMaxKey || limit < 1 || limit > abi.KVMaxList {
+			return writeMsg(w, opResp, []byte{1})
+		}
+		keys, err := caps.KV.List(prefix, limit)
+		if err != nil || len(keys) > limit || len(keys) > abi.KVMaxList {
+			return writeMsg(w, opResp, []byte{1})
+		}
+		return writeMsg(w, opResp, append([]byte{0}, abi.EncodeKVList(keys)...))
+
+	case opKVCAS:
+		key, expected, value, ok := decodeKVCAS(payload)
+		if !ok || caps.KV == nil || len(key) > abi.KVMaxKey || len(value) > abi.KVMaxValue {
+			return writeMsg(w, opResp, []byte{3})
+		}
+		err := caps.KV.CompareAndSwap(key, expected, value)
+		switch {
+		case err == nil:
+			return writeMsg(w, opResp, []byte{0})
+		case errors.Is(err, ErrConflict):
+			return writeMsg(w, opResp, []byte{1})
+		case errors.Is(err, ErrQuota):
+			return writeMsg(w, opResp, []byte{2})
+		default:
+			return writeMsg(w, opResp, []byte{3})
+		}
 
 	case opBusSub:
 		if len(payload) == 0 || len(payload) > abi.BusMaxTopic {

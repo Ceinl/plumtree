@@ -155,6 +155,7 @@ func TestKVResultCodes(t *testing.T) {
 		"TooLarge": KVErrTooLarge,
 		"Quota":    KVErrQuota,
 		"Internal": KVErrInternal,
+		"Conflict": KVErrConflict,
 	}
 	seen := map[int32]string{}
 	for name, code := range errs {
@@ -166,7 +167,18 @@ func TestKVResultCodes(t *testing.T) {
 		}
 		seen[code] = name
 	}
-	if KVMaxKey <= 0 || KVMaxValue <= 0 {
-		t.Errorf("size caps must be positive: key=%d value=%d", KVMaxKey, KVMaxValue)
+	if KVMaxKey <= 0 || KVMaxValue <= 0 || KVMaxList <= 0 {
+		t.Errorf("size caps must be positive: key=%d value=%d list=%d", KVMaxKey, KVMaxValue, KVMaxList)
+	}
+}
+
+func TestKVListEncodingRoundTrip(t *testing.T) {
+	want := []string{"a", "tasks/001", "tasks/002"}
+	got, err := DecodeKVList(EncodeKVList(want))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("DecodeKVList = %#v, %v", got, err)
+	}
+	if _, err := DecodeKVList([]byte{5, 0, 'x'}); err == nil {
+		t.Fatal("truncated list accepted")
 	}
 }

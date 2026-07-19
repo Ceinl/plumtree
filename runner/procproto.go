@@ -39,6 +39,8 @@ const (
 	opFetch   op = 12
 	opDone    op = 13 // worker -> parent: session finished (err + logs)
 	opOutput  op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
+	opKVList  op = 15
+	opKVCAS   op = 16
 )
 
 // maxFrame bounds a single protocol message, guarding against a corrupt length.
@@ -204,6 +206,38 @@ func decodeKeyValue(b []byte) (key string, value []byte, ok bool) {
 		return "", nil, false
 	}
 	return string(b[2 : 2+n]), b[2+n:], true
+}
+
+func encodeKVListRequest(prefix string, limit int) []byte {
+	b := binary.LittleEndian.AppendUint16(nil, uint16(limit))
+	return append(b, prefix...)
+}
+
+func decodeKVListRequest(b []byte) (prefix string, limit int, ok bool) {
+	if len(b) < 2 {
+		return "", 0, false
+	}
+	return string(b[2:]), int(binary.LittleEndian.Uint16(b[:2])), true
+}
+
+func encodeKVCAS(key string, expected [32]byte, value []byte) []byte {
+	b := binary.LittleEndian.AppendUint16(nil, uint16(len(key)))
+	b = append(b, key...)
+	b = append(b, expected[:]...)
+	return append(b, value...)
+}
+
+func decodeKVCAS(b []byte) (key string, expected [32]byte, value []byte, ok bool) {
+	if len(b) < 2 {
+		return "", expected, nil, false
+	}
+	n := int(binary.LittleEndian.Uint16(b[:2]))
+	if n == 0 || len(b) < 2+n+len(expected) {
+		return "", expected, nil, false
+	}
+	key = string(b[2 : 2+n])
+	copy(expected[:], b[2+n:2+n+len(expected)])
+	return key, expected, b[2+n+len(expected):], true
 }
 
 // donePayload encodes the terminal result: [u32 errLen][err][logs].

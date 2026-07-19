@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 
@@ -160,6 +161,35 @@ func (k proxyKV) Delete(key string) error {
 		return errRPC
 	}
 	return nil
+}
+
+func (k proxyKV) List(prefix string, limit int) ([]string, error) {
+	rp, err := k.rpc.call(opKVList, encodeKVListRequest(prefix, limit))
+	if err != nil || len(rp) == 0 || rp[0] != 0 {
+		return nil, errRPC
+	}
+	keys, err := abi.DecodeKVList(rp[1:])
+	if err != nil {
+		return nil, errRPC
+	}
+	return keys, nil
+}
+
+func (k proxyKV) CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	rp, err := k.rpc.call(opKVCAS, encodeKVCAS(key, expected, value))
+	if err != nil || len(rp) == 0 {
+		return errRPC
+	}
+	switch rp[0] {
+	case 0:
+		return nil
+	case 1:
+		return ErrConflict
+	case 2:
+		return ErrQuota
+	default:
+		return errRPC
+	}
 }
 
 type proxyAuth struct{ rpc *workerRPC }
