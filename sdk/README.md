@@ -65,6 +65,31 @@ the host owns all terminal output. Build and run apps with `pt dev`.
 
 Does not own: platform capability implementations, SSH serving, deploy storage.
 
+## JSON actions over SSH
+
+TUI apps can opt into programmatic actions without changing ordinary
+interactive behavior:
+
+```go
+sdk.RunTUIWithActions(model, meta, sdk.Actions{
+    "lookup": func(ctx sdk.Ctx, raw json.RawMessage) (any, error) {
+        return map[string]any{"found": true}, nil
+    },
+})
+```
+
+Invoke with standard SSH exec:
+
+```sh
+ssh owner/app@plumtree.dev 'action lookup {"id":"123"}'
+```
+
+The response is exactly one JSON object: `{"ok":true,"result":...}` or
+`{"ok":false,"error":{"code":"...","message":"..."}}`. Return
+`*sdk.ActionError` for stable application codes. Action name, command, and JSON
+sizes are bounded; the gateway never invokes a shell. `CLIWithActions` provides
+the same dispatch while preserving ordinary CLI arguments.
+
 ## KV collection and concurrency semantics
 
 `KVList(prefix, limit)` returns lexicographically ordered keys and requires a

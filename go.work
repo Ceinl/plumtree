@@ -3,6 +3,7 @@ go 1.26.5
 use (
 	./build-worker
 	./control-plane
+	./examples/agentboard
 	./pt
 	./runner
 	./sdk

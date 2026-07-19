@@ -75,6 +75,31 @@ func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerActionCapabilityParity(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../examples/agentboard/app")
+	store := NewMemStore(0, 0)
+	caps := Capabilities{
+		KV: store, Bus: NewMemBus(),
+		Auth: StaticAuth{Identity: Identity{User: "SHA256:owner-key-0123456789012345", Kind: IdentitySSHKey, OwnsApp: true, Authenticated: true}},
+	}
+	pr := NewProcessRunner(worker)
+	var created strings.Builder
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{abi.ActionArgPrefix, "create_project_board", `{"project":"runner","name":"Runner"}`}, &created); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(created.String(), `"ok":true`) {
+		t.Fatalf("create = %s", created.String())
+	}
+	var listed strings.Builder
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{abi.ActionArgPrefix, "list_boards", `{}`}, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listed.String(), `"project":"runner"`) {
+		t.Fatalf("list = %s", listed.String())
+	}
+}
+
 // CLI mode carries guest arguments/output across the process boundary and
 // proxies capabilities just like the interactive mode.
 func TestProcessRunnerCLI(t *testing.T) {

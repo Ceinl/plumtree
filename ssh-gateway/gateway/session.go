@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"syscall"
 
 	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
 	"github.com/Ceinl/plumtree/tui-runtime/screen"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
@@ -27,6 +30,8 @@ type windowChange struct {
 	Columns, Rows     uint32
 	WidthPx, HeightPx uint32
 }
+
+type execRequest struct{ Command string }
 
 func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, handle string, identity runner.Identity) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -67,12 +72,29 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			}
 			req.Reply(true, nil)
 		case "shell", "exec":
+			var args []string
+			if req.Type == "exec" {
+				var payload execRequest
+				if len(req.Payload) > 4+abi.ActionMaxCommand || ssh.Unmarshal(req.Payload, &payload) != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				var err error
+				args, err = gatewayapi.ParseExecCommand(payload.Command)
+				if err != nil {
+					req.Reply(true, nil)
+					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					ch.Close()
+					cancel()
+					return
+				}
+			}
 			req.Reply(true, nil)
 			if started {
 				continue
 			}
 			started = true
-			go s.startSession(ctx, cancel, ch, handle, identity, size, winch)
+			go s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, args)
 		case "env":
 			req.Reply(true, nil)
 		default:
@@ -116,6 +138,10 @@ func validateRequestDimensions(columns, rows uint32) error {
 }
 
 func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
+	s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, nil)
+}
+
+func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal, args []string) {
 	if !s.acquireSlot() {
 		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.MaxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
@@ -166,13 +192,14 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 
 	caps := s.capsFor(run.AppID, run.OwnerID)
 	caps.Auth = runner.StaticAuth{Identity: identity}
-	log, truncated := s.runSession(ctx, ch, run.WASM, run.AppType, caps, size, winch)
+	log, truncated := s.runSessionArgs(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
 	if err := s.Backend.RecordSessionLog(sessionID, log, truncated); err != nil {
 		s.logf("record session log %q: %v", sessionID, err)
 	}
 	if err := s.Backend.EndSession(sessionID); err != nil {
 		s.logf("end session %q: %v", sessionID, err)
 	}
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	ch.Close()
 	cancel()
 }
@@ -184,16 +211,20 @@ func appRelativeIdentity(identity runner.Identity, appOwnerID string) runner.Ide
 }
 
 func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal) (string, bool) {
+	return s.runSessionArgs(ctx, ch, wasm, appType, caps, size, winch, nil)
+}
+
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool) {
 	lim := s.Limits
 	if lim.MemoryPages == 0 {
 		lim = runner.DefaultLimits
 	}
-	if appType == "cli" {
+	if appType == "cli" || len(args) > 0 {
 		var err error
 		if isolated := s.isolatedRunner(); isolated != nil {
-			err = isolated.RunCLI(ctx, wasm, lim, caps, nil, ch)
+			err = isolated.RunCLI(ctx, wasm, lim, caps, args, ch)
 		} else {
-			err = s.Runner.RunCLI(ctx, wasm, lim, caps, nil, ch)
+			err = s.Runner.RunCLI(ctx, wasm, lim, caps, args, ch)
 		}
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
