@@ -1,12 +1,19 @@
-# cein/agentboard
+# Agentboard capability example
 
-First-party Plumtree task board for humans and external software agents. It has
-five columns: `pending`, `todo`, `in-progress`, `in-review`, and `done`.
+Agentboard is a deployable Plumtree example for exercising framework
+capabilities with humans and external software agents. It is not automatically
+hosted or claimed by the repository. It has five columns: `pending`, `todo`,
+`in-progress`, `in-review`, and `done`.
 
-Interactive owner/user access:
+Deploy and claim it with `pt`; the resulting SSH handle is determined by the
+owner account used during the claim. Set `OWNER` to that handle for the examples
+below:
 
 ```sh
-ssh cein/agentboard@plumtree.dev
+pt deploy
+pt claim
+export OWNER=your-handle
+ssh "${OWNER}/agentboard@plumtree.dev"
 ```
 
 Actions are SSH exec requests, not shell commands. Each invocation prints one
@@ -14,22 +21,22 @@ JSON envelope and uses the same per-app KV, pub/sub, identity, env, and fetch
 capabilities as the TUI:
 
 ```sh
-ssh cein/agentboard@plumtree.dev 'action get_identity {}'
-ssh cein/agentboard@plumtree.dev 'action list_boards {}'
-ssh cein/agentboard@plumtree.dev 'action list_tasks {"board":{"type":"user"}}'
-ssh cein/agentboard@plumtree.dev 'action create_task {"board":{"type":"project","project":"plumtree"},"title":"Add smoke test","description":"Cover the release topology"}'
-ssh cein/agentboard@plumtree.dev 'action advance_task {"board":{"type":"project","project":"plumtree"},"task_id":"task-000001","expected_status":"todo"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action get_identity {}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action list_boards {}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action list_tasks {"board":{"type":"user"}}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action create_task {"board":{"type":"project","project":"plumtree"},"title":"Add smoke test","description":"Cover the release topology"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action advance_task {"board":{"type":"project","project":"plumtree"},"task_id":"task-000001","expected_status":"todo"}'
 ```
 
 The app owner creates and manages project boards with proved SSH fingerprint
 strings. Fingerprints are hashed before membership metadata is persisted:
 
 ```sh
-ssh cein/agentboard@plumtree.dev 'action create_project_board {"project":"plumtree","name":"Plumtree"}'
-ssh cein/agentboard@plumtree.dev 'action add_project_member {"project":"plumtree","identity":"SHA256:AbCdEf0123456789AbCdEf0123456789AbCdEf01234"}'
-ssh cein/agentboard@plumtree.dev 'action remove_project_member {"project":"plumtree","identity":"SHA256:AbCdEf0123456789AbCdEf0123456789AbCdEf01234"}'
-ssh cein/agentboard@plumtree.dev 'action rename_project_board {"project":"plumtree","name":"Plumtree Platform"}'
-ssh cein/agentboard@plumtree.dev 'action archive_project_board {"project":"plumtree","archived":true}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action create_project_board {"project":"plumtree","name":"Plumtree"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action add_project_member {"project":"plumtree","identity":"SHA256:AbCdEf0123456789AbCdEf0123456789AbCdEf01234"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action remove_project_member {"project":"plumtree","identity":"SHA256:AbCdEf0123456789AbCdEf0123456789AbCdEf01234"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action rename_project_board {"project":"plumtree","name":"Plumtree Platform"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action archive_project_board {"project":"plumtree","archived":true}'
 ```
 
 Personal boards accept only `{"type":"user"}`. Their opaque board ID is
