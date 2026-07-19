@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,35 @@ func makePreviewDeploy(t *testing.T, store *Store, wasm []byte) string {
 		t.Fatal(err)
 	}
 	return dep.ID
+}
+
+func TestAnonymousPreviewSessionSurvivesSnapshotReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-plane-state.json")
+	store, err := OpenStore(path, WithAnonymousPreview(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	depID := makePreviewDeploy(t, store, []byte("\x00asm-reload"))
+	app, deploy, _, _, err := store.ResolveRunnable("preview-" + depID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.StartSession(app.ID, deploy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EndSession(session.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := OpenStore(path, WithAnonymousPreview(true))
+	if err != nil {
+		t.Fatalf("reload after preview session: %v", err)
+	}
+	got, ok := reloaded.sessions[session.ID]
+	if !ok || got.AppID != app.ID || got.DeployID != deploy.ID || got.EndedAt == nil {
+		t.Fatalf("reloaded preview session = %+v, ok=%v", got, ok)
+	}
 }
 
 func TestAnonymousPreviewGated(t *testing.T) {

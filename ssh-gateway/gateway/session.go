@@ -172,6 +172,7 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 	if err := s.Backend.EndSession(sessionID); err != nil {
 		s.logf("end session %q: %v", sessionID, err)
 	}
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	ch.Close()
 	cancel()
 }

@@ -95,7 +95,7 @@ services:
     network_mode: none
     read_only: true
     tmpfs:
-      - /scratch:size=256m,mode=0700,uid=0,gid=0
+      - /scratch:size=256m,mode=0711,uid=0,gid=0
     volumes:
       - runner-socket:/run/plumtree
     security_opt:

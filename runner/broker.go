@@ -99,6 +99,13 @@ func (b *Broker) serveConn(ctx context.Context, conn net.Conn, slot int) {
 		return
 	}
 	defer os.RemoveAll(workDir)
+	// Set the final mode while the broker still owns the directory. Production
+	// intentionally omits CAP_FOWNER, so chmod after chown would fail and abort
+	// every isolated session.
+	if err := os.Chmod(workDir, 0o700); err != nil {
+		b.logf("chmod worker scratch: %v", err)
+		return
+	}
 	uid, gid := uint32(0), uint32(0)
 	if b.WorkerUIDBase > 0 {
 		uid = b.WorkerUIDBase + uint32(slot)
@@ -108,11 +115,6 @@ func (b *Broker) serveConn(ctx context.Context, conn net.Conn, slot int) {
 			return
 		}
 	}
-	if err := os.Chmod(workDir, 0o700); err != nil {
-		b.logf("chmod worker scratch: %v", err)
-		return
-	}
-
 	cmd := exec.CommandContext(ctx, b.WorkerPath)
 	cmd.Dir = workDir
 	cmd.Env = []string{

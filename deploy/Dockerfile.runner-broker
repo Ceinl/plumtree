@@ -7,7 +7,10 @@ RUN cd runner && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-broker
     && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-worker ./cmd/plumtree-runner-worker
 
 FROM alpine:3.24.1
-RUN mkdir -p /run/plumtree /scratch && chmod 0700 /run/plumtree /scratch
+# Per-session workers drop to unique UIDs before chdir/exec. The scratch parent
+# must therefore be traversable, while each generated session directory stays
+# private at 0700 and owned by only that worker.
+RUN mkdir -p /run/plumtree /scratch && chmod 0700 /run/plumtree && chmod 0711 /scratch
 COPY --from=build /out/plumtree-runner-broker /out/plumtree-runner-worker /usr/local/bin/
 ENV HOME=/scratch \
     TMPDIR=/scratch \
