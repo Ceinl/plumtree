@@ -1,18 +1,19 @@
 # Deploying Plumtree
 
-Three services, built from this repo, wired by `docker-compose.yml`:
+Four services, built from this repo, wired by `docker-compose.yml`:
 
 | Service | Image | Exposure |
 |---|---|---|
 | `control-plane` | `Dockerfile.control-plane` | `:8080` — dashboard/API; put a TLS reverse proxy in front |
 | `ssh-gateway` | `Dockerfile.ssh-gateway` | `:2222` — public SSH; forward `:22` to it (or run it on 22) |
+| `runner-broker` | `Dockerfile.runner-broker` | none — networkless; authenticated Unix socket from the gateway only |
 | `build-worker` | `Dockerfile.build-worker` | none — internal network only |
 
 ## Quick start
 
 ```sh
 cd deploy
-cp .env.example .env      # fill in origin + three tokens (openssl rand -hex 32)
+cp .env.example .env      # fill in origin + four tokens (openssl rand -hex 32)
 # Create once locally, or have your secret manager write this path instead.
 openssl rand -base64 32 > ./control-plane-state.kek
 chmod 600 ./control-plane-state.kek
@@ -28,15 +29,17 @@ ssh -p 2222 <owner>/<app>@<host>        # once something is deployed
 
 ## Security posture
 
-- **build-worker has no network.** It sits on an `internal: true` network,
-  reachable only from the control plane. Author builds resolve the unpublished
+- **build-worker has no internet egress.** It sits on an `internal: true`
+  network with the control plane. Author builds resolve the unpublished
   SDK from module dirs baked into the image and their transitive deps from a
   baked-in `file://` module proxy — `GOPROXY` never touches the internet. The
   root filesystem is read-only; build sandboxes live on a size-capped tmpfs.
-- **Session isolation.** The gateway runs every app session in a separate
-  `plumtree-runner-worker` process (baked into its image) on top of the wazero
-  sandbox.
-- **Tokens.** All three shared tokens are compared constant-time. The
+- **Session isolation.** The gateway sends each app session over an
+  authenticated Unix socket to a separate, networkless runner container. That
+  container has no gateway credential, host key, KV volume, or control-plane
+  route; it uses a read-only root and bounded tmpfs scratch. A disposable
+  `plumtree-runner-worker` process still wraps each wazero sandbox inside it.
+- **Tokens.** Shared operator tokens are compared constant-time. The
   `PLUMTREE_DEV_TOKEN` ends up inside published `pt` binaries — treat it as
   build config, not a secret, and rotate it if abused (see
   `.github/workflows/release.yml`).

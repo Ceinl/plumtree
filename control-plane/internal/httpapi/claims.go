@@ -55,7 +55,8 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 	_ = claimTmpl.Execute(w, struct {
 		DeployID   string
 		ClaimToken string
-	}{DeployID: deployID, ClaimToken: claimToken})
+		CSPNonce   string
+	}{DeployID: deployID, ClaimToken: claimToken, CSPNonce: cspNonce(r.Context())})
 }
 
 func (s *Server) scheduleDeployClaimCleanup() {

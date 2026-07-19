@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
-	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"github.com/Ceinl/plumtree/pt/internal/sshdev"
 	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
+	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 )
 
 func cmdDev(args []string) error {
@@ -33,6 +33,9 @@ func cmdDev(args []string) error {
 	noSSHConfig := fs.Bool("no-ssh-config", false, "ssh: do not update ~/.ssh/config")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *memPages == 0 || uint64(*memPages) > uint64(runner.MaxMemoryPages) {
+		return fmt.Errorf("mem-pages must be between 1 and %d", runner.MaxMemoryPages)
 	}
 
 	proj, err := findProject()
@@ -168,7 +171,7 @@ func runTTY(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 
 	keys := keyboard.Listen(ctx)
 	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
+	signal.Notify(winch, resizeSignal())
 	defer signal.Stop(winch)
 
 	src := &runner.TTYSource{

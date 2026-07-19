@@ -10,6 +10,8 @@ import "encoding/binary"
 // length when the buffer is too small).
 
 const (
+	// FetchMaxMethod caps an HTTP method token length in bytes.
+	FetchMaxMethod = 32
 	// FetchMaxURL caps a request URL length in bytes.
 	FetchMaxURL = 2048
 	// FetchMaxBody caps request and response body length in bytes.
@@ -66,8 +68,8 @@ func DecodeFetchRequest(b []byte) (FetchRequest, error) {
 		return r, ErrShort
 	}
 	r.URL = string(urlb)
-	body, _, ok := takeU32Bytes(rest)
-	if !ok {
+	body, rest, ok := takeU32Bytes(rest)
+	if !ok || len(rest) != 0 {
 		return r, ErrShort
 	}
 	r.Body = append([]byte(nil), body...)
@@ -91,8 +93,8 @@ func DecodeFetchResponse(b []byte) (FetchResponse, error) {
 		return FetchResponse{}, ErrShort
 	}
 	status := int(binary.LittleEndian.Uint16(b[0:2]))
-	body, _, ok := takeU32Bytes(b[2:])
-	if !ok {
+	body, rest, ok := takeU32Bytes(b[2:])
+	if !ok || len(rest) != 0 {
 		return FetchResponse{}, ErrShort
 	}
 	return FetchResponse{Status: status, Body: append([]byte(nil), body...)}, nil

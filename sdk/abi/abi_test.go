@@ -86,6 +86,18 @@ func TestDecodeRejectsBadInput(t *testing.T) {
 	if _, err := DecodeFrame(bad); err != ErrSize {
 		t.Errorf("oversize: got %v want ErrSize", err)
 	}
+	if _, err := DecodeEvent(append(EncodeEvent(Event{Kind: KindKey}), 0)); err != ErrSize {
+		t.Errorf("event trailing data: got %v want ErrSize", err)
+	}
+	if _, err := DecodeFrame(append(EncodeFrame(Frame{}), 0)); err != ErrSize {
+		t.Errorf("frame trailing data: got %v want ErrSize", err)
+	}
+	if _, err := DecodeIdentity(append(EncodeIdentity(Identity{User: "x"}), 0)); err != ErrSize {
+		t.Errorf("identity trailing data: got %v want ErrSize", err)
+	}
+	if _, err := DecodeFetchRequest(append(EncodeFetchRequest(FetchRequest{URL: "https://example.com"}), 0)); err == nil {
+		t.Error("fetch request trailing data should error")
+	}
 }
 
 func TestParseSGRColor(t *testing.T) {

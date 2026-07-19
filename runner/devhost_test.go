@@ -133,6 +133,27 @@ func TestTTYSinkUsesDefaultsForZeroColors(t *testing.T) {
 	}
 }
 
+func TestTTYSinkFlushesLastRateLimitedFrame(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewTTYSinkWriter(1, 1, 20, &buf)
+	sink.Present(abi.Frame{W: 1, H: 1, Cells: []abi.Cell{{Ch: 'A'}}})
+	sink.Present(abi.Frame{W: 1, H: 1, Cells: []abi.Cell{{Ch: 'B'}}})
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		sink.mu.Lock()
+		flushed := !sink.dirty
+		sink.mu.Unlock()
+		if flushed {
+			if !strings.Contains(buf.String(), "B") {
+				t.Fatalf("trailing flush did not render latest frame: %q", buf.String())
+			}
+			return
+		}
+	}
+	t.Fatal("rate-limited frame was not flushed")
+}
+
 func TestWatchdogFiresAfterTimeout(t *testing.T) {
 	var fired atomic.Bool
 	wd := &watchdog{timeout: 30 * time.Millisecond, cancel: func() { fired.Store(true) }}

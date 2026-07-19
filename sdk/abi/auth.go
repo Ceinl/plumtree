@@ -50,6 +50,9 @@ func DecodeIdentity(b []byte) (Identity, error) {
 	if len(b) < 3+ulen {
 		return Identity{}, ErrShort
 	}
+	if len(b) > 3+ulen {
+		return Identity{}, ErrSize
+	}
 	return Identity{
 		Authenticated: b[0]&1 != 0,
 		User:          string(b[3 : 3+ulen]),

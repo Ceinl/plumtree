@@ -4,13 +4,13 @@
 # module proxy seeded at image build time. Run it on an internal-only network
 # with a tmpfs work dir (see docker-compose.yml).
 # Build from the repo root: docker build -f deploy/Dockerfile.build-worker .
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.5-alpine3.24 AS build
 WORKDIR /src
 COPY . .
 RUN cd build-worker && CGO_ENABLED=0 go build -trimpath -o /out/build-worker ./cmd/build-worker
 
 # The runtime image keeps the Go toolchain: it compiles author source.
-FROM golang:1.26-alpine
+FROM golang:1.26.5-alpine3.24
 COPY --from=build /out/build-worker /usr/local/bin/build-worker
 # Bake the unpublished SDK and TUI runtime for workspace resolution, then seed
 # a local module proxy with their transitive dependencies so builds resolve

@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"github.com/tetratelabs/wazero/sys"
-	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 // Limits are the per-session resource caps the dev host enforces.
@@ -40,6 +40,19 @@ type Limits struct {
 	// unlimited. Excess frames are dropped (only the latest frame matters for a
 	// TUI), bounding host render work from a guest spamming present.
 	MaxFramesPerSec int
+}
+
+// MaxMemoryPages is WebAssembly's 32-bit linear-memory ceiling (4 GiB).
+const MaxMemoryPages uint32 = 65_536
+
+func validateLimits(lim Limits) error {
+	if lim.MemoryPages == 0 || lim.MemoryPages > MaxMemoryPages {
+		return fmt.Errorf("runner: memory pages must be between 1 and %d", MaxMemoryPages)
+	}
+	if lim.FrameTimeout < 0 || lim.SessionTimeout < 0 || lim.MaxEventsPerSec < 0 || lim.MaxFramesPerSec < 0 {
+		return errors.New("runner: timeouts and rate limits must not be negative")
+	}
+	return nil
 }
 
 // DefaultLimits are conservative caps suitable for local development.
@@ -87,6 +100,9 @@ func Run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, src So
 // WASM reuse generated code; the runtime (and thus the guest instance) is still
 // created fresh per call, preserving isolation between sessions.
 func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim Limits, caps Capabilities, src Source, sink Sink, logs io.Writer) error {
+	if err := validateLimits(lim); err != nil {
+		return err
+	}
 	sessCtx := ctx
 	if lim.SessionTimeout > 0 {
 		var sessCancel context.CancelFunc

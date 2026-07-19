@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/ssh"
 	"github.com/Ceinl/plumtree/runner"
+	"golang.org/x/crypto/ssh"
 )
 
 // buildCounter compiles the SDK counter example to WASM, skipping if the

@@ -172,6 +172,7 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 	if err := s.Backend.EndSession(sessionID); err != nil {
 		s.logf("end session %q: %v", sessionID, err)
 	}
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	ch.Close()
 	cancel()
 }
@@ -183,13 +184,13 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 	}
 	if appType == "cli" {
 		var err error
-		if s.RunnerWorker != "" {
-			err = runner.NewProcessRunner(s.RunnerWorker).RunCLI(ctx, wasm, lim, caps, nil, ch)
+		if isolated := s.isolatedRunner(); isolated != nil {
+			err = isolated.RunCLI(ctx, wasm, lim, caps, nil, ch)
 		} else {
 			err = s.Runner.RunCLI(ctx, wasm, lim, caps, nil, ch)
 		}
 		if err != nil {
-			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
+			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
 		}
 		return "", false
 	}
@@ -213,8 +214,8 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 	// When a worker binary is configured, isolate the WASM sandbox in a separate
 	// process; otherwise run it in-process with the shared compilation cache.
 	var err error
-	if s.RunnerWorker != "" {
-		err = runner.NewProcessRunner(s.RunnerWorker).Run(ctx, wasm, lim, caps, src, sink, logs)
+	if isolated := s.isolatedRunner(); isolated != nil {
+		err = isolated.Run(ctx, wasm, lim, caps, src, sink, logs)
 	} else {
 		err = s.Runner.Run(ctx, wasm, lim, caps, src, sink, logs)
 	}
@@ -224,4 +225,14 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 		s.logf("session error: %v", err)
 	}
 	return logs.String(), logs.truncated
+}
+
+func (s *Server) isolatedRunner() *runner.ProcessRunner {
+	if s.RunnerEndpoint != "" {
+		return runner.NewRemoteProcessRunner(s.RunnerEndpoint, s.RunnerToken)
+	}
+	if s.RunnerWorker != "" {
+		return runner.NewProcessRunner(s.RunnerWorker)
+	}
+	return nil
 }

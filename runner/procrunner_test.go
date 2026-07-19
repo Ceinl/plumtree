@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"io"
+	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,16 @@ func buildWorker(t *testing.T) string {
 		t.Fatalf("build runner-worker failed (%v):\n%s", err, b)
 	}
 	return out
+}
+
+func shortUnixSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "pt-runner-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "broker.sock")
 }
 
 // End-to-end across a process boundary: the counter guest runs in a worker
@@ -66,6 +78,58 @@ func TestProcessRunnerCLI(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q; full output:\n%s", want, out.String())
 		}
+	}
+}
+
+// The production path crosses a container boundary through a broker socket.
+// Exercise that transport end to end, including capability RPC, rather than
+// only testing the local subprocess path.
+func TestRemoteProcessRunnerCLI(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "testdata/kvguest", "GOWORK=off")
+	socket := shortUnixSocket(t)
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	broker := &Broker{WorkerPath: worker, Token: "runner-secret", MaxSessions: 2}
+	errCh := make(chan error, 1)
+	go func() { errCh <- broker.Serve(ctx, ln) }()
+
+	store := NewMemStore(0, 0)
+	var out strings.Builder
+	pr := NewRemoteProcessRunner("unix://"+socket, "runner-secret")
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, nil, &out); err != nil {
+		t.Fatalf("remote ProcessRunner.RunCLI: %v", err)
+	}
+	for _, want := range []string{"set=0", "get=11:hello world", "del=0"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q; full output:\n%s", want, out.String())
+		}
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("broker shutdown: %v", err)
+	}
+}
+
+func TestRemoteProcessRunnerRejectsWrongToken(t *testing.T) {
+	worker := buildWorker(t)
+	socket := shortUnixSocket(t)
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go (&Broker{WorkerPath: worker, Token: "right", MaxSessions: 1}).Serve(ctx, ln)
+
+	pr := NewRemoteProcessRunner("unix://"+socket, "wrong")
+	err = pr.RunCLI(context.Background(), []byte("not reached"), DefaultLimits, Capabilities{}, nil, io.Discard)
+	if err == nil {
+		t.Fatal("wrong broker token was accepted")
 	}
 }
 

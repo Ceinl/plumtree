@@ -48,6 +48,9 @@ var errProtocol = errors.New("runner: protocol error")
 
 // writeMsg writes one framed message: [op][u32 len][payload].
 func writeMsg(w io.Writer, o op, payload []byte) error {
+	if len(payload) > maxFrame {
+		return errProtocol
+	}
 	var hdr [5]byte
 	hdr[0] = byte(o)
 	binary.LittleEndian.PutUint32(hdr[1:], uint32(len(payload)))
@@ -64,19 +67,28 @@ func writeMsg(w io.Writer, o op, payload []byte) error {
 
 // readMsg reads one framed message.
 func readMsg(r io.Reader) (op, []byte, error) {
+	return readMsgBounded(r, func(op) uint32 { return maxFrame })
+}
+
+// readMsgBounded rejects an operation-specific oversized message before
+// allocating its payload. The gateway uses this for worker-originated traffic:
+// a compromised worker is untrusted even though a normal guest can only emit
+// protocol messages through size-checked host functions.
+func readMsgBounded(r io.Reader, maxFor func(op) uint32) (op, []byte, error) {
 	var hdr [5]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return 0, nil, err
 	}
+	o := op(hdr[0])
 	n := binary.LittleEndian.Uint32(hdr[1:])
-	if n > maxFrame {
+	if n > maxFrame || n > maxFor(o) {
 		return 0, nil, errProtocol
 	}
 	payload := make([]byte, n)
 	if _, err := io.ReadFull(r, payload); err != nil {
 		return 0, nil, err
 	}
-	return op(hdr[0]), payload, nil
+	return o, payload, nil
 }
 
 // Capability-presence bits in the start payload. The parent sets a bit for each

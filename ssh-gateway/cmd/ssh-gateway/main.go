@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -45,6 +46,8 @@ func main() {
 		MaxConnectionsPerIP:   flags.maxConnectionsPerIP,
 		StateDir:              flags.stateDir,
 		RunnerWorker:          flags.runnerWorker,
+		RunnerEndpoint:        flags.runnerEndpoint,
+		RunnerToken:           flags.runnerToken,
 		Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
 		Ready: func(a net.Addr) {
 			host, port, _ := net.SplitHostPort(a.String())
@@ -54,7 +57,9 @@ func main() {
 	}
 
 	fmt.Printf("starting ssh-gateway on %s\n", flags.sshAddr)
-	if flags.runnerWorker != "" {
+	if flags.runnerEndpoint != "" {
+		fmt.Printf("runner isolation: remote broker %s\n", flags.runnerEndpoint)
+	} else if flags.runnerWorker != "" {
 		fmt.Printf("runner isolation: %s\n", flags.runnerWorker)
 	} else {
 		fmt.Println("runner isolation: in-process sandbox")
@@ -73,6 +78,8 @@ type config struct {
 	sshAddr             string
 	stateDir            string
 	runnerWorker        string
+	runnerEndpoint      string
+	runnerToken         string
 	maxFPS              int
 	maxSessions         int
 	handshakeTimeout    time.Duration
@@ -89,6 +96,8 @@ func parseFlags() config {
 	sshAddr := flag.String("ssh-addr", env("PLUMTREE_SSH_ADDR", "0.0.0.0:2222"), "SSH listen address")
 	stateDir := flag.String("state-dir", env("PLUMTREE_STATE_DIR", ""), "directory for per-app KV stores (under state-dir/kv); empty disables KV")
 	runnerWorker := flag.String("runner-worker", env("PLUMTREE_RUNNER_WORKER", ""), "path to the plumtree-runner-worker binary; set to isolate each app session in a separate process")
+	runnerEndpoint := flag.String("runner-endpoint", env("PLUMTREE_RUNNER_ENDPOINT", ""), "remote runner broker endpoint (production: unix:///path)")
+	runnerToken := flag.String("runner-token", env("PLUMTREE_RUNNER_TOKEN", ""), "shared token for the remote runner broker")
 	maxFPS := flag.Int("max-fps", envInt("PLUMTREE_MAX_FPS", 60), "SSH repaint cap")
 	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", gateway.DefaultMaxConcurrentSessions), "max concurrent SSH sessions on this gateway; 0 = unlimited")
 	handshakeTimeout := flag.Duration("handshake-timeout", envDuration("PLUMTREE_SSH_HANDSHAKE_TIMEOUT", gateway.DefaultHandshakeTimeout), "maximum time allowed for an SSH handshake; negative disables")
@@ -104,6 +113,8 @@ func parseFlags() config {
 		sshAddr:             *sshAddr,
 		stateDir:            *stateDir,
 		runnerWorker:        *runnerWorker,
+		runnerEndpoint:      *runnerEndpoint,
+		runnerToken:         *runnerToken,
 		maxFPS:              *maxFPS,
 		maxSessions:         *maxSessions,
 		handshakeTimeout:    *handshakeTimeout,
@@ -116,6 +127,18 @@ func parseFlags() config {
 }
 
 func validateProductionLimits(cfg config) error {
+	if cfg.runnerEndpoint != "" && cfg.runnerWorker != "" {
+		return errors.New("ssh-gateway: configure either runner-endpoint or runner-worker, not both")
+	}
+	if cfg.runnerEndpoint != "" && cfg.runnerToken == "" {
+		return errors.New("ssh-gateway: runner-token is required with runner-endpoint")
+	}
+	if cfg.production && cfg.runnerEndpoint == "" {
+		return errors.New("ssh-gateway: production requires a remote runner-endpoint; a local subprocess does not contain native runtime escape")
+	}
+	if cfg.production && !strings.HasPrefix(cfg.runnerEndpoint, "unix://") {
+		return errors.New("ssh-gateway: production runner-endpoint must use an authenticated Unix socket")
+	}
 	if !cfg.production || cfg.ackUnlimited {
 		return nil
 	}

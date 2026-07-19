@@ -1,6 +1,8 @@
-# Production topology: three processes, least privilege each.
+# Production topology: four services, least privilege each.
 #
 #   internet ──▶ ssh-gateway:2222 ──▶ control-plane:8080 (internal)
+#                         │
+#                         └── Unix socket ──▶ runner-broker (no network)
 #   internet ──▶ control-plane:8080 (dashboard/API, put a TLS proxy in front)
 #   control-plane ──▶ build-worker:8090 (internal only, no egress at all)
 #
@@ -37,6 +39,12 @@ services:
       - control_plane_state_kek
     networks: [web, internal]
     depends_on: [build-worker]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
     cpus: 1.0
     mem_limit: 768m
     pids_limit: 256
@@ -49,6 +57,7 @@ services:
     environment:
       PLUMTREE_CONTROL_URL: http://control-plane:8080
       PLUMTREE_GATEWAY_TOKEN: ${PLUMTREE_GATEWAY_TOKEN:?set in .env}
+      PLUMTREE_RUNNER_TOKEN: ${PLUMTREE_RUNNER_TOKEN:?set in .env}
       PLUMTREE_PRODUCTION: "true"
       PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS: ${PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS:-false}
       PLUMTREE_MAX_SESSIONS: ${PLUMTREE_MAX_SESSIONS:-64}
@@ -60,11 +69,45 @@ services:
       - "2222:2222"
     volumes:
       - ssh-gateway-data:/data
+      - runner-socket:/run/plumtree
     networks: [web, internal]
-    depends_on: [control-plane]
+    depends_on: [control-plane, runner-broker]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
     cpus: 2.0
     mem_limit: 1536m
     pids_limit: 512
+
+  runner-broker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.runner-broker
+    restart: unless-stopped
+    environment:
+      PLUMTREE_RUNNER_TOKEN: ${PLUMTREE_RUNNER_TOKEN:?set in .env}
+      PLUMTREE_MAX_SESSIONS: ${PLUMTREE_MAX_SESSIONS:-64}
+    # A native wazero/host-function escape lands here: no network, no gateway
+    # token, no SSH host key, no KV volume, read-only root, bounded scratch.
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /scratch:size=256m,mode=0711,uid=0,gid=0
+    volumes:
+      - runner-socket:/run/plumtree
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    # The broker uses these only to own the shared socket/scratch, assign a
+    # unique UID per child, terminate it, and clean its private scratch.
+    # setresuid clears them in every worker.
+    cap_add: [SETUID, SETGID, CHOWN, KILL, DAC_OVERRIDE]
+    cpus: 2.0
+    mem_limit: 1536m
+    pids_limit: 256
 
   build-worker:
     build:
@@ -89,6 +132,7 @@ services:
       - /tmp:size=64m
     security_opt:
       - no-new-privileges:true
+    cap_drop: [ALL]
     cpus: 2.0
     mem_limit: 3g
     pids_limit: 512
@@ -101,6 +145,7 @@ networks:
 volumes:
   control-plane-data:
   ssh-gateway-data:
+  runner-socket:
 
 secrets:
   # Point this at a managed-secret-agent output in production, or a local file

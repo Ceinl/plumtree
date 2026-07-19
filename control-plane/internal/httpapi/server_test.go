@@ -35,6 +35,24 @@ func TestDashboardServesShooClient(t *testing.T) {
 	if !strings.Contains(body, "Authorization: \"Bearer \" + token") {
 		t.Fatalf("dashboard SSE fetch does not use the authorization header")
 	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "script-src 'self' https://shoo.dev 'unsafe-inline'") {
+		t.Fatalf("script CSP still permits unsafe-inline: %s", csp)
+	}
+	marker := "'nonce-"
+	start := strings.Index(csp, marker)
+	if start < 0 {
+		t.Fatalf("CSP missing script nonce: %s", csp)
+	}
+	start += len(marker)
+	end := strings.IndexByte(csp[start:], '\'')
+	if end < 0 {
+		t.Fatalf("malformed CSP nonce: %s", csp)
+	}
+	nonce := csp[start : start+end]
+	if !strings.Contains(body, `nonce="`+nonce+`"`) {
+		t.Fatalf("dashboard script does not carry CSP nonce %q", nonce)
+	}
 }
 
 func TestClaimPageRendersUnquotedDeployID(t *testing.T) {

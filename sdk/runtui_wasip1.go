@@ -6,8 +6,8 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
 	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/tui-runtime/screen"
 )
 
 // Host functions imported by every hosted Plumtree guest. The guest drives its

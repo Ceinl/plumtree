@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -21,6 +22,9 @@ import (
 const (
 	DefaultBaseURL = "https://shoo.dev"
 	DefaultIssuer  = "https://shoo.dev"
+	maxTokenBytes  = 16 << 10
+	maxJWKSBytes   = 1 << 20
+	jwksTimeout    = 10 * time.Second
 )
 
 var (
@@ -69,7 +73,7 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 		cfg.Issuer = DefaultIssuer
 	}
 	if cfg.Client == nil {
-		cfg.Client = http.DefaultClient
+		cfg.Client = &http.Client{Timeout: jwksTimeout}
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -96,6 +100,9 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 }
 
 func (v *Verifier) Verify(ctx context.Context, token string) (Claims, error) {
+	if len(token) == 0 || len(token) > maxTokenBytes {
+		return Claims{}, fmt.Errorf("%w: token size is invalid", ErrInvalidToken)
+	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return Claims{}, fmt.Errorf("%w: expected three JWT segments", ErrInvalidToken)
@@ -176,10 +183,17 @@ func (v *Verifier) refreshKeys(ctx context.Context) error {
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("shoo: JWKS returned %s", res.Status)
 	}
+	rawBody, err := io.ReadAll(io.LimitReader(res.Body, maxJWKSBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(rawBody) > maxJWKSBytes {
+		return fmt.Errorf("shoo: JWKS response exceeds %d bytes", maxJWKSBytes)
+	}
 	var body struct {
 		Keys []jwk `json:"keys"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(rawBody, &body); err != nil {
 		return err
 	}
 	keys := make(map[string]*ecdsa.PublicKey, len(body.Keys))

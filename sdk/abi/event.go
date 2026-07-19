@@ -60,6 +60,9 @@ func DecodeEvent(b []byte) (Event, error) {
 		H:    int(binary.LittleEndian.Uint16(b[11:13])),
 	}
 	if e.Kind != KindMessage {
+		if len(b) != EventLen {
+			return Event{}, ErrSize
+		}
 		return e, nil
 	}
 	off := EventLen
@@ -77,6 +80,9 @@ func DecodeEvent(b []byte) (Event, error) {
 	off += 4
 	if len(b) < off+dlen {
 		return Event{}, ErrShort
+	}
+	if len(b) > off+dlen {
+		return Event{}, ErrSize
 	}
 	e.Data = append([]byte(nil), b[off:off+dlen]...)
 	return e, nil

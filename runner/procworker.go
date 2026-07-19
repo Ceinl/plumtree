@@ -110,10 +110,16 @@ func (s *proxySink) Present(f abi.Frame) { _, _ = s.rpc.call(opPresent, abi.Enco
 type proxyOutput struct{ rpc *workerRPC }
 
 func (w proxyOutput) Write(p []byte) (int, error) {
-	if _, err := w.rpc.call(opOutput, p); err != nil {
-		return 0, err
+	written := 0
+	for len(p) > 0 {
+		n := min(len(p), maxWorkerOutput)
+		if _, err := w.rpc.call(opOutput, p[:n]); err != nil {
+			return written, err
+		}
+		written += n
+		p = p[n:]
 	}
-	return len(p), nil
+	return written, nil
 }
 
 type proxyKV struct{ rpc *workerRPC }
