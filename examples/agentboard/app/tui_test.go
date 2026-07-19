@@ -96,6 +96,9 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 	if model.taskIndex != 1 {
 		t.Fatalf("selected task = %d, want 1", model.taskIndex)
 	}
+	if !strings.Contains(model.err, "awaiting app-owner review") {
+		t.Fatalf("blocked click feedback = %q", model.err)
+	}
 }
 
 func TestRoleCorrectTUITransitions(t *testing.T) {

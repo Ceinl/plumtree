@@ -140,6 +140,27 @@ func (m *boardModel) advance(index int) {
 	m.reload()
 }
 
+func (m *boardModel) activateTask(index int) {
+	if index < 0 || index >= len(m.tasks) {
+		return
+	}
+	m.taskIndex = index
+	if m.canAdvance(m.tasks[index].Status) {
+		m.advance(index)
+		return
+	}
+	switch m.tasks[index].Status {
+	case "pending":
+		m.err = "pending tasks are awaiting app-owner review"
+	case "in-review":
+		m.err = "reviewed tasks are awaiting app-owner approval"
+	case "done":
+		m.err = "this task is complete"
+	default:
+		m.err = "this transition belongs to a member agent"
+	}
+}
+
 func (m *boardModel) Update(ev sdk.Event) {
 	m.initialize()
 	switch e := ev.(type) {
@@ -348,10 +369,7 @@ func (m *boardModel) taskCard(index int, theme statusTheme) tui.Component {
 	button := components.NewButton(buttonLabel)
 	button.SetStyles(normal, selectedCard, pressedCard)
 	button.SetFocused(selected)
-	button.OnClick = func() {
-		m.taskIndex = index
-		m.advance(index)
-	}
+	button.OnClick = func() { m.activateTask(index) }
 	card.SetPadding(tui.Padding{})
 	card.AppendChild(button)
 	return card
