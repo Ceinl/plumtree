@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/tui"
@@ -20,6 +21,54 @@ type boardModel struct {
 	taskIndex   int
 	err         string
 }
+
+type statusTheme struct {
+	label          string
+	marker         string
+	background     [3]uint8
+	foreground     [3]uint8
+	softBackground [3]uint8
+}
+
+var statusThemes = map[string]statusTheme{
+	"pending": {
+		label: "PENDING", marker: "○",
+		background: [3]uint8{88, 71, 122}, foreground: [3]uint8{240, 232, 255},
+		softBackground: [3]uint8{38, 32, 49},
+	},
+	"todo": {
+		label: "TO DO", marker: "◇",
+		background: [3]uint8{54, 82, 126}, foreground: [3]uint8{224, 238, 255},
+		softBackground: [3]uint8{28, 38, 55},
+	},
+	"in-progress": {
+		label: "IN PROGRESS", marker: "◐",
+		background: [3]uint8{111, 80, 35}, foreground: [3]uint8{255, 239, 204},
+		softBackground: [3]uint8{48, 38, 25},
+	},
+	"in-review": {
+		label: "IN REVIEW", marker: "◎",
+		background: [3]uint8{104, 61, 91}, foreground: [3]uint8{255, 226, 246},
+		softBackground: [3]uint8{47, 30, 43},
+	},
+	"done": {
+		label: "DONE", marker: "✓",
+		background: [3]uint8{43, 94, 77}, foreground: [3]uint8{220, 255, 240},
+		softBackground: [3]uint8{25, 45, 39},
+	},
+}
+
+var (
+	appBackground    = styled([3]uint8{16, 17, 24}, [3]uint8{221, 222, 232})
+	headerBackground = styled([3]uint8{25, 26, 37}, [3]uint8{244, 244, 250})
+	tabsBackground   = styled([3]uint8{20, 21, 30}, [3]uint8{183, 185, 201})
+	panelBackground  = styled([3]uint8{24, 25, 35}, [3]uint8{221, 222, 232})
+	mutedStyle       = styled([3]uint8{24, 25, 35}, [3]uint8{129, 132, 151})
+	footerBackground = styled([3]uint8{28, 29, 41}, [3]uint8{176, 179, 197})
+	errorBackground  = styled([3]uint8{79, 34, 45}, [3]uint8{255, 221, 226}, tui.Bold)
+	selectedCard     = styled([3]uint8{53, 54, 75}, [3]uint8{255, 255, 255}, tui.Bold)
+	pressedCard      = styled([3]uint8{72, 73, 99}, [3]uint8{255, 255, 255}, tui.Bold)
+)
 
 func (m *boardModel) initialize() {
 	if m.initialized {
@@ -114,70 +163,267 @@ func (m *boardModel) Update(ev sdk.Event) {
 
 func (m *boardModel) View() tui.Component {
 	m.initialize()
+
 	root := components.NewDiv()
 	root.SetDirection(tui.Column)
 	root.SetSize(tui.Grow, tui.Grow)
-	root.AppendChild(components.NewText("Agentboard · ←/→ boards · ↑/↓ tasks · Enter owner transition · q quit"))
+	root.SetStyle(appBackground)
+	root.AppendChild(m.header())
+
 	if m.err != "" {
-		root.AppendChild(components.NewText("Error: " + m.err))
+		root.AppendChild(banner("!  "+m.err, errorBackground))
 	}
 	if len(m.boards) == 0 {
-		root.AppendChild(components.NewText("No accessible board"))
+		root.AppendChild(emptyWorkspace())
+		root.AppendChild(m.footer())
 		return root
 	}
 
+	root.AppendChild(m.boardPicker())
+	root.AppendChild(m.boardSummary())
+	root.AppendChild(m.boardColumns())
+	root.AppendChild(m.footer())
+	return root
+}
+
+func (m *boardModel) header() tui.Component {
+	header := components.NewDiv()
+	header.SetDirection(tui.Row)
+	header.SetSize(tui.Grow, tui.Px(2))
+	header.SetPadding(tui.Padding{Left: tui.Px(2), Right: tui.Px(2)})
+	header.SetStyle(headerBackground)
+
+	brand := fixedBox(tui.Px(25), tui.Grow, headerBackground)
+	brand.AppendChild(text("◆  AGENTBOARD\nworkflow capability demo", headerBackground, components.AlignLeft))
+	header.AppendChild(brand)
+	header.AppendChild(spacer(tui.Px(1), tui.Grow, headerBackground))
+
+	modeLabel, modeDetail := "MEMBER MODE", "read and move your tasks"
+	if m.identity.OwnsApp {
+		modeLabel, modeDetail = "OWNER MODE", "review gates enabled"
+	}
+	modeStyle := styled([3]uint8{25, 26, 37}, [3]uint8{151, 154, 177}, tui.Bold)
+	mode := fixedBox(tui.Grow, tui.Grow, modeStyle)
+	mode.AppendChild(text(modeLabel+"\n"+modeDetail, modeStyle, components.AlignRight))
+	header.AppendChild(mode)
+	return header
+}
+
+func (m *boardModel) boardPicker() tui.Component {
 	picker := components.NewDiv()
 	picker.SetDirection(tui.Row)
-	picker.SetSize(tui.Grow, tui.Px(3))
+	picker.SetSize(tui.Grow, tui.Px(2))
+	picker.SetPadding(tui.Padding{Left: tui.Px(2), Right: tui.Px(2)})
+	picker.SetStyle(tabsBackground)
+
 	for index, board := range m.boards {
-		index, board := index, board
+		index := index
 		label := board.Name
-		if index == m.selected {
-			label = "[" + label + "]"
+		if board.Type == "project" {
+			label = "# " + label
+		} else {
+			label = "⌂ " + label
 		}
 		button := components.NewButton(label)
+		button.SetStyles(
+			styled([3]uint8{30, 31, 43}, [3]uint8{166, 169, 189}),
+			styled([3]uint8{74, 65, 113}, [3]uint8{255, 255, 255}, tui.Bold),
+			styled([3]uint8{91, 79, 139}, [3]uint8{255, 255, 255}, tui.Bold),
+		)
+		button.SetFocused(index == m.selected)
 		button.OnClick = func() { m.selectBoard(index) }
-		picker.AppendChild(button)
-	}
-	root.AppendChild(picker)
 
+		width := utf8.RuneCountInString(label) + 4
+		wrapper := fixedBox(tui.Px(width), tui.Grow, tabsBackground)
+		wrapper.AppendChild(button)
+		picker.AppendChild(wrapper)
+		picker.AppendChild(spacer(tui.Px(1), tui.Grow, tabsBackground))
+	}
+	picker.AppendChild(spacer(tui.Grow, tui.Grow, tabsBackground))
+	return picker
+}
+
+func (m *boardModel) boardSummary() tui.Component {
 	board := m.boards[m.selected]
-	meta := fmt.Sprintf("%s board id=%s", board.Type, board.ID)
-	if board.Project != "" {
-		meta += " project=" + board.Project + " members=" + strings.Join(board.Members, ",")
-	}
-	root.AppendChild(components.NewText(meta))
+	summary := components.NewDiv()
+	summary.SetSize(tui.Grow, tui.Px(2))
+	summary.SetPadding(tui.Padding{Left: tui.Px(2), Right: tui.Px(2)})
+	summary.SetStyle(tabsBackground)
 
+	kind, detail := "PERSONAL BOARD", "private to your SSH identity"
+	if board.Type == "project" {
+		kind = "PROJECT  /  " + board.Project
+		detail = fmt.Sprintf("shared with %d member%s", len(board.Members), plural(len(board.Members)))
+	}
+	count := fmt.Sprintf("%d task%s", len(m.tasks), plural(len(m.tasks)))
+	content := fmt.Sprintf("%s  ·  %s\n%s  ·  live updates", kind, count, detail)
+	summary.AppendChild(text(content, styled([3]uint8{20, 21, 30}, [3]uint8{173, 176, 196}), components.AlignLeft))
+	return summary
+}
+
+func (m *boardModel) boardColumns() tui.Component {
 	columns := components.NewDiv()
 	columns.SetDirection(tui.Row)
 	columns.SetSize(tui.Grow, tui.Grow)
-	for _, status := range workflow {
-		column := components.NewDiv()
-		column.SetDirection(tui.Column)
-		column.SetSize(tui.Grow, tui.Grow)
-		column.AppendChild(components.NewText(strings.ToUpper(status)))
-		for index, task := range m.tasks {
-			if task.Status != status {
-				continue
-			}
-			label := fmt.Sprintf("%s %s", task.ID, task.Title)
-			if index == m.taskIndex {
-				label = "> " + label
-			}
-			if m.identity.OwnsApp && (task.Status == "pending" || task.Status == "in-review") {
-				index := index
-				button := components.NewButton(label)
-				button.OnClick = func() { m.ownerAdvance(index) }
-				column.AppendChild(button)
-			} else {
-				column.AppendChild(components.NewText(label))
-			}
+	columns.SetPadding(tui.Padding{Top: tui.Px(1), Bottom: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
+	columns.SetStyle(appBackground)
+
+	for statusIndex, status := range workflow {
+		if statusIndex > 0 {
+			columns.AppendChild(spacer(tui.Px(1), tui.Grow, appBackground))
 		}
-		columns.AppendChild(column)
+		columns.AppendChild(m.taskColumn(status))
 	}
-	root.AppendChild(columns)
+	return columns
+}
+
+func (m *boardModel) taskColumn(status string) tui.Component {
+	theme := statusThemes[status]
+	tasks := make([]int, 0)
+	for index := range m.tasks {
+		if m.tasks[index].Status == status {
+			tasks = append(tasks, index)
+		}
+	}
+
+	column := components.NewDiv()
+	column.SetDirection(tui.Column)
+	column.SetSize(tui.Grow, tui.Grow)
+	column.SetStyle(panelBackground)
+
+	headerStyle := styled(theme.background, theme.foreground, tui.Bold)
+	header := fixedBox(tui.Grow, tui.Px(1), headerStyle)
+	header.SetPadding(tui.Padding{Left: tui.Px(1), Right: tui.Px(1)})
+	header.AppendChild(text(fmt.Sprintf("%s  %s  %d", theme.marker, theme.label, len(tasks)), headerStyle, components.AlignLeft))
+	column.AppendChild(header)
+
+	if len(tasks) == 0 {
+		empty := fixedBox(tui.Grow, tui.Grow, mutedStyle)
+		empty.AppendChild(text("— empty", mutedStyle, components.AlignCenter))
+		column.AppendChild(empty)
+		return column
+	}
+
+	for position, index := range tasks {
+		if position > 0 {
+			column.AppendChild(spacer(tui.Grow, tui.Px(1), panelBackground))
+		}
+		column.AppendChild(m.taskCard(index, theme))
+	}
+	column.AppendChild(spacer(tui.Grow, tui.Grow, panelBackground))
+	return column
+}
+
+func (m *boardModel) taskCard(index int, theme statusTheme) tui.Component {
+	task := m.tasks[index]
+	selected := index == m.taskIndex
+	normal := styled(theme.softBackground, [3]uint8{214, 216, 227})
+	label := fmt.Sprintf("%s  ·  r%d\n%s", shortTaskID(task.ID), task.Revision, task.Title)
+
+	card := fixedBox(tui.Grow, tui.Px(3), normal)
+	if selected {
+		card.SetStyle(selectedCard)
+		label = "◆ " + label
+	}
+	card.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(1), Right: tui.Px(1)})
+
+	ownerAction := m.identity.OwnsApp && (task.Status == "pending" || task.Status == "in-review")
+	if ownerAction {
+		buttonLabel := fmt.Sprintf("%s  →  %s", shortTaskID(task.ID), task.Title)
+		if selected {
+			buttonLabel = "◆ " + buttonLabel
+		}
+		button := components.NewButton(buttonLabel)
+		button.SetStyles(normal, selectedCard, pressedCard)
+		button.SetFocused(selected)
+		button.OnClick = func() { m.ownerAdvance(index) }
+		card.SetPadding(tui.Padding{})
+		card.AppendChild(button)
+		return card
+	}
+
+	style := normal
+	if selected {
+		style = selectedCard
+	}
+	card.AppendChild(text(label, style, components.AlignLeft))
+	return card
+}
+
+func (m *boardModel) footer() tui.Component {
+	footer := components.NewDiv()
+	footer.SetDirection(tui.Row)
+	footer.SetSize(tui.Grow, tui.Px(2))
+	footer.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
+	footer.SetStyle(footerBackground)
+
+	context := "MEMBER  ·  task moves are available through actions"
+	hints := "←/→ board  ↑/↓ task  q quit"
 	if m.identity.OwnsApp {
-		root.AppendChild(components.NewText(`Members: ssh cein/agentboard@plumtree.dev 'action add_project_member {"project":"slug","identity":"SHA256:..."}'`))
+		context = "OWNER  ·  Enter advances pending and review gates"
+		hints = "←/→ board  ↑/↓ task  ↵ move  q quit"
 	}
-	return root
+	left := fixedBox(tui.Grow, tui.Grow, footerBackground)
+	left.AppendChild(text(context, footerBackground, components.AlignLeft))
+	footer.AppendChild(left)
+	right := fixedBox(tui.Px(36), tui.Grow, footerBackground)
+	right.AppendChild(text(hints, footerBackground, components.AlignRight))
+	footer.AppendChild(right)
+	return footer
+}
+
+func emptyWorkspace() tui.Component {
+	empty := fixedBox(tui.Grow, tui.Grow, panelBackground)
+	empty.SetPadding(tui.Padding{Top: tui.Px(3), Left: tui.Px(4), Right: tui.Px(4)})
+	empty.AppendChild(text("NO BOARDS YET\n\nCreate a personal or project board with an Agentboard action.", mutedStyle, components.AlignCenter))
+	return empty
+}
+
+func banner(content string, style tui.Style) tui.Component {
+	box := fixedBox(tui.Grow, tui.Px(2), style)
+	box.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
+	box.AppendChild(text(content, style, components.AlignLeft))
+	return box
+}
+
+func fixedBox(width, height tui.Unit, style tui.Style) *components.Div {
+	box := components.NewDiv()
+	box.SetSize(width, height)
+	box.SetStyle(style)
+	return box
+}
+
+func spacer(width, height tui.Unit, style tui.Style) tui.Component {
+	return fixedBox(width, height, style)
+}
+
+func text(content string, style tui.Style, align components.Align) *components.Text {
+	label := components.NewText(content)
+	label.SetStyle(style)
+	label.SetAlign(align)
+	return label
+}
+
+func styled(background, foreground [3]uint8, decorations ...tui.TextDecoration) tui.Style {
+	var style tui.Style
+	style.SetBackground(background[0], background[1], background[2])
+	style.SetForeground(foreground[0], foreground[1], foreground[2])
+	for _, decoration := range decorations {
+		style.AddTextDecoration(decoration)
+	}
+	return style
+}
+
+func shortTaskID(id string) string {
+	if suffix := strings.TrimPrefix(id, "task-"); suffix != id {
+		return "#" + suffix
+	}
+	return id
+}
+
+func plural(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
