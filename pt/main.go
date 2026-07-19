@@ -51,7 +51,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "pt:", err)
+		fmt.Fprintln(os.Stderr, "pt:", terminalSafeText(err.Error()))
 		os.Exit(1)
 	}
 }

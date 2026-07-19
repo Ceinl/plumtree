@@ -2,10 +2,13 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -27,6 +30,11 @@ type Store interface {
 	Set(key string, value []byte) error
 	// Delete removes key. Deleting a missing key is not an error.
 	Delete(key string) error
+	// List returns at most limit matching keys in lexicographic order.
+	List(prefix string, limit int) ([]string, error)
+	// CompareAndSwap atomically stores value when the current value hash equals
+	// expected. The zero hash means the key must be absent.
+	CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error
 }
 
 // Capabilities are the host services exposed to a guest for one session. The
@@ -57,6 +65,9 @@ type Capabilities struct {
 // ErrQuota reports that a Set would exceed the store's aggregate key or byte
 // quota. The host maps it to abi.KVErrQuota.
 var ErrQuota = errors.New("kv: store quota exceeded")
+
+// ErrConflict reports a failed conditional write. State is unchanged.
+var ErrConflict = errors.New("kv: compare-and-swap conflict")
 
 // Default per-app KV quotas used by the dev host. 0 means unlimited.
 const (
@@ -153,6 +164,74 @@ func registerKV(b wazero.HostModuleBuilder, kv Store) wazero.HostModuleBuilder {
 		}).
 		Export("kv_delete")
 
+	b = b.NewFunctionBuilder().
+		WithFunc(func(_ context.Context, m api.Module, prefixPtr, prefixLen, limit, outPtr, outCap int32) int32 {
+			if kv == nil {
+				return abi.KVErrInternal
+			}
+			if prefixLen < 0 || prefixLen > abi.KVMaxKey || limit < 1 || limit > abi.KVMaxList || outCap < 0 {
+				return abi.KVErrTooLarge
+			}
+			var prefix []byte
+			if prefixLen > 0 {
+				var ok bool
+				prefix, ok = m.Memory().Read(uint32(prefixPtr), uint32(prefixLen))
+				if !ok {
+					return abi.KVErrInternal
+				}
+			}
+			keys, err := kv.List(string(prefix), int(limit))
+			if err != nil || len(keys) > int(limit) || len(keys) > abi.KVMaxList {
+				return abi.KVErrInternal
+			}
+			raw := abi.EncodeKVList(keys)
+			n := int32(len(raw))
+			if n > outCap {
+				return n
+			}
+			if n > 0 && !m.Memory().Write(uint32(outPtr), raw) {
+				return abi.KVErrInternal
+			}
+			return n
+		}).
+		Export("kv_list")
+
+	b = b.NewFunctionBuilder().
+		WithFunc(func(_ context.Context, m api.Module, keyPtr, keyLen, expectedPtr, valPtr, valLen int32) int32 {
+			if kv == nil {
+				return abi.KVErrInternal
+			}
+			key, code := readKey(m, keyPtr, keyLen)
+			if key == nil {
+				return code
+			}
+			if valLen < 0 || valLen > abi.KVMaxValue {
+				return abi.KVErrTooLarge
+			}
+			expectedRaw, ok := m.Memory().Read(uint32(expectedPtr), abi.KVHashSize)
+			if !ok {
+				return abi.KVErrInternal
+			}
+			valueRaw, ok := m.Memory().Read(uint32(valPtr), uint32(valLen))
+			if !ok {
+				return abi.KVErrInternal
+			}
+			var expected [sha256.Size]byte
+			copy(expected[:], expectedRaw)
+			err := kv.CompareAndSwap(string(key), expected, append([]byte(nil), valueRaw...))
+			switch {
+			case err == nil:
+				return abi.KVOk
+			case errors.Is(err, ErrConflict):
+				return abi.KVErrConflict
+			case errors.Is(err, ErrQuota):
+				return abi.KVErrQuota
+			default:
+				return abi.KVErrInternal
+			}
+		}).
+		Export("kv_compare_and_swap")
+
 	return b
 }
 
@@ -208,6 +287,55 @@ func (s *MemStore) Delete(key string) error {
 		s.bytes -= len(key) + len(v)
 		delete(s.m, key)
 	}
+	return nil
+}
+
+func (s *MemStore) List(prefix string, limit int) ([]string, error) {
+	if limit < 1 || limit > abi.KVMaxList {
+		return nil, errors.New("kv: invalid list limit")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([]string, 0, min(limit, len(s.m)))
+	for key := range s.m {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, nil
+}
+
+func (s *MemStore) CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compareAndSwapLocked(key, expected, value)
+}
+
+func (s *MemStore) compareAndSwapLocked(key string, expected [sha256.Size]byte, value []byte) error {
+	previous, existed := s.m[key]
+	var actual [sha256.Size]byte
+	if existed {
+		actual = sha256.Sum256(previous)
+	}
+	if actual != expected {
+		return ErrConflict
+	}
+	newBytes := s.bytes + len(value) - len(previous)
+	if !existed {
+		newBytes += len(key)
+		if s.maxKeys > 0 && len(s.m)+1 > s.maxKeys {
+			return ErrQuota
+		}
+	}
+	if s.maxBytes > 0 && newBytes > s.maxBytes {
+		return ErrQuota
+	}
+	s.m[key] = append([]byte(nil), value...)
+	s.bytes = newBytes
 	return nil
 }
 
@@ -305,6 +433,30 @@ func (s *FileStore) Delete(key string) error {
 	s.bytes -= len(key) + len(previous)
 	if err := s.persistLocked(); err != nil {
 		s.m[key] = previous
+		s.bytes = previousBytes
+		return err
+	}
+	return nil
+}
+
+func (s *FileStore) CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	s.txnMu.Lock()
+	defer s.txnMu.Unlock()
+	s.MemStore.mu.Lock()
+	defer s.MemStore.mu.Unlock()
+
+	previous, existed := s.m[key]
+	previousCopy := append([]byte(nil), previous...)
+	previousBytes := s.bytes
+	if err := s.compareAndSwapLocked(key, expected, value); err != nil {
+		return err
+	}
+	if err := s.persistLocked(); err != nil {
+		if existed {
+			s.m[key] = previousCopy
+		} else {
+			delete(s.m, key)
+		}
 		s.bytes = previousBytes
 		return err
 	}

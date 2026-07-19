@@ -214,10 +214,11 @@ env/secrets, and gated fetch — is wired end to end on a shared host-import +
 `ptr/len` ABI, with native + `wasip1` builds from one source and e2e tests that
 build the real WASM guest.
 
-Production hardening is in place: out-of-process runner isolation, durable
-artifact storage, an out-of-process build worker, deploy-rate limiting, an
-anonymous preview mode, and the SSH gateway extracted into its own deployable
-binary.
+Production hardening is in place: hostile WASM runs behind an authenticated
+Unix socket in a separate networkless runner container, with a disposable
+worker process per session. Durable artifact storage, an isolated build worker,
+deploy-rate limiting, anonymous preview mode, and a separate SSH gateway are
+also included.
 
 **Next up:** moderation & per-author quotas at scale, richer scoped storage
 (`ctx.DB`), and content-addressed artifact caching on the gateway.

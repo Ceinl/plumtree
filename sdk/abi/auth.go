@@ -22,7 +22,17 @@ const (
 type Identity struct {
 	User          string
 	Authenticated bool
+	Kind          IdentityKind
+	OwnsApp       bool
 }
+
+type IdentityKind uint8
+
+const (
+	IdentityUnknown IdentityKind = iota
+	IdentitySSHKey
+	IdentityAnonymous
+)
 
 // EncodeIdentity serializes an Identity. Layout (LE):
 //
@@ -36,6 +46,10 @@ func EncodeIdentity(id Identity) []byte {
 	if id.Authenticated {
 		b[0] = 1
 	}
+	if id.OwnsApp {
+		b[0] |= 1 << 1
+	}
+	b[0] |= byte(id.Kind&0x03) << 2
 	binary.LittleEndian.PutUint16(b[1:3], uint16(len(u)))
 	copy(b[3:], u)
 	return b
@@ -50,8 +64,13 @@ func DecodeIdentity(b []byte) (Identity, error) {
 	if len(b) < 3+ulen {
 		return Identity{}, ErrShort
 	}
+	if len(b) > 3+ulen {
+		return Identity{}, ErrSize
+	}
 	return Identity{
 		Authenticated: b[0]&1 != 0,
+		OwnsApp:       b[0]&(1<<1) != 0,
+		Kind:          IdentityKind((b[0] >> 2) & 0x03),
 		User:          string(b[3 : 3+ulen]),
 	}, nil
 }

@@ -15,6 +15,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -23,12 +24,13 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 
+	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
-	"github.com/Ceinl/plumtree/runner"
 )
 
 // Server serves one app over SSH.
@@ -37,7 +39,7 @@ type Server struct {
 	Runner  *runner.Runner
 	Limits  runner.Limits
 	Caps    runner.Capabilities // host capabilities shared across all sessions
-	AppType string // "tui" or "cli"
+	AppType string              // "tui" or "cli"
 	AppName string
 	MaxFPS  int
 	Logf    func(format string, args ...any)
@@ -147,19 +149,40 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				w, h = int(p.Columns), int(p.Rows)
 				mu.Unlock()
 				select {
-				case winch <- syscall.SIGWINCH:
+				// TTYSource treats this channel as a resize notification; the
+				// concrete signal value is irrelevant. os.Interrupt keeps this
+				// development server portable to Windows as well.
+				case winch <- os.Interrupt:
 				default:
 				}
 			}
 
 		case "shell", "exec":
+			var args []string
+			if req.Type == "exec" {
+				var payload execRequest
+				if len(req.Payload) > 4+abi.ActionMaxCommand || ssh.Unmarshal(req.Payload, &payload) != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				var err error
+				args, err = gatewayapi.ParseExecCommand(payload.Command)
+				if err != nil {
+					req.Reply(true, nil)
+					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					ch.Close()
+					cancel()
+					return
+				}
+			}
 			req.Reply(true, nil)
 			if started {
 				continue
 			}
 			started = true
 			go func() {
-				s.runSession(ctx, ch, size, winch)
+				s.runSessionArgs(ctx, ch, size, winch, args)
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 				ch.Close()
 				cancel()
 			}()
@@ -175,12 +198,21 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 }
 
 func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal) {
-	if s.AppType == "cli" {
-		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, s.Caps, nil, ch); err != nil {
+	s.runSessionArgs(ctx, ch, size, winch, nil)
+}
+
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) {
+	caps := s.Caps
+	// Server capabilities are shared by every development connection. Keep the
+	// guest-written goodbye message session-local so concurrent clients cannot
+	// race or inherit one another's message.
+	caps.Goodbye = new(string)
+	if s.AppType == "cli" || len(args) > 0 {
+		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch); err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
-		if s.Caps.Goodbye != nil && *s.Caps.Goodbye != "" {
-			fmt.Fprintf(ch, "\r\n%s\r\n", *s.Caps.Goodbye)
+		if *caps.Goodbye != "" && (len(args) == 0 || args[0] != abi.ActionArgPrefix) {
+			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
 		return
 	}
@@ -192,8 +224,14 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (in
 
 	// Set up the client's terminal (alt screen, hidden cursor) and tear it down
 	// afterward. Output is host-generated; the guest never writes ANSI.
-	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
-	defer io.WriteString(ch, terminal.SHOW_CURSOR+terminal.CLOSE_ALT)
+	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
+	defer func() {
+		msg := terminal.DISABLE_MOUSE + terminal.SHOW_CURSOR + terminal.CLOSE_ALT
+		if *caps.Goodbye != "" {
+			msg += "\r\n" + runner.SanitizeTerminalText(*caps.Goodbye) + "\r\n"
+		}
+		_, _ = io.WriteString(ch, msg)
+	}()
 
 	src := &runner.TTYSource{
 		Keys:    keyboard.ListenReader(ctx, ch),
@@ -204,7 +242,7 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (in
 	sink := runner.NewTTYSinkWriter(w, h, s.MaxFPS, ch)
 
 	var logs bytes.Buffer
-	err := s.Runner.Run(ctx, s.Wasm, s.Limits, s.Caps, src, sink, &logs)
+	err := s.Runner.Run(ctx, s.Wasm, s.Limits, caps, src, sink, &logs)
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
 		// Clean exit or normal client disconnect — nothing to report.
@@ -258,6 +296,8 @@ type ptyRequest struct {
 	WidthPx, HeightPx uint32
 	Modes             string
 }
+
+type execRequest struct{ Command string }
 
 // windowChange is the SSH "window-change" payload.
 type windowChange struct {

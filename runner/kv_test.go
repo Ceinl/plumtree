@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"os"
 	"strconv"
@@ -83,6 +84,46 @@ func TestMemStoreByteQuota(t *testing.T) {
 	}
 	if err := s.Set("longkey", []byte("xyz")); err != nil {
 		t.Fatalf("set after delete errored: %v", err)
+	}
+}
+
+func TestMemStoreListOrderedAndBounded(t *testing.T) {
+	s := NewMemStore(0, 0)
+	for _, key := range []string{"tasks/z", "other", "tasks/a", "tasks/m"} {
+		if err := s.Set(key, []byte(key)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys, err := s.List("tasks/", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(keys, ","); got != "tasks/a,tasks/m" {
+		t.Fatalf("List = %q", got)
+	}
+	if _, err := s.List("", abi.KVMaxList+1); err == nil {
+		t.Fatal("unbounded list accepted")
+	}
+}
+
+func TestMemStoreCompareAndSwap(t *testing.T) {
+	s := NewMemStore(1, 16)
+	var absent [sha256.Size]byte
+	if err := s.CompareAndSwap("k", absent, []byte("one")); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.CompareAndSwap("k", absent, []byte("stale")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale create err = %v", err)
+	}
+	if got, _, _ := s.Get("k"); string(got) != "one" {
+		t.Fatalf("stale CAS changed value to %q", got)
+	}
+	expected := sha256.Sum256([]byte("one"))
+	if err := s.CompareAndSwap("k", expected, []byte("two")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if err := s.CompareAndSwap("second", absent, []byte("x")); !errors.Is(err, ErrQuota) {
+		t.Fatalf("quota err = %v", err)
 	}
 }
 
@@ -198,6 +239,33 @@ func TestFileStoreDeleteRollsBackOnPersistenceFailure(t *testing.T) {
 	}
 }
 
+func TestFileStoreCASPersistsAndRollsBack(t *testing.T) {
+	path := t.TempDir() + "/kv.json"
+	s, err := NewFileStore(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var absent [sha256.Size]byte
+	if err := s.CompareAndSwap("key", absent, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("persist failed")
+	s.writeFile = func(string, []byte, os.FileMode) error { return injected }
+	if err := s.CompareAndSwap("key", sha256.Sum256([]byte("old")), []byte("new")); !errors.Is(err, injected) {
+		t.Fatalf("CAS err = %v", err)
+	}
+	if got, _, _ := s.Get("key"); string(got) != "old" {
+		t.Fatalf("rollback value = %q", got)
+	}
+	reloaded, err := NewFileStore(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := reloaded.Get("key"); string(got) != "old" {
+		t.Fatalf("persisted value = %q", got)
+	}
+}
+
 // TestKVHostFunctions drives a raw-wasmimport guest through the KV host imports,
 // covering set, get, the kv_get grow-and-retry size protocol, not-found, and
 // delete.
@@ -218,6 +286,10 @@ func TestKVHostFunctions(t *testing.T) {
 		"miss=-1",            // KVErrNotFound
 		"del=0",              // KVOk
 		"after=-1",           // gone after delete
+		"cas-create=0",
+		"cas-stale=-5",
+		"cas-replace=0",
+		"list=created,greeting",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q; full output:\n%s", want, got)

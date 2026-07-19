@@ -17,9 +17,13 @@ import (
 // authors can `go run .` their app. The hosted build (GOOS=wasip1) replaces
 // this with the WASM-guest ABI loop; app code is unchanged.
 func RunTUI(m Model, _ Meta) {
-	a := app.New(&modelRoot{m: m})
+	aRoot := &modelRoot{m: m}
+	a := app.New(aRoot)
 	a.OnKey = func(ev keyboard.Event) bool {
 		if e, ok := eventFromKeyboard(ev); ok {
+			if mouse, ok := e.(MouseMsg); ok {
+				aRoot.DispatchMouse(mouse)
+			}
 			m.Update(e)
 		}
 		return quitRequested
@@ -38,8 +42,9 @@ func RunTUI(m Model, _ Meta) {
 // modelRoot adapts a Model to a layout.Component: each frame the runtime calls
 // Layout (where we rebuild the view from current state) then Render.
 type modelRoot struct {
-	m   Model
-	cur layout.Component
+	m     Model
+	cur   layout.Component
+	mouse mouseDispatcher
 }
 
 func (r *modelRoot) GetStyle() layout.Style     { return layout.Style{} }
@@ -59,8 +64,32 @@ func (r *modelRoot) Render(s *screen.Screen) {
 	}
 }
 
+func (r *modelRoot) DispatchMouse(msg MouseMsg) bool {
+	if handler, ok := r.cur.(layout.MouseHandler); ok {
+		return r.mouse.Dispatch(handler, msg)
+	}
+	return r.mouse.Dispatch(nil, msg)
+}
+
 // eventFromKeyboard maps a runtime keyboard event to an SDK event.
 func eventFromKeyboard(ev keyboard.Event) (Event, bool) {
+	if ev.Mouse {
+		action := map[keyboard.EventType]MouseAction{
+			keyboard.KeyMouseLeftDown:  MouseDown,
+			keyboard.KeyMouseLeftUp:    MouseUp,
+			keyboard.KeyMouseLeftDrag:  MouseDrag,
+			keyboard.KeyMouseWheelUp:   MouseWheelUp,
+			keyboard.KeyMouseWheelDown: MouseWheelDown,
+		}[ev.Type]
+		if action == 0 {
+			return nil, false
+		}
+		button := MouseButtonNone
+		if ev.Type == keyboard.KeyMouseLeftDown || ev.Type == keyboard.KeyMouseLeftUp || ev.Type == keyboard.KeyMouseLeftDrag {
+			button = MouseButtonLeft
+		}
+		return MouseMsg{X: ev.MouseX, Y: ev.MouseY, Button: button, Action: action}, true
+	}
 	m := KeyMsg{Shift: ev.Shift, Ctrl: ev.Ctrl, Alt: ev.Alt, Cmd: ev.Cmd}
 	if ev.Type == keyboard.KeyRune {
 		m.Key = Key(ev.Ch)

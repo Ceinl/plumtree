@@ -147,7 +147,10 @@ func cmdClaim(args []string) error {
 	if link == "" {
 		return errors.New("deploy claim metadata is missing a claim URL")
 	}
-	fmt.Printf("Claim URL: %s\n", link)
+	if err := validateBrowserURL(link); err != nil {
+		return err
+	}
+	fmt.Printf("Claim URL: %s\n", terminalSafeText(link))
 	if err := openURLInBrowser(link); err != nil {
 		fmt.Fprintf(os.Stderr, "Could not open browser: %v\n", err)
 		return nil
@@ -207,7 +210,7 @@ func cmdLogs(args []string) error {
 		}
 		fmt.Printf("%s  deploy=%s  started=%s  ended=%s\n", session.ID, session.DeployID, session.StartedAt, ended)
 		if session.Log != "" {
-			for _, line := range strings.Split(strings.TrimRight(session.Log, "\n"), "\n") {
+			for _, line := range strings.Split(strings.TrimRight(terminalSafeText(session.Log), "\n"), "\n") {
 				fmt.Printf("    %s\n", line)
 			}
 			if session.LogTruncated {

@@ -243,3 +243,38 @@ func TestExtractEnforcesFileCount(t *testing.T) {
 		t.Fatal("expected file-count rejection")
 	}
 }
+
+func TestExtractRejectsUnexpectedAndDuplicatePaths(t *testing.T) {
+	for name, entries := range map[string][]string{
+		"unexpected root": {"secrets.txt"},
+		"file as dir":     {"go.mod/child"},
+		"duplicate":       {"app/main.go", "app/main.go"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tw := tar.NewWriter(&buf)
+			for _, entry := range entries {
+				_ = tw.WriteHeader(&tar.Header{Name: entry, Mode: 0o600, Size: 1})
+				_, _ = tw.Write([]byte("x"))
+			}
+			_ = tw.Close()
+			if _, err := extractSource(buf.Bytes(), t.TempDir(), 1<<20, 100); err == nil {
+				t.Fatal("malformed archive was accepted")
+			}
+		})
+	}
+}
+
+func TestPackSourceRejectsTopLevelSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.mod")
+	if err := os.WriteFile(target, []byte("module example.com/app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PackSource(dir); err == nil {
+		t.Fatal("top-level source symlink was accepted")
+	}
+}

@@ -1,8 +1,13 @@
 package runner
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 // The start payload must round-trip the limits, appType, capability mask, and
@@ -40,6 +45,32 @@ func TestEncodeDecodeStartRoundTrip(t *testing.T) {
 	}
 	if string(gotWasm) != string(wasm) {
 		t.Errorf("wasm = %x, want %x", gotWasm, wasm)
+	}
+}
+
+func TestReadWorkerMessageRejectsOperationOversizeBeforePayload(t *testing.T) {
+	var header [5]byte
+	header[0] = byte(opKVGet)
+	binary.LittleEndian.PutUint32(header[1:], abi.KVMaxKey+1)
+	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
+		t.Fatalf("oversized key error = %v, want protocol error", err)
+	}
+
+	header[0] = 0xff
+	binary.LittleEndian.PutUint32(header[1:], 1)
+	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
+		t.Fatalf("unknown operation error = %v, want protocol error", err)
+	}
+}
+
+func TestEncodeDecodeDoneRoundTrip(t *testing.T) {
+	payload := encodeDone("guest failed", "thanks", []byte("logs"))
+	errText, goodbye, logs, ok := decodeDone(payload)
+	if !ok || errText != "guest failed" || goodbye != "thanks" || string(logs) != "logs" {
+		t.Fatalf("decodeDone = %q, %q, %q, %v", errText, goodbye, logs, ok)
+	}
+	if _, _, _, ok := decodeDone(payload[:len(payload)-1-len("thanks")]); ok {
+		t.Fatal("truncated done payload accepted")
 	}
 }
 

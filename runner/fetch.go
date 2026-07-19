@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"syscall"
@@ -65,6 +66,9 @@ func NewAllowlistFetcher(allow []string) *AllowlistFetcher {
 }
 
 func (f *AllowlistFetcher) Fetch(ctx context.Context, req abi.FetchRequest) (abi.FetchResponse, error) {
+	if len(req.Method) > abi.FetchMaxMethod || len(req.URL) > abi.FetchMaxURL || len(req.Body) > abi.FetchMaxBody {
+		return abi.FetchResponse{}, errBadRequest
+	}
 	u, err := url.Parse(req.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return abi.FetchResponse{}, errBadRequest
@@ -179,16 +183,42 @@ func (f *AllowlistFetcher) checkDialAddr(address string) error {
 // loopback, RFC1918/ULA private, link-local (covers 169.254.169.254 cloud
 // metadata), unspecified, or multicast.
 func isNonPublicIP(ip net.IP) bool {
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
 	}
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast()
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return true
+	}
+	// net.IP.IsPrivate intentionally covers only RFC1918 and ULA. Cloud and
+	// overlay networks also commonly use other IANA special-purpose ranges
+	// (especially 100.64.0.0/10), which must not become SSRF escape hatches.
+	for _, prefix := range nonPublicPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+var nonPublicPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"), // shared address space / CGNAT
+	netip.MustParsePrefix("192.0.0.0/24"),  // IETF protocol assignments
+	netip.MustParsePrefix("192.0.2.0/24"),  // documentation
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"), // IPv4/IPv6 translation
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),      // discard-only
+	netip.MustParsePrefix("2001::/32"),     // Teredo
+	netip.MustParsePrefix("2001:2::/48"),   // benchmarking
+	netip.MustParsePrefix("2001:db8::/32"), // documentation
+	netip.MustParsePrefix("2002::/16"),     // 6to4
 }
 
 // allowed reports whether host is permitted by the allowlist.
@@ -215,7 +245,7 @@ func registerFetch(b wazero.HostModuleBuilder, fetch Fetcher) wazero.HostModuleB
 			if fetch == nil {
 				return abi.FetchErrUnavail
 			}
-			if reqLen <= 0 {
+			if reqLen <= 0 || reqLen > maxEncodedFetch {
 				return abi.FetchErrInternal
 			}
 			raw, ok := m.Memory().Read(uint32(reqPtr), uint32(reqLen))
@@ -226,7 +256,7 @@ func registerFetch(b wazero.HostModuleBuilder, fetch Fetcher) wazero.HostModuleB
 			if err != nil {
 				return abi.FetchErrInternal
 			}
-			if len(req.URL) > abi.FetchMaxURL || len(req.Body) > abi.FetchMaxBody {
+			if len(req.Method) > abi.FetchMaxMethod || len(req.URL) > abi.FetchMaxURL || len(req.Body) > abi.FetchMaxBody {
 				return abi.FetchErrTooLarge
 			}
 			resp, err := fetch.Fetch(ctx, req)

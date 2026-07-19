@@ -39,6 +39,8 @@ const (
 	opFetch   op = 12
 	opDone    op = 13 // worker -> parent: session finished (err + logs)
 	opOutput  op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
+	opKVList  op = 15
+	opKVCAS   op = 16
 )
 
 // maxFrame bounds a single protocol message, guarding against a corrupt length.
@@ -48,6 +50,9 @@ var errProtocol = errors.New("runner: protocol error")
 
 // writeMsg writes one framed message: [op][u32 len][payload].
 func writeMsg(w io.Writer, o op, payload []byte) error {
+	if len(payload) > maxFrame {
+		return errProtocol
+	}
 	var hdr [5]byte
 	hdr[0] = byte(o)
 	binary.LittleEndian.PutUint32(hdr[1:], uint32(len(payload)))
@@ -64,19 +69,28 @@ func writeMsg(w io.Writer, o op, payload []byte) error {
 
 // readMsg reads one framed message.
 func readMsg(r io.Reader) (op, []byte, error) {
+	return readMsgBounded(r, func(op) uint32 { return maxFrame })
+}
+
+// readMsgBounded rejects an operation-specific oversized message before
+// allocating its payload. The gateway uses this for worker-originated traffic:
+// a compromised worker is untrusted even though a normal guest can only emit
+// protocol messages through size-checked host functions.
+func readMsgBounded(r io.Reader, maxFor func(op) uint32) (op, []byte, error) {
 	var hdr [5]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return 0, nil, err
 	}
+	o := op(hdr[0])
 	n := binary.LittleEndian.Uint32(hdr[1:])
-	if n > maxFrame {
+	if n > maxFrame || n > maxFor(o) {
 		return 0, nil, errProtocol
 	}
 	payload := make([]byte, n)
 	if _, err := io.ReadFull(r, payload); err != nil {
 		return 0, nil, err
 	}
-	return op(hdr[0]), payload, nil
+	return o, payload, nil
 }
 
 // Capability-presence bits in the start payload. The parent sets a bit for each
@@ -194,8 +208,40 @@ func decodeKeyValue(b []byte) (key string, value []byte, ok bool) {
 	return string(b[2 : 2+n]), b[2+n:], true
 }
 
-// donePayload encodes the terminal result: [u32 errLen][err][u32 goodbyeLen][goodbye][logs].
-func encodeDone(errStr string, goodbye string, logs []byte) []byte {
+func encodeKVListRequest(prefix string, limit int) []byte {
+	b := binary.LittleEndian.AppendUint16(nil, uint16(limit))
+	return append(b, prefix...)
+}
+
+func decodeKVListRequest(b []byte) (prefix string, limit int, ok bool) {
+	if len(b) < 2 {
+		return "", 0, false
+	}
+	return string(b[2:]), int(binary.LittleEndian.Uint16(b[:2])), true
+}
+
+func encodeKVCAS(key string, expected [32]byte, value []byte) []byte {
+	b := binary.LittleEndian.AppendUint16(nil, uint16(len(key)))
+	b = append(b, key...)
+	b = append(b, expected[:]...)
+	return append(b, value...)
+}
+
+func decodeKVCAS(b []byte) (key string, expected [32]byte, value []byte, ok bool) {
+	if len(b) < 2 {
+		return "", expected, nil, false
+	}
+	n := int(binary.LittleEndian.Uint16(b[:2]))
+	if n == 0 || len(b) < 2+n+len(expected) {
+		return "", expected, nil, false
+	}
+	key = string(b[2 : 2+n])
+	copy(expected[:], b[2+n:2+n+len(expected)])
+	return key, expected, b[2+n+len(expected):], true
+}
+
+// donePayload encodes [u32 errLen][err][u32 goodbyeLen][goodbye][logs].
+func encodeDone(errStr, goodbye string, logs []byte) []byte {
 	b := make([]byte, 0, 8+len(errStr)+len(goodbye)+len(logs))
 	b = binary.LittleEndian.AppendUint32(b, uint32(len(errStr)))
 	b = append(b, errStr...)

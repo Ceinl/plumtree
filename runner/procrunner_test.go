@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"io"
+	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,16 @@ func buildWorker(t *testing.T) string {
 		t.Fatalf("build runner-worker failed (%v):\n%s", err, b)
 	}
 	return out
+}
+
+func shortUnixSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "pt-runner-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "broker.sock")
 }
 
 // End-to-end across a process boundary: the counter guest runs in a worker
@@ -50,6 +62,57 @@ func TestProcessRunnerCounter(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../sdk/examples/mousebutton")
+	var sink capture
+	pr := NewProcessRunner(worker)
+	if err := pr.Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !frameWith(sink.frames, "clicked=1 events=2") {
+		t.Fatalf("isolated hosted click missing; last frame:\n%s", frameText(sink.frames[len(sink.frames)-1]))
+	}
+}
+
+func TestProcessRunnerActionCapabilityParity(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../examples/agentboard/app")
+	store := NewMemStore(0, 0)
+	caps := Capabilities{
+		KV: store, Bus: NewMemBus(),
+		Auth: StaticAuth{Identity: Identity{User: "SHA256:owner-key-0123456789012345", Kind: IdentitySSHKey, OwnsApp: true, Authenticated: true}},
+	}
+	pr := NewProcessRunner(worker)
+	var created strings.Builder
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{abi.ActionArgPrefix, "create_project_board", `{"project":"runner","name":"Runner"}`}, &created); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(created.String(), `"ok":true`) {
+		t.Fatalf("create = %s", created.String())
+	}
+	var listed strings.Builder
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{abi.ActionArgPrefix, "list_boards", `{}`}, &listed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listed.String(), `"project":"runner"`) {
+		t.Fatalf("list = %s", listed.String())
+	}
+}
+
+func TestProcessRunnerGoodbyeCapabilityParity(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../_devtest/goodbye-cli/app")
+	goodbye := ""
+	pr := NewProcessRunner(worker)
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if goodbye != "Goodbye from goodbye-cli!" {
+		t.Fatalf("isolated goodbye = %q", goodbye)
+	}
+}
+
 // CLI mode carries guest arguments/output across the process boundary and
 // proxies capabilities just like the interactive mode.
 func TestProcessRunnerCLI(t *testing.T) {
@@ -62,10 +125,62 @@ func TestProcessRunnerCLI(t *testing.T) {
 	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, []string{"unused"}, &out); err != nil {
 		t.Fatalf("ProcessRunner.RunCLI: %v", err)
 	}
-	for _, want := range []string{"set=0", "get=11:hello world", "del=0"} {
+	for _, want := range []string{"set=0", "get=11:hello world", "cas-stale=-5", "list=created,greeting", "del=0"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q; full output:\n%s", want, out.String())
 		}
+	}
+}
+
+// The production path crosses a container boundary through a broker socket.
+// Exercise that transport end to end, including capability RPC, rather than
+// only testing the local subprocess path.
+func TestRemoteProcessRunnerCLI(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "testdata/kvguest", "GOWORK=off")
+	socket := shortUnixSocket(t)
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	broker := &Broker{WorkerPath: worker, Token: "runner-secret", MaxSessions: 2}
+	errCh := make(chan error, 1)
+	go func() { errCh <- broker.Serve(ctx, ln) }()
+
+	store := NewMemStore(0, 0)
+	var out strings.Builder
+	pr := NewRemoteProcessRunner("unix://"+socket, "runner-secret")
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, nil, &out); err != nil {
+		t.Fatalf("remote ProcessRunner.RunCLI: %v", err)
+	}
+	for _, want := range []string{"set=0", "get=11:hello world", "cas-stale=-5", "list=created,greeting", "del=0"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q; full output:\n%s", want, out.String())
+		}
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("broker shutdown: %v", err)
+	}
+}
+
+func TestRemoteProcessRunnerRejectsWrongToken(t *testing.T) {
+	worker := buildWorker(t)
+	socket := shortUnixSocket(t)
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go (&Broker{WorkerPath: worker, Token: "right", MaxSessions: 1}).Serve(ctx, ln)
+
+	pr := NewRemoteProcessRunner("unix://"+socket, "wrong")
+	err = pr.RunCLI(context.Background(), []byte("not reached"), DefaultLimits, Capabilities{}, nil, io.Discard)
+	if err == nil {
+		t.Fatal("wrong broker token was accepted")
 	}
 }
 
@@ -113,13 +228,13 @@ func TestProcessRunnerProxiesAllCapabilities(t *testing.T) {
 	}}
 	caps := Capabilities{
 		Bus:  bus,
-		Auth: StaticAuth{Identity: Identity{User: "alice"}},
+		Auth: StaticAuth{Identity: Identity{User: "alice", Kind: IdentitySSHKey, Authenticated: true, OwnsApp: true}},
 		Env:  MapEnv{"ROOM_NAME": "lobby"},
 	}
 	if err := pr.Run(context.Background(), wasm, DefaultLimits, caps, src, &sink, io.Discard); err != nil {
 		t.Fatalf("ProcessRunner.Run: %v", err)
 	}
-	for _, want := range []string{"hello", "messages: 1", "user: alice", "room: lobby"} {
+	for _, want := range []string{"hello", "messages: 1", "user: alice", "identity: ssh-key owner=true", "room: lobby"} {
 		if !frameWith(sink.frames, want) {
 			t.Fatalf("missing %q across the process boundary; last frame:\n%s",
 				want, frameText(sink.frames[len(sink.frames)-1]))

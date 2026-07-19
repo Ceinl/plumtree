@@ -55,7 +55,7 @@ var claimTmpl = template.Must(template.New("claim").Parse(`<!doctype html>
       <button type="submit">Save handle</button>
     </form>
   </main>
-  <script>
+  <script nonce="{{.CSPNonce}}">
     const deployID = {{.DeployID}};
     const claimToken = {{.ClaimToken}};
     const statusLabel = document.getElementById("status");

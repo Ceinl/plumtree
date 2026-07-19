@@ -30,9 +30,15 @@ type Server struct {
 	// Empty disables KV: apps still run but their storage is unavailable.
 	StateDir string
 	// RunnerWorker, when set, is the path to the runner-worker binary; all app
-	// sessions then run the WASM sandbox in a separate process isolated from the
-	// gateway. Empty runs the sandbox in-process (shared compile cache).
+	// sessions then run the WASM sandbox in a separate local process. This is a
+	// development fallback, not a native-RCE boundary: the process still shares
+	// the gateway's container and OS identity.
 	RunnerWorker string
+	// RunnerEndpoint and RunnerToken select the production runner broker. The
+	// broker lives in a separate networkless container and owns the disposable
+	// worker process, while this gateway retains credentials and capabilities.
+	RunnerEndpoint string
+	RunnerToken    string
 	// MaxConcurrentSessions caps how many sessions run on this gateway at once
 	// (the runner-wide concurrency quota). 0 means unlimited. Per-owner limits
 	// are enforced separately by the Backend's session accounting.
@@ -71,6 +77,12 @@ const (
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	if s.Backend == nil {
 		return errors.New("gateway: backend is required")
+	}
+	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
+		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
+	}
+	if s.RunnerEndpoint != "" && s.RunnerToken == "" {
+		return errors.New("gateway: runner token is required with runner endpoint")
 	}
 	if s.Runner == nil {
 		s.Runner = runner.New()
@@ -226,14 +238,14 @@ func (s *Server) identityFromConn(c *ssh.ServerConn) runner.Identity {
 			}
 			// Resolution failures fail closed. Possession of the key is proved,
 			// but the gateway must not assert that it belongs to a platform owner.
-			return runner.Identity{User: fp}
+			return runner.Identity{User: fp, Kind: runner.IdentitySSHKey}
 		}
 	}
 	sid := c.SessionID()
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
-	return runner.Identity{User: "anonymous:" + hex.EncodeToString(sid)}
+	return runner.Identity{User: "anonymous:" + hex.EncodeToString(sid), Kind: runner.IdentityAnonymous}
 }
 
 func HostFromListen(listenHost string) string {

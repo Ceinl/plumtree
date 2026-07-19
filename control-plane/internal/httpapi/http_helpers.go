@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -162,11 +163,34 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce, err := newCSPNonce()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create response nonce"})
+			return
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://shoo.dev 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://shoo.dev; img-src 'self' https: data:; base-uri 'none'; frame-ancestors 'none'")
-		next.ServeHTTP(w, r)
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://shoo.dev 'nonce-"+nonce+"'; style-src 'unsafe-inline'; connect-src 'self' https://shoo.dev; img-src 'self' https: data:; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'")
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), cspNonceKey{}, nonce)))
 	})
+}
+
+type cspNonceKey struct{}
+
+func newCSPNonce() (string, error) {
+	var raw [18]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	// URL-safe base64 is also an HTML-attribute-safe alphabet. Standard base64
+	// may contain '+', which html/template escapes and would make the nonce in
+	// the script tag differ from the CSP header.
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func cspNonce(ctx context.Context) string {
+	nonce, _ := ctx.Value(cspNonceKey{}).(string)
+	return nonce
 }
 
 func afterDeployClaimTTL(ttl time.Duration, fn func()) {

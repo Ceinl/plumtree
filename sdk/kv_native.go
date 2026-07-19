@@ -3,6 +3,9 @@
 package sdk
 
 import (
+	"crypto/sha256"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -47,5 +50,42 @@ func kvDelete(key string) error {
 	kvMu.Lock()
 	defer kvMu.Unlock()
 	delete(kvStore, key)
+	return nil
+}
+
+func kvList(prefix string, limit int) ([]string, error) {
+	if len(prefix) > abi.KVMaxKey || limit < 1 || limit > abi.KVMaxList {
+		return nil, ErrKVTooLarge
+	}
+	kvMu.RLock()
+	defer kvMu.RUnlock()
+	keys := make([]string, 0, min(limit, len(kvStore)))
+	for key := range kvStore {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, nil
+}
+
+func kvCompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	if len(key) == 0 || len(key) > abi.KVMaxKey || len(value) > abi.KVMaxValue {
+		return ErrKVTooLarge
+	}
+	kvMu.Lock()
+	defer kvMu.Unlock()
+	current, found := kvStore[key]
+	var actual [sha256.Size]byte
+	if found {
+		actual = sha256.Sum256(current)
+	}
+	if actual != expected {
+		return ErrKVConflict
+	}
+	kvStore[key] = append([]byte(nil), value...)
 	return nil
 }

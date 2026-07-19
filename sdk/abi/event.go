@@ -23,11 +23,21 @@ func EncodeEvent(e Event) []byte {
 	b[0] = magicEvent
 	b[1] = Version
 	b[2] = byte(e.Kind)
-	b[3] = byte(e.Key)
+	if e.Kind == KindMouse {
+		b[3] = byte(e.Button)
+	} else {
+		b[3] = byte(e.Key)
+	}
 	binary.LittleEndian.PutUint32(b[4:8], uint32(e.Ch))
-	b[8] = byte(e.Mods)
-	binary.LittleEndian.PutUint16(b[9:11], uint16(e.W))
-	binary.LittleEndian.PutUint16(b[11:13], uint16(e.H))
+	if e.Kind == KindMouse {
+		b[8] = byte(e.Action)
+		binary.LittleEndian.PutUint16(b[9:11], uint16(e.MouseX))
+		binary.LittleEndian.PutUint16(b[11:13], uint16(e.MouseY))
+	} else {
+		b[8] = byte(e.Mods)
+		binary.LittleEndian.PutUint16(b[9:11], uint16(e.W))
+		binary.LittleEndian.PutUint16(b[11:13], uint16(e.H))
+	}
 	if e.Kind == KindMessage {
 		off := EventLen
 		binary.LittleEndian.PutUint16(b[off:off+2], uint16(len(e.Topic)))
@@ -59,7 +69,17 @@ func DecodeEvent(b []byte) (Event, error) {
 		W:    int(binary.LittleEndian.Uint16(b[9:11])),
 		H:    int(binary.LittleEndian.Uint16(b[11:13])),
 	}
+	if e.Kind == KindMouse {
+		e.Button = MouseButton(b[3])
+		e.Action = MouseAction(b[8])
+		e.MouseX = int(binary.LittleEndian.Uint16(b[9:11]))
+		e.MouseY = int(binary.LittleEndian.Uint16(b[11:13]))
+		e.Key, e.Mods, e.W, e.H = 0, 0, 0, 0
+	}
 	if e.Kind != KindMessage {
+		if len(b) != EventLen {
+			return Event{}, ErrSize
+		}
 		return e, nil
 	}
 	off := EventLen
@@ -77,6 +97,9 @@ func DecodeEvent(b []byte) (Event, error) {
 	off += 4
 	if len(b) < off+dlen {
 		return Event{}, ErrShort
+	}
+	if len(b) > off+dlen {
+		return Event{}, ErrSize
 	}
 	e.Data = append([]byte(nil), b[off:off+dlen]...)
 	return e, nil

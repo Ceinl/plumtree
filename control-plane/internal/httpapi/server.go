@@ -139,5 +139,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = dashboardTmpl.Execute(w, struct {
 		AppOrigin string
-	}{AppOrigin: s.appOrigin})
+		CSPNonce  string
+	}{AppOrigin: s.appOrigin, CSPNonce: cspNonce(r.Context())})
 }

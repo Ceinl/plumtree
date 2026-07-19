@@ -87,9 +87,14 @@ func TestIsNonPublicIP(t *testing.T) {
 		"192.168.1.1":     true,  // RFC1918
 		"172.16.0.1":      true,  // RFC1918
 		"169.254.169.254": true,  // cloud metadata (link-local)
+		"100.64.0.1":      true,  // shared/overlay address space
+		"198.18.0.1":      true,  // benchmarking range
+		"203.0.113.1":     true,  // documentation/special-purpose
+		"240.0.0.1":       true,  // reserved
 		"0.0.0.0":         true,  // unspecified
 		"fc00::1":         true,  // ULA
 		"fe80::1":         true,  // link-local v6
+		"2001:db8::1":     true,  // documentation v6
 		"8.8.8.8":         false, // public
 		"1.1.1.1":         false, // public
 	}

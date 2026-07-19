@@ -26,9 +26,20 @@ func whoami() (Identity, error) {
 			if err != nil {
 				return Identity{}, ErrAuthUnavailable
 			}
-			return Identity{User: id.User, Authenticated: id.Authenticated}, nil
+			return Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindFromABI(id.Kind), OwnsApp: id.OwnsApp}, nil
 		default:
 			buf = make([]byte, n)
 		}
+	}
+}
+
+func identityKindFromABI(kind abi.IdentityKind) IdentityKind {
+	switch kind {
+	case abi.IdentitySSHKey:
+		return IdentitySSHKey
+	case abi.IdentityAnonymous:
+		return IdentityAnonymous
+	default:
+		return ""
 	}
 }

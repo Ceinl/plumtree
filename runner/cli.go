@@ -27,6 +27,9 @@ func RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, arg
 // runCLI is the shared engine behind RunCLI and (*Runner).RunCLI. A non-nil
 // cache reuses generated code across calls; the runtime is still per-call.
 func runCLI(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
+	if err := validateLimits(lim); err != nil {
+		return err
+	}
 	callerCtx := ctx
 	if lim.SessionTimeout > 0 {
 		var cancel context.CancelFunc

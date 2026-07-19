@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
 	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/tui-runtime/screen"
 )
 
 // sanitizeRune enforces the connection-path defense: the guest returns runes,
@@ -53,10 +54,12 @@ func (s TextSink) Present(f abi.Frame) {
 // buffer. The only ANSI written is generated host-side from validated RGB —
 // never passed through from the guest. A frame-rate cap coalesces repaints.
 type TTYSink struct {
+	mu    sync.Mutex
 	scr   *screen.Screen
 	w, h  int
 	thr   throttle
 	dirty bool
+	timer *time.Timer
 }
 
 // NewTTYSink returns a sink sized to w x h that flushes to stdout, capped at
@@ -76,6 +79,8 @@ func NewTTYSinkWriter(w, h, maxFPS int, out io.Writer) *TTYSink {
 }
 
 func (s *TTYSink) Present(f abi.Frame) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.W != s.w || f.H != s.h {
 		s.scr.Resize(f.W, f.H)
 		s.w, s.h = f.W, f.H
@@ -87,8 +92,30 @@ func (s *TTYSink) Present(f abi.Frame) {
 				fgSGR(c.Fg), bgSGR(c.Bg), abi.DecorSGR(c.Decor))
 		}
 	}
-	if s.thr.allow(time.Now()) {
+	now := time.Now()
+	if s.thr.allow(now) {
+		if s.timer != nil {
+			s.timer.Stop()
+			s.timer = nil
+		}
+		s.dirty = false
 		s.scr.Flush()
+		return
+	}
+	s.dirty = true
+	if s.timer == nil {
+		delay := s.thr.remaining(now)
+		s.timer = time.AfterFunc(delay, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.timer = nil
+			if !s.dirty {
+				return
+			}
+			s.dirty = false
+			s.thr.allow(time.Now())
+			s.scr.Flush()
+		})
 	}
 }
 
@@ -125,4 +152,15 @@ func (t *throttle) allow(now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+func (t *throttle) remaining(now time.Time) time.Duration {
+	if t.min == 0 {
+		return 0
+	}
+	remaining := t.min - now.Sub(t.last)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }

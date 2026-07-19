@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 
@@ -111,10 +112,16 @@ func (s *proxySink) Present(f abi.Frame) { _, _ = s.rpc.call(opPresent, abi.Enco
 type proxyOutput struct{ rpc *workerRPC }
 
 func (w proxyOutput) Write(p []byte) (int, error) {
-	if _, err := w.rpc.call(opOutput, p); err != nil {
-		return 0, err
+	written := 0
+	for len(p) > 0 {
+		n := min(len(p), maxWorkerOutput)
+		if _, err := w.rpc.call(opOutput, p[:n]); err != nil {
+			return written, err
+		}
+		written += n
+		p = p[n:]
 	}
-	return len(p), nil
+	return written, nil
 }
 
 type proxyKV struct{ rpc *workerRPC }
@@ -157,6 +164,35 @@ func (k proxyKV) Delete(key string) error {
 	return nil
 }
 
+func (k proxyKV) List(prefix string, limit int) ([]string, error) {
+	rp, err := k.rpc.call(opKVList, encodeKVListRequest(prefix, limit))
+	if err != nil || len(rp) == 0 || rp[0] != 0 {
+		return nil, errRPC
+	}
+	keys, err := abi.DecodeKVList(rp[1:])
+	if err != nil {
+		return nil, errRPC
+	}
+	return keys, nil
+}
+
+func (k proxyKV) CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	rp, err := k.rpc.call(opKVCAS, encodeKVCAS(key, expected, value))
+	if err != nil || len(rp) == 0 {
+		return errRPC
+	}
+	switch rp[0] {
+	case 0:
+		return nil
+	case 1:
+		return ErrConflict
+	case 2:
+		return ErrQuota
+	default:
+		return errRPC
+	}
+}
+
 type proxyAuth struct{ rpc *workerRPC }
 
 func (a proxyAuth) Whoami() Identity {
@@ -168,7 +204,7 @@ func (a proxyAuth) Whoami() Identity {
 	if err != nil {
 		return Identity{}
 	}
-	return Identity{User: id.User, Authenticated: id.Authenticated}
+	return Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindFromABI(id.Kind), OwnsApp: id.OwnsApp}
 }
 
 type proxyEnv struct{ rpc *workerRPC }

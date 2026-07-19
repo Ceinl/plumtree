@@ -232,23 +232,7 @@ func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error
 		}
 		app = s.apps[appID]
 	} else {
-		var found bool
-		for _, candidate := range s.apps {
-			if candidate.Name != handle {
-				continue
-			}
-			if s.owners[candidate.OwnerID].Handle == "" {
-				continue
-			}
-			if found {
-				return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: app name %q is ambiguous; use owner/app", ErrConflict, handle)
-			}
-			app = candidate
-			found = true
-		}
-		if !found {
-			return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: app %q", ErrNotFound, handle)
-		}
+		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: use owner/app format, got %q", ErrNotFound, handle)
 	}
 	if app.ActiveDeployID == "" {
 		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: app %q has no active deploy", ErrNotFound, handle)

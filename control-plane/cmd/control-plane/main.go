@@ -92,6 +92,8 @@ func main() {
 	previousStateEncryptionKeyFile := flag.String("previous-state-encryption-key-file", env("PLUMTREE_PREVIOUS_STATE_ENCRYPTION_KEY_FILE", ""), "previous snapshot KEK for one-time re-encryption during key rotation")
 	blobDir := flag.String("blob-dir", env("PLUMTREE_BLOB_DIR", ""), "directory for durable WASM artifact storage; empty keeps artifacts in the state file")
 	runnerWorker := flag.String("runner-worker", env("PLUMTREE_RUNNER_WORKER", ""), "path to the plumtree-runner-worker binary; set to isolate each app session in a separate process")
+	runnerEndpoint := flag.String("runner-endpoint", env("PLUMTREE_RUNNER_ENDPOINT", ""), "remote runner broker endpoint (required for embedded SSH in production)")
+	runnerToken := flag.String("runner-token", env("PLUMTREE_RUNNER_TOKEN", ""), "shared token for the remote runner broker")
 	sshAddr := flag.String("ssh-addr", env("PLUMTREE_SSH_ADDR", "127.0.0.1:2222"), "SSH gateway listen address; empty disables SSH")
 	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", firstNonEmpty(fileCfg.SSHHost, "plumtree.dev")), "local SSH host alias written to ~/.ssh/config")
 	noSSHConfig := flag.Bool("no-ssh-config", false, "do not update ~/.ssh/config for the local SSH gateway")
@@ -123,6 +125,7 @@ func main() {
 		maxConcurrentBuilds: *maxConcurrentBuilds, rateLimit: *rateLimit,
 		maxConnections: *maxConnections, maxConnectionsPerIP: *maxConnectionsPerIP,
 		sshHandshakeTimeout: *sshHandshakeTimeout, sshIdleTimeout: *sshIdleTimeout,
+		runnerWorker: *runnerWorker, runnerEndpoint: *runnerEndpoint, runnerToken: *runnerToken,
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -242,6 +245,8 @@ func main() {
 			MaxConnectionsPerIP:   *maxConnectionsPerIP,
 			StateDir:              stateDir(*stateFile),
 			RunnerWorker:          *runnerWorker,
+			RunnerEndpoint:        *runnerEndpoint,
+			RunnerToken:           *runnerToken,
 			Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
 			Ready: func(a net.Addr) {
 				host, port, _ := net.SplitHostPort(a.String())
@@ -374,9 +379,22 @@ type productionLimits struct {
 	maxSessions, maxSessionsPerAppDay, maxDeploysPerHour, maxAppsPerOwner int
 	maxConcurrentBuilds, rateLimit, maxConnections, maxConnectionsPerIP   int
 	sshHandshakeTimeout, sshIdleTimeout                                   time.Duration
+	runnerWorker, runnerEndpoint, runnerToken                             string
 }
 
 func validateProductionLimits(production, acknowledged, sshEnabled bool, l productionLimits) error {
+	if l.runnerEndpoint != "" && l.runnerWorker != "" {
+		return fmt.Errorf("configure either runner-endpoint or runner-worker, not both")
+	}
+	if l.runnerEndpoint != "" && l.runnerToken == "" {
+		return fmt.Errorf("runner-token is required with runner-endpoint")
+	}
+	if production && sshEnabled && l.runnerEndpoint == "" {
+		return fmt.Errorf("production embedded SSH requires a remote runner-endpoint; a local subprocess does not contain native runtime escape")
+	}
+	if production && sshEnabled && !strings.HasPrefix(l.runnerEndpoint, "unix://") {
+		return fmt.Errorf("production embedded SSH runner-endpoint must use an authenticated Unix socket")
+	}
 	if !production || acknowledged {
 		return nil
 	}

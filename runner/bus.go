@@ -4,9 +4,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
-	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 // Bus is per-app scoped pub/sub, handed to a guest as the bus capability.

@@ -15,6 +15,8 @@ func TestEventRoundTrip(t *testing.T) {
 		{Kind: KindResize, W: 120, H: 40},
 		{Kind: KindMessage, Topic: "room", Data: []byte("hello 世界")},
 		{Kind: KindMessage, Topic: "", Data: nil},
+		{Kind: KindMouse, MouseX: 12, MouseY: 7, Button: MouseButtonLeft, Action: MouseDown},
+		{Kind: KindMouse, MouseX: 12, MouseY: 7, Button: MouseButtonLeft, Action: MouseUp},
 	}
 	for _, want := range cases {
 		got, err := DecodeEvent(EncodeEvent(want))
@@ -58,8 +60,8 @@ func TestFrameRoundTrip(t *testing.T) {
 
 func TestIdentityRoundTrip(t *testing.T) {
 	for _, want := range []Identity{
-		{User: "SHA256:abcdef", Authenticated: true},
-		{User: "anonymous:0011", Authenticated: false},
+		{User: "SHA256:abcdef", Authenticated: true, Kind: IdentitySSHKey, OwnsApp: true},
+		{User: "anonymous:0011", Authenticated: false, Kind: IdentityAnonymous},
 		{User: "", Authenticated: false},
 	} {
 		got, err := DecodeIdentity(EncodeIdentity(want))
@@ -85,6 +87,18 @@ func TestDecodeRejectsBadInput(t *testing.T) {
 	bad[4], bad[6] = 4, 4
 	if _, err := DecodeFrame(bad); err != ErrSize {
 		t.Errorf("oversize: got %v want ErrSize", err)
+	}
+	if _, err := DecodeEvent(append(EncodeEvent(Event{Kind: KindKey}), 0)); err != ErrSize {
+		t.Errorf("event trailing data: got %v want ErrSize", err)
+	}
+	if _, err := DecodeFrame(append(EncodeFrame(Frame{}), 0)); err != ErrSize {
+		t.Errorf("frame trailing data: got %v want ErrSize", err)
+	}
+	if _, err := DecodeIdentity(append(EncodeIdentity(Identity{User: "x"}), 0)); err != ErrSize {
+		t.Errorf("identity trailing data: got %v want ErrSize", err)
+	}
+	if _, err := DecodeFetchRequest(append(EncodeFetchRequest(FetchRequest{URL: "https://example.com"}), 0)); err == nil {
+		t.Error("fetch request trailing data should error")
 	}
 }
 
@@ -143,6 +157,7 @@ func TestKVResultCodes(t *testing.T) {
 		"TooLarge": KVErrTooLarge,
 		"Quota":    KVErrQuota,
 		"Internal": KVErrInternal,
+		"Conflict": KVErrConflict,
 	}
 	seen := map[int32]string{}
 	for name, code := range errs {
@@ -154,7 +169,18 @@ func TestKVResultCodes(t *testing.T) {
 		}
 		seen[code] = name
 	}
-	if KVMaxKey <= 0 || KVMaxValue <= 0 {
-		t.Errorf("size caps must be positive: key=%d value=%d", KVMaxKey, KVMaxValue)
+	if KVMaxKey <= 0 || KVMaxValue <= 0 || KVMaxList <= 0 {
+		t.Errorf("size caps must be positive: key=%d value=%d list=%d", KVMaxKey, KVMaxValue, KVMaxList)
+	}
+}
+
+func TestKVListEncodingRoundTrip(t *testing.T) {
+	want := []string{"a", "tasks/001", "tasks/002"}
+	got, err := DecodeKVList(EncodeKVList(want))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("DecodeKVList = %#v, %v", got, err)
+	}
+	if _, err := DecodeKVList([]byte{5, 0, 'x'}); err == nil {
+		t.Fatal("truncated list accepted")
 	}
 }

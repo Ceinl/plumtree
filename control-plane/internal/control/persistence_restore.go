@@ -275,16 +275,16 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 		if session.ID == "" {
 			return false, fmt.Errorf("%w: session ID is required", ErrInvalid)
 		}
-		app, ok := s.apps[session.AppID]
-		if !ok {
-			return false, fmt.Errorf("%w: app %q", ErrNotFound, session.AppID)
-		}
 		deploy, ok := s.deploys[session.DeployID]
 		if !ok {
 			return false, fmt.Errorf("%w: deploy %q", ErrNotFound, session.DeployID)
 		}
-		if deploy.AppID != app.ID {
-			return false, fmt.Errorf("%w: deploy %q does not belong to app %q", ErrInvalid, deploy.ID, app.ID)
+		if app, ok := s.apps[session.AppID]; ok {
+			if deploy.AppID != app.ID {
+				return false, fmt.Errorf("%w: deploy %q does not belong to app %q", ErrInvalid, deploy.ID, app.ID)
+			}
+		} else if previewID, preview := previewDeployID(session.AppID); !preview || previewID != deploy.ID {
+			return false, fmt.Errorf("%w: app %q", ErrNotFound, session.AppID)
 		}
 		if _, ok := s.sessions[session.ID]; ok {
 			return false, fmt.Errorf("%w: duplicate session ID %q", ErrConflict, session.ID)

@@ -41,22 +41,22 @@
 <body>
 <main>
   <header>
-    <div class="meta">STATIC APPLICATION &amp; SECURITY REVIEW · REVALIDATED 10 JULY 2026</div>
+    <div class="meta">STATIC APPLICATION &amp; SECURITY REVIEW · REVALIDATED 15 JULY 2026</div>
     <h1>Plumtree audit</h1>
     <p class="muted">Current working tree · Go control plane, build worker, runner, SSH gateway, SDK and <code>pt</code> CLI</p>
   </header>
 
   <div class="summary" aria-label="Finding summary">
-    <div class="metric"><b class="resolved">12</b><span>resolved</span></div>
-    <div class="metric"><b>3</b><span>open</span></div>
+    <div class="metric"><b class="resolved">21</b><span>resolved</span></div>
+    <div class="metric"><b>2</b><span>open</span></div>
     <div class="metric"><b class="critical">0</b><span>critical / high</span></div>
     <div class="metric"><b class="medium">0</b><span>medium</span></div>
-    <div class="metric"><b class="low">3</b><span>low</span></div>
+    <div class="metric"><b class="low">2</b><span>low</span></div>
   </div>
 
   <div class="verdict">
     <strong>All previously reported critical and high findings are resolved in the current working tree.</strong>
-    <p>No critical, high, or medium findings remain. PT-09 was downgraded to low after SSH proof and identity resolution were implemented. The two originally low findings were not re-audited.</p>
+    <p>No known critical, high, or medium finding remains after the 15 July release-hardening pass. PT-09 remains low product plumbing; PT-15 remains a request for a deployed-topology smoke test. This is evidence from code review and local verification, not a guarantee that unknown vulnerabilities do not exist.</p>
   </div>
 
   <section aria-labelledby="findings">
@@ -168,7 +168,8 @@
     </article>
 
     <article class="finding">
-      <div class="finding-head"><div><div class="id">PT-14</div><h2>Rate limiting can permanently hide the final TUI frame</h2></div><span class="badge low">Low</span></div>
+      <div class="finding-head"><div><div class="id">PT-14</div><h2>Rate limiting can permanently hide the final TUI frame</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Revalidated:</strong> denied frames are coalesced and a synchronized trailing-edge timer flushes the latest frame. A regression test verifies the final rate-limited frame is rendered, including under the race detector.</p>
       <p>Frames denied by the sink throttle update the in-memory screen but schedule no later flush; the <code>dirty</code> field is unused. A last frame arriving inside the interval may never reach the terminal.</p>
       <div class="detail"><div><span class="label">Impact</span>Users can see stale state or miss a completion/error screen until another event causes a later render.</div><div><span class="label">Fix</span>Coalesce to the latest frame and schedule a trailing-edge flush; flush pending content on shutdown.</div></div>
       <p class="meta">Evidence: <a href="runner/render.go#L48">render.go:48–90</a></p>
@@ -181,6 +182,51 @@
     </article>
   </section>
 
+  <section aria-labelledby="release-hardening">
+    <h2 id="release-hardening">15 July release hardening</h2>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-16</div><h2>Native runtime escape shared the gateway trust boundary</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> production execution now goes through an authenticated Unix-socket broker in a separate networkless container. Each disposable worker gets a unique UID/GID and private scratch directory; it has no gateway token, SSH host key, persistent KV volume, or inherited environment.</p>
+      <p class="meta">Evidence: <a href="runner/broker.go">runner/broker.go</a>, <a href="deploy/Dockerfile.runner-broker">Dockerfile.runner-broker</a>, <a href="deploy/docker-compose.yml">docker-compose.yml</a></p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-17</div><h2>Reachable standard-library vulnerabilities in Go 1.26.2</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> modules, generated workspaces, and container builds use Go 1.26.5; Alpine runtime images are pinned to 3.24.1. <code>govulncheck</code> reports zero reachable vulnerabilities in all seven modules.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-18</div><h2>Windows browser launch crossed a command-shell boundary</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> <code>pt claim</code> accepts only bounded absolute HTTP(S) URLs without userinfo and launches Windows URLs through <code>rundll32</code>, not <code>cmd.exe /c start</code>. The CLI cross-compiles for Windows.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-19</div><h2>Compromised workers could send oversized or malformed capability requests</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> protocol messages are rejected before allocation using operation-specific caps; frames, arguments, capability payloads, output, logs, and ABI trailing bytes are validated before reaching privileged gateway capabilities.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-20</div><h2>Fetch filtering omitted special-use network ranges</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> the DNS, dial, and redirect checks now reject CGNAT, documentation, benchmark, reserved, transition, discard, NAT64, and other non-public prefixes in addition to loopback, private, link-local, and multicast addresses.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-21</div><h2>Source archives admitted ambiguous roots and top-level symlinks</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> packing rejects top-level symlinks and special files; extraction permits only the declared project roots and rejects duplicate paths, unexpected roots, and file roots represented as directories.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-22</div><h2>Untrusted diagnostics could inject terminal controls</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> compiler logs, hosted app logs, and runtime errors are sanitized before being printed by <code>pt</code> or written to an SSH terminal. C0, C1, escape, and invalid runes are neutralized.</p>
+    </article>
+
+    <article class="finding">
+      <div class="finding-head"><div><div class="id">PT-23</div><h2>Authentication fetches and inline scripts lacked defensive bounds</h2></div><span class="badge resolved">Resolved</span></div>
+      <p class="resolved"><strong>Fixed:</strong> Shoo JWT/JWKS inputs and HTTP time are bounded. Per-response CSP nonces replace <code>unsafe-inline</code> for scripts, with an HTML-safe nonce alphabet and regression coverage.</p>
+    </article>
+  </section>
+
   <section aria-labelledby="verification">
     <h2 id="verification">Verification</h2>
     <table>
@@ -188,20 +234,23 @@
       <tbody>
         <tr><td>Go tests</td><td class="pass">Pass</td><td>All 7 workspace modules; security-relevant packages also rerun uncached</td></tr>
         <tr><td>Go vet</td><td class="pass">Pass</td><td>All 7 workspace modules</td></tr>
-        <tr><td>Race tests</td><td>Not rerun</td><td>The earlier instrumentation-only runner timing failure remains historical and is not used as evidence for these findings.</td></tr>
+        <tr><td>Race tests</td><td class="pass">Pass (targeted)</td><td>Gateway suite, control-plane security packages, and runner broker/process/render paths. Full runner instrumentation exceeds two 150 ms timing assertions but reports no data race.</td></tr>
         <tr><td>Artifact-size reproduction</td><td>Confirmed</td><td>Counter WASM 2,741,026 B; base64 payload ≈ 3,654,704 B</td></tr>
-        <tr><td>Dependency vulnerability scan</td><td>Not run</td><td><code>govulncheck</code> is not installed in the workspace</td></tr>
+        <tr><td>Dependency vulnerability scan</td><td class="pass">Pass</td><td><code>govulncheck</code>: zero reachable vulnerabilities in all 7 modules. One required-but-unimported advisory covers the unused <code>x/crypto/openpgp</code> package.</td></tr>
+        <tr><td>Linux / Windows builds</td><td class="pass">Pass</td><td>Linux broker and worker; Windows <code>pt</code> CLI and SSH-dev package</td></tr>
+        <tr><td>Container builds</td><td class="pass">Pass</td><td>All four production images build. The broker starts with the exact networkless/read-only/capability policy; its socket is mode 0600 and owned by gateway UID/GID 65532.</td></tr>
+        <tr><td>Four-service smoke</td><td>Not run</td><td>Compose YAML parses, but this Docker installation has no Compose plugin. PT-15's end-to-end topology test remains a release gate.</td></tr>
       </tbody>
     </table>
   </section>
 
   <section aria-labelledby="priority">
     <h2 id="priority">Recommended order</h2>
-    <p>No non-low findings remain. PT-09 is now low-severity product plumbing. PT-14 and PT-15 remain the two originally low findings and were not re-audited in this pass.</p>
+    <p>No known non-low findings remain. Before public release, start the four-service Docker topology and run PT-15's end-to-end deploy/resolve/CLI/TUI/suspension smoke test. PT-09 is low-severity self-service product plumbing, not an RCE boundary.</p>
   </section>
 
   <footer>
-    Revalidation of the current uncommitted working tree. Application source was not changed; only this report was updated. Dynamic internet-facing penetration testing and third-party dependency advisories were outside this run.
+    Revalidation of the current uncommitted working tree, including application and deployment hardening. Static review, tests, vet, targeted race tests, Go vulnerability database checks, and heuristic security-scan triage were included. Dynamic internet-facing penetration testing and a live container-topology smoke test were outside this run.
   </footer>
 </main>
 </body>

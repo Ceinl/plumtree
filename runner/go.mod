@@ -1,6 +1,6 @@
 module github.com/Ceinl/plumtree/runner
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/Ceinl/plumtree/sdk v0.0.0
@@ -8,7 +8,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 )
 
-require golang.org/x/sys v0.46.0 // indirect
+require golang.org/x/sys v0.47.0 // indirect
 
 replace (
 	github.com/Ceinl/plumtree/sdk => ../sdk

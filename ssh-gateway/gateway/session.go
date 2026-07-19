@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"syscall"
 
 	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
 	"github.com/Ceinl/plumtree/tui-runtime/screen"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
@@ -27,6 +30,8 @@ type windowChange struct {
 	Columns, Rows     uint32
 	WidthPx, HeightPx uint32
 }
+
+type execRequest struct{ Command string }
 
 func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, handle string, identity runner.Identity) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -67,12 +72,29 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			}
 			req.Reply(true, nil)
 		case "shell", "exec":
+			var args []string
+			if req.Type == "exec" {
+				var payload execRequest
+				if len(req.Payload) > 4+abi.ActionMaxCommand || ssh.Unmarshal(req.Payload, &payload) != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				var err error
+				args, err = gatewayapi.ParseExecCommand(payload.Command)
+				if err != nil {
+					req.Reply(true, nil)
+					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					ch.Close()
+					cancel()
+					return
+				}
+			}
 			req.Reply(true, nil)
 			if started {
 				continue
 			}
 			started = true
-			go s.startSession(ctx, cancel, ch, handle, identity, size, winch)
+			go s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, args)
 		case "env":
 			req.Reply(true, nil)
 		default:
@@ -116,6 +138,10 @@ func validateRequestDimensions(columns, rows uint32) error {
 }
 
 func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
+	s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, nil)
+}
+
+func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal, args []string) {
 	if !s.acquireSlot() {
 		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.MaxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
@@ -140,6 +166,7 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 		cancel()
 		return
 	}
+	identity = appRelativeIdentity(identity, run.OwnerID)
 
 	sessionID, err := s.Backend.StartSession(run.AppID, run.DeployID)
 	if err != nil {
@@ -165,34 +192,45 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 
 	caps := s.capsFor(run.AppID, run.OwnerID)
 	caps.Auth = runner.StaticAuth{Identity: identity}
-	log, truncated := s.runSession(ctx, ch, run.WASM, run.AppType, caps, size, winch)
+	log, truncated := s.runSessionArgs(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
 	if err := s.Backend.RecordSessionLog(sessionID, log, truncated); err != nil {
 		s.logf("record session log %q: %v", sessionID, err)
 	}
 	if err := s.Backend.EndSession(sessionID); err != nil {
 		s.logf("end session %q: %v", sessionID, err)
 	}
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	ch.Close()
 	cancel()
 }
 
+func appRelativeIdentity(identity runner.Identity, appOwnerID string) runner.Identity {
+	identity.OwnsApp = identity.OwnerID != "" && identity.OwnerID == appOwnerID
+	identity.OwnerID = ""
+	return identity
+}
+
 func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal) (string, bool) {
+	return s.runSessionArgs(ctx, ch, wasm, appType, caps, size, winch, nil)
+}
+
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool) {
 	lim := s.Limits
 	if lim.MemoryPages == 0 {
 		lim = runner.DefaultLimits
 	}
-	if appType == "cli" {
+	if appType == "cli" || len(args) > 0 {
 		var err error
-		if s.RunnerWorker != "" {
-			err = runner.NewProcessRunner(s.RunnerWorker).RunCLI(ctx, wasm, lim, caps, nil, ch)
+		if isolated := s.isolatedRunner(); isolated != nil {
+			err = isolated.RunCLI(ctx, wasm, lim, caps, args, ch)
 		} else {
-			err = s.Runner.RunCLI(ctx, wasm, lim, caps, nil, ch)
+			err = s.Runner.RunCLI(ctx, wasm, lim, caps, args, ch)
 		}
 		if err != nil {
-			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
+			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
 		}
-		if caps.Goodbye != nil && *caps.Goodbye != "" {
-			fmt.Fprintf(ch, "\r\n%s\r\n", *caps.Goodbye)
+		if caps.Goodbye != nil && *caps.Goodbye != "" && (len(args) == 0 || args[0] != abi.ActionArgPrefix) {
+			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
 		return "", false
 	}
@@ -201,11 +239,11 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 	if w <= 0 || h <= 0 {
 		w, h = 80, 24
 	}
-	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
+	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
 	defer func() {
-		msg := terminal.SHOW_CURSOR + terminal.CLOSE_ALT
+		msg := terminal.DISABLE_MOUSE + terminal.SHOW_CURSOR + terminal.CLOSE_ALT
 		if caps.Goodbye != nil && *caps.Goodbye != "" {
-			msg += "\r\n" + *caps.Goodbye + "\r\n"
+			msg += "\r\n" + runner.SanitizeTerminalText(*caps.Goodbye) + "\r\n"
 		}
 		io.WriteString(ch, msg)
 	}()
@@ -222,8 +260,8 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 	// When a worker binary is configured, isolate the WASM sandbox in a separate
 	// process; otherwise run it in-process with the shared compilation cache.
 	var err error
-	if s.RunnerWorker != "" {
-		err = runner.NewProcessRunner(s.RunnerWorker).Run(ctx, wasm, lim, caps, src, sink, logs)
+	if isolated := s.isolatedRunner(); isolated != nil {
+		err = isolated.Run(ctx, wasm, lim, caps, src, sink, logs)
 	} else {
 		err = s.Runner.Run(ctx, wasm, lim, caps, src, sink, logs)
 	}
@@ -233,4 +271,14 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 		s.logf("session error: %v", err)
 	}
 	return logs.String(), logs.truncated
+}
+
+func (s *Server) isolatedRunner() *runner.ProcessRunner {
+	if s.RunnerEndpoint != "" {
+		return runner.NewRemoteProcessRunner(s.RunnerEndpoint, s.RunnerToken)
+	}
+	if s.RunnerWorker != "" {
+		return runner.NewProcessRunner(s.RunnerWorker)
+	}
+	return nil
 }
