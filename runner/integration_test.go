@@ -71,6 +71,23 @@ func TestHostedSDKButtonMouseClick(t *testing.T) {
 	}
 }
 
+func TestActionInvocationUsesTUICapabilities(t *testing.T) {
+	wasm := buildGuest(t, "../examples/agentboard/app")
+	caps := Capabilities{
+		KV: NewMemStore(0, 0), Bus: NewMemBus(),
+		Auth: StaticAuth{Identity: Identity{User: "SHA256:agent-key-0123456789012345", Kind: IdentitySSHKey, OwnsApp: true, Authenticated: true}},
+		Env:  MapEnv{"TEST": "value"},
+	}
+	var out strings.Builder
+	args := []string{abi.ActionArgPrefix, "get_identity", `{}`}
+	if err := RunCLI(context.Background(), wasm, DefaultLimits, caps, args, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"ok":true`) || !strings.Contains(out.String(), `"owns_app":true`) {
+		t.Fatalf("action envelope = %s", out.String())
+	}
+}
+
 func frameText(f abi.Frame) string {
 	var b strings.Builder
 	for y := 0; y < f.H; y++ {

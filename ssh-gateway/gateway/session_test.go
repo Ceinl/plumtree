@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -95,6 +97,24 @@ func TestRunSessionTUIEnablesAndDisablesMouse(t *testing.T) {
 	got := ch.String()
 	if !strings.Contains(got, "\x1b[?1006h") || !strings.Contains(got, "\x1b[?1006l") {
 		t.Fatalf("mouse setup/teardown missing: %q", got)
+	}
+}
+
+func TestRunSessionActionUsesCLIForTUIApp(t *testing.T) {
+	wasmPath := buildTestBinary(t, "../../examples/agentboard/app", ".", []string{"GOOS=wasip1", "GOARCH=wasm"})
+	wasm, err := os.ReadFile(wasmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := &testChannel{}
+	caps := runner.Capabilities{
+		KV: runner.NewMemStore(0, 0), Bus: runner.NewMemBus(),
+		Auth: runner.StaticAuth{Identity: runner.Identity{User: "SHA256:owner-key-0123456789012345", Kind: runner.IdentitySSHKey, OwnsApp: true}},
+	}
+	s := &Server{Runner: runner.New()}
+	s.runSessionArgs(context.Background(), ch, wasm, "tui", caps, nil, nil, []string{abi.ActionArgPrefix, "get_identity", `{}`})
+	if got := ch.String(); !strings.Contains(got, `"ok":true`) || strings.Contains(got, terminal.OPEN_ALT) {
+		t.Fatalf("action output = %q", got)
 	}
 }
 

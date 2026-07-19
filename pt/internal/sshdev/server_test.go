@@ -34,6 +34,22 @@ func buildCounter(t *testing.T) []byte {
 	return b
 }
 
+func buildAgentboard(t *testing.T) []byte {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "agentboard.wasm")
+	cmd := exec.Command("go", "build", "-o", out, ".")
+	cmd.Dir = "../../../examples/agentboard/app"
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("wasm build failed (%v):\n%s", err, b)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 type safeBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -121,6 +137,37 @@ func TestServeOverSSH(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "\x1b[?1006l") {
 		t.Fatalf("mouse reporting was not disabled: %q", out.String())
+	}
+}
+
+func TestServeActionOverSSHExec(t *testing.T) {
+	srv := &Server{
+		Wasm: buildAgentboard(t), Limits: runner.DefaultLimits, AppType: "tui", AppName: "agentboard",
+		Caps: runner.Capabilities{
+			KV: runner.NewMemStore(0, 0), Bus: runner.NewMemBus(),
+			Auth: runner.StaticAuth{Identity: runner.Identity{User: "local", Kind: runner.IdentitySSHKey, OwnsApp: true, Authenticated: true}},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addrCh := make(chan string, 1)
+	go srv.ListenAndServe(ctx, "127.0.0.1:0", func(a net.Addr) { addrCh <- a.String() })
+	addr := <-addrCh
+	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{User: "dev", HostKeyCallback: ssh.InsecureIgnoreHostKey()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := session.Output(`action get_identity {}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); !strings.Contains(got, `"ok":true`) || !strings.Contains(got, `"owns_app":true`) {
+		t.Fatalf("action = %s", got)
 	}
 }
 

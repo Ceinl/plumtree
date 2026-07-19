@@ -15,6 +15,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -25,6 +26,8 @@ import (
 	"sync"
 
 	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
 	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
@@ -155,13 +158,31 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			}
 
 		case "shell", "exec":
+			var args []string
+			if req.Type == "exec" {
+				var payload execRequest
+				if len(req.Payload) > 4+abi.ActionMaxCommand || ssh.Unmarshal(req.Payload, &payload) != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				var err error
+				args, err = gatewayapi.ParseExecCommand(payload.Command)
+				if err != nil {
+					req.Reply(true, nil)
+					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					ch.Close()
+					cancel()
+					return
+				}
+			}
 			req.Reply(true, nil)
 			if started {
 				continue
 			}
 			started = true
 			go func() {
-				s.runSession(ctx, ch, size, winch)
+				s.runSessionArgs(ctx, ch, size, winch, args)
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 				ch.Close()
 				cancel()
 			}()
@@ -177,8 +198,12 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 }
 
 func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal) {
-	if s.AppType == "cli" {
-		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, s.Caps, nil, ch); err != nil {
+	s.runSessionArgs(ctx, ch, size, winch, nil)
+}
+
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) {
+	if s.AppType == "cli" || len(args) > 0 {
+		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, s.Caps, args, ch); err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
 		return
@@ -257,6 +282,8 @@ type ptyRequest struct {
 	WidthPx, HeightPx uint32
 	Modes             string
 }
+
+type execRequest struct{ Command string }
 
 // windowChange is the SSH "window-change" payload.
 type windowChange struct {

@@ -43,6 +43,16 @@ simple:
 ssh counter@plumtree.dev
 ```
 
+Action-enabled apps also accept the production-compatible exec form:
+
+```bash
+ssh counter@plumtree.dev 'action get_identity {}'
+```
+
+The action name is a single token and everything after it is passed unchanged
+as the JSON request. Responses are a single JSON line and the SSH exit status
+is non-zero only when the session itself cannot be started.
+
 Use `--host <name>` to pick a different local alias:
 
 ```

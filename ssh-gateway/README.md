@@ -19,6 +19,12 @@ Does not own:
 - app resolution, session accounting/quotas, or claimed capability config
   (secrets, egress) — those come from the control plane through `gateway.Backend`.
 - deploy/build APIs.
+
+Apps that register SDK actions can be called non-interactively with
+`ssh owner/app@host 'action <name> <json>'`. The gateway parses the fixed action
+prefix and name, preserves the remainder as one bounded JSON argument, and
+never invokes a shell. Ordinary CLI app arguments remain bounded,
+whitespace-separated guest arguments.
 - persistent control-plane state.
 
 ## Packages
