@@ -317,11 +317,54 @@ func nextStatus(actor transitionActor, current string) (string, error) {
 	return "", actionError("conflict", "transition is not allowed for this actor")
 }
 
-func advanceTask(board Board, id sdk.Identity, taskID, expectedStatus string, actor transitionActor) (Task, error) {
+func previousStatus(actor transitionActor, current string) (string, error) {
 	if actor == actorPersonal {
-		if board.Type != "user" || board.OwnerHash != identityHash(id.User) {
+		switch current {
+		case "todo":
+			return "pending", nil
+		case "in-progress":
+			return "todo", nil
+		case "in-review":
+			return "in-progress", nil
+		case "done":
+			return "in-review", nil
+		}
+	}
+	if actor == actorAgent {
+		switch current {
+		case "in-progress":
+			return "todo", nil
+		case "in-review":
+			return "in-progress", nil
+		}
+	} else if actor == actorOwner {
+		switch current {
+		case "todo":
+			return "pending", nil
+		case "done":
+			return "in-review", nil
+		}
+	}
+	return "", actionError("conflict", "transition is not allowed for this actor")
+}
+
+type statusTransition func(transitionActor, string) (string, error)
+
+func advanceTask(board Board, id sdk.Identity, taskID, expectedStatus string, actor transitionActor) (Task, error) {
+	return transitionTask(board, id, taskID, expectedStatus, actor, nextStatus)
+}
+
+func retreatTask(board Board, id sdk.Identity, taskID, expectedStatus string, actor transitionActor) (Task, error) {
+	return transitionTask(board, id, taskID, expectedStatus, actor, previousStatus)
+}
+
+func transitionTask(board Board, id sdk.Identity, taskID, expectedStatus string, actor transitionActor, transition statusTransition) (Task, error) {
+	if board.Type == "user" {
+		if actor != actorPersonal || board.OwnerHash != identityHash(id.User) {
 			return Task{}, actionError("unauthorized", "only the personal-board owner can perform this transition")
 		}
+	} else if actor == actorPersonal {
+		return Task{}, actionError("unauthorized", "personal transitions cannot change project tasks")
 	}
 	if actor == actorOwner && !id.OwnsApp {
 		return Task{}, actionError("unauthorized", "only the app owner can perform human transitions")
@@ -341,7 +384,7 @@ func advanceTask(board Board, id sdk.Identity, taskID, expectedStatus string, ac
 	if expectedStatus == "" || task.Status != expectedStatus {
 		return Task{}, actionError("conflict", "task status changed")
 	}
-	next, err := nextStatus(actor, task.Status)
+	next, err := transition(actor, task.Status)
 	if err != nil {
 		return Task{}, err
 	}

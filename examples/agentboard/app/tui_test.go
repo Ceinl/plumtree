@@ -44,7 +44,7 @@ func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
 		"DONE  1",
 		"→  Approve",
 		"#000001",
-		"click or Enter advances review gates",
+		"left edge reverses",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame does not contain %q:\n%s", want, frame)
@@ -110,6 +110,16 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 	if model.tasks[1].Status != "todo" {
 		t.Fatalf("clicked task status = %q, want todo", model.tasks[1].Status)
 	}
+	component = model.View()
+	component.Layout(0, 0, 140, 30)
+	handler = component.(layout.MouseHandler)
+	if !handler.HandleMouse(layout.MouseEvent{X: 31, Y: 9, Action: layout.MouseDown}) ||
+		!handler.HandleMouse(layout.MouseEvent{X: 31, Y: 9, Action: layout.MouseUp}) {
+		t.Fatal("task back edge did not consume click")
+	}
+	if model.tasks[1].Status != "pending" {
+		t.Fatalf("retreated task status = %q, want pending", model.tasks[1].Status)
+	}
 }
 
 func TestRoleCorrectTUITransitions(t *testing.T) {
@@ -131,6 +141,14 @@ func TestRoleCorrectTUITransitions(t *testing.T) {
 	}
 	if personal.canAdvance("done") {
 		t.Fatal("completed personal task can advance")
+	}
+	for _, status := range []string{"todo", "in-progress", "in-review", "done"} {
+		if !personal.canRetreat(status) {
+			t.Fatalf("personal retreat from %s is unavailable", status)
+		}
+	}
+	if personal.canRetreat("pending") {
+		t.Fatal("pending personal task can retreat")
 	}
 }
 

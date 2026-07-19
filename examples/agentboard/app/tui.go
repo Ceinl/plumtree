@@ -139,12 +139,34 @@ func (m *boardModel) canAdvance(status string) bool {
 	return err == nil
 }
 
+func (m *boardModel) canRetreat(status string) bool {
+	_, err := previousStatus(m.transitionActor(), status)
+	return err == nil
+}
+
 func (m *boardModel) advance(index int) {
 	if index < 0 || index >= len(m.tasks) || !m.canAdvance(m.tasks[index].Status) {
 		return
 	}
 	board, task := m.boards[m.selected], m.tasks[index]
 	if _, err := advanceTask(board, m.identity, task.ID, task.Status, m.transitionActor()); err != nil {
+		m.err = err.Error()
+		return
+	}
+	m.reload()
+}
+
+func (m *boardModel) retreat(index int) {
+	if index < 0 || index >= len(m.tasks) {
+		return
+	}
+	m.taskIndex = index
+	if !m.canRetreat(m.tasks[index].Status) {
+		m.err = "this task is already at its earliest available step"
+		return
+	}
+	board, task := m.boards[m.selected], m.tasks[index]
+	if _, err := retreatTask(board, m.identity, task.ID, task.Status, m.transitionActor()); err != nil {
 		m.err = err.Error()
 		return
 	}
@@ -385,12 +407,26 @@ func (m *boardModel) taskCard(index int, theme statusTheme) tui.Component {
 	if selected {
 		buttonLabel = "◆ " + buttonLabel
 	}
-	button := components.NewButton(buttonLabel)
-	button.SetStyles(normal, selectedCard, pressedCard)
-	button.SetFocused(selected)
-	button.OnClick = func() { m.activateTask(index) }
+	card.SetDirection(tui.Row)
+	backLabel := " "
+	if m.canRetreat(task.Status) {
+		backLabel = "←"
+	}
+	back := components.NewButton(backLabel)
+	back.SetStyles(normal, selectedCard, pressedCard)
+	back.OnClick = func() { m.retreat(index) }
+	backBox := fixedBox(tui.Px(4), tui.Grow, normal)
+	backBox.AppendChild(back)
+	card.AppendChild(backBox)
+
+	forward := components.NewButton(buttonLabel)
+	forward.SetStyles(normal, selectedCard, pressedCard)
+	forward.SetFocused(selected)
+	forward.OnClick = func() { m.activateTask(index) }
+	forwardBox := fixedBox(tui.Grow, tui.Grow, normal)
+	forwardBox.AppendChild(forward)
 	card.SetPadding(tui.Padding{})
-	card.AppendChild(button)
+	card.AppendChild(forwardBox)
 	return card
 }
 
@@ -404,11 +440,11 @@ func (m *boardModel) footer() tui.Component {
 	context := "USER  ·  connected with your SSH identity"
 	hints := "←/→ board  ↑/↓ task  ↵/click  q"
 	if m.selectedBoardType() == "user" {
-		context = "PERSONAL  ·  click or Enter advances your task"
+		context = "PERSONAL  ·  left edge moves back  ·  task moves forward"
 	} else if m.selectedBoardType() == "project" && m.identity.OwnsApp {
-		context = "OWNER  ·  click or Enter advances review gates"
+		context = "OWNER  ·  left edge reverses  ·  task advances review"
 	} else if m.selectedBoardType() == "project" {
-		context = "MEMBER  ·  click or Enter moves todo and active tasks"
+		context = "MEMBER  ·  left edge moves back  ·  task moves forward"
 	}
 	left := fixedBox(tui.Grow, tui.Grow, footerBackground)
 	left.AppendChild(text(context, footerBackground, components.AlignLeft))

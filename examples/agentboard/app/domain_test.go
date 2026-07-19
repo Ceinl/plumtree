@@ -106,6 +106,15 @@ func TestWorkflowAndIndependentCounters(t *testing.T) {
 	if _, err := advanceTask(personal, sdk.Identity{User: otherFingerprint, Kind: sdk.IdentitySSHKey}, personalTask.ID, "done", actorPersonal); err == nil {
 		t.Fatal("another identity advanced a personal task")
 	}
+	for _, status := range []string{"done", "in-review", "in-progress", "todo"} {
+		personalTask, err = retreatTask(personal, member, personalTask.ID, status, actorPersonal)
+		if err != nil {
+			t.Fatalf("personal retreat from %s: %v", status, err)
+		}
+	}
+	if personalTask.Status != "pending" {
+		t.Fatalf("retreated personal task status = %q, want pending", personalTask.Status)
+	}
 	projectTask, err = advanceTask(project, ownerIdentity(), projectTask.ID, "pending", actorOwner)
 	if err != nil || projectTask.Status != "todo" {
 		t.Fatalf("owner transition = %+v, %v", projectTask, err)
@@ -113,6 +122,14 @@ func TestWorkflowAndIndependentCounters(t *testing.T) {
 	projectTask, err = advanceTask(project, member, projectTask.ID, "todo", actorAgent)
 	if err != nil || projectTask.Status != "in-progress" {
 		t.Fatalf("agent transition = %+v, %v", projectTask, err)
+	}
+	projectTask, err = retreatTask(project, member, projectTask.ID, "in-progress", actorAgent)
+	if err != nil || projectTask.Status != "todo" {
+		t.Fatalf("agent retreat = %+v, %v", projectTask, err)
+	}
+	projectTask, err = retreatTask(project, ownerIdentity(), projectTask.ID, "todo", actorOwner)
+	if err != nil || projectTask.Status != "pending" {
+		t.Fatalf("owner retreat = %+v, %v", projectTask, err)
 	}
 	if _, err := advanceTask(project, member, projectTask.ID, "in-progress", actorOwner); err == nil {
 		t.Fatal("non-owner performed human transition")

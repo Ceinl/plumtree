@@ -26,6 +26,7 @@ ssh "${OWNER}/agentboard@plumtree.dev" 'action list_boards {}'
 ssh "${OWNER}/agentboard@plumtree.dev" 'action list_tasks {"board":{"type":"user"}}'
 ssh "${OWNER}/agentboard@plumtree.dev" 'action create_task {"board":{"type":"project","project":"plumtree"},"title":"Add smoke test","description":"Cover the release topology"}'
 ssh "${OWNER}/agentboard@plumtree.dev" 'action advance_task {"board":{"type":"project","project":"plumtree"},"task_id":"task-000001","expected_status":"todo"}'
+ssh "${OWNER}/agentboard@plumtree.dev" 'action retreat_task {"board":{"type":"user"},"task_id":"task-000001","expected_status":"in-progress"}'
 ```
 
 The app owner creates and manages project boards with proved SSH fingerprint
@@ -49,6 +50,7 @@ allowlist.
 Workflow authority is shared deliberately:
 
 - callers can move their own Personal-board tasks through the entire workflow;
+- in the TUI, clicking a task's left edge moves it back and clicking the rest moves it forward;
 - on project boards, action callers create tasks in `pending` and advance `todo → in-progress → in-review`;
 - only the app owner, using TUI controls, advances project tasks through `pending → todo` and `in-review → done`;
 - callers pass `expected_status` on advancement, so concurrent stale updates

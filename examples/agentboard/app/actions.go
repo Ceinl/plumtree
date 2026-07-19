@@ -104,6 +104,30 @@ func appActions() sdk.Actions {
 			task, err := advanceTask(board, id, args.TaskID, args.ExpectedStatus, actor)
 			return map[string]any{"caller": identityRef(id), "board": board, "task": task}, err
 		},
+		"retreat_task": func(_ sdk.Ctx, raw json.RawMessage) (any, error) {
+			var args struct {
+				Board          BoardSelector `json:"board"`
+				TaskID         string        `json:"task_id"`
+				ExpectedStatus string        `json:"expected_status"`
+			}
+			if err := decodeArgs(raw, &args); err != nil {
+				return nil, err
+			}
+			id, err := caller()
+			if err != nil {
+				return nil, err
+			}
+			board, err := resolveBoard(args.Board, id)
+			if err != nil {
+				return nil, err
+			}
+			actor := actorAgent
+			if board.Type == "user" {
+				actor = actorPersonal
+			}
+			task, err := retreatTask(board, id, args.TaskID, args.ExpectedStatus, actor)
+			return map[string]any{"caller": identityRef(id), "board": board, "task": task}, err
+		},
 		"create_project_board": func(_ sdk.Ctx, raw json.RawMessage) (any, error) {
 			var args struct {
 				Project string `json:"project"`
