@@ -34,20 +34,27 @@ func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
 
 	frame := renderBoardFrame(&model, 140, 30)
 	for _, want := range []string{
-		"AGENTBOARD",
-		"OWNER MODE",
 		"# Plumtree",
-		"PROJECT  /  plumtree  ·  3 tasks",
-		"shared with 2 members",
 		"PENDING  1",
 		"TO DO  1",
 		"DONE  1",
 		"→  Approve",
 		"#000001",
-		"left edge reverses",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame does not contain %q:\n%s", want, frame)
+		}
+	}
+	for _, removed := range []string{
+		"AGENTBOARD",
+		"OWNER MODE",
+		"PROJECT  /  plumtree",
+		"shared with 2 members",
+		"left edge reverses",
+		"←/→ board",
+	} {
+		if strings.Contains(frame, removed) {
+			t.Fatalf("frame still contains removed chrome %q:\n%s", removed, frame)
 		}
 	}
 	for _, secret := range []string{
@@ -62,7 +69,7 @@ func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
 
 	lines := strings.Split(frame, "\n")
 	headerLine := lineContaining(lines, "PENDING  1")
-	if headerLine < 0 || headerLine > 9 {
+	if headerLine < 0 || headerLine > 2 {
 		t.Fatalf("workflow lanes should begin near the top, got row %d:\n%s", headerLine, frame)
 	}
 }
@@ -98,10 +105,10 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 	}
 	// The second pending card occupies the first lane below the first card and
 	// its spacer. Clicking selects and advances this identity's personal task.
-	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 13, Action: layout.MouseDown}) {
+	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 7, Action: layout.MouseDown}) {
 		t.Fatal("task card did not consume mouse down")
 	}
-	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 13, Action: layout.MouseUp}) {
+	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 7, Action: layout.MouseUp}) {
 		t.Fatal("task card did not consume mouse up")
 	}
 	if model.taskIndex != 1 {
@@ -113,8 +120,8 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 	component = model.View()
 	component.Layout(0, 0, 140, 30)
 	handler = component.(layout.MouseHandler)
-	if !handler.HandleMouse(layout.MouseEvent{X: 31, Y: 9, Action: layout.MouseDown}) ||
-		!handler.HandleMouse(layout.MouseEvent{X: 31, Y: 9, Action: layout.MouseUp}) {
+	if !handler.HandleMouse(layout.MouseEvent{X: 31, Y: 3, Action: layout.MouseDown}) ||
+		!handler.HandleMouse(layout.MouseEvent{X: 31, Y: 3, Action: layout.MouseUp}) {
 		t.Fatal("task back edge did not consume click")
 	}
 	if model.tasks[1].Status != "pending" {

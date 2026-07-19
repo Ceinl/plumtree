@@ -59,15 +59,13 @@ var statusThemes = map[string]statusTheme{
 }
 
 var (
-	appBackground    = styled([3]uint8{16, 17, 24}, [3]uint8{221, 222, 232})
-	headerBackground = styled([3]uint8{25, 26, 37}, [3]uint8{244, 244, 250})
-	tabsBackground   = styled([3]uint8{20, 21, 30}, [3]uint8{183, 185, 201})
-	panelBackground  = styled([3]uint8{24, 25, 35}, [3]uint8{221, 222, 232})
-	mutedStyle       = styled([3]uint8{24, 25, 35}, [3]uint8{129, 132, 151})
-	footerBackground = styled([3]uint8{28, 29, 41}, [3]uint8{176, 179, 197})
-	errorBackground  = styled([3]uint8{79, 34, 45}, [3]uint8{255, 221, 226}, tui.Bold)
-	selectedCard     = styled([3]uint8{53, 54, 75}, [3]uint8{255, 255, 255}, tui.Bold)
-	pressedCard      = styled([3]uint8{72, 73, 99}, [3]uint8{255, 255, 255}, tui.Bold)
+	appBackground   = styled([3]uint8{16, 17, 24}, [3]uint8{221, 222, 232})
+	tabsBackground  = styled([3]uint8{20, 21, 30}, [3]uint8{183, 185, 201})
+	panelBackground = styled([3]uint8{24, 25, 35}, [3]uint8{221, 222, 232})
+	mutedStyle      = styled([3]uint8{24, 25, 35}, [3]uint8{129, 132, 151})
+	errorBackground = styled([3]uint8{79, 34, 45}, [3]uint8{255, 221, 226}, tui.Bold)
+	selectedCard    = styled([3]uint8{53, 54, 75}, [3]uint8{255, 255, 255}, tui.Bold)
+	pressedCard     = styled([3]uint8{72, 73, 99}, [3]uint8{255, 255, 255}, tui.Bold)
 )
 
 func (m *boardModel) initialize() {
@@ -238,55 +236,24 @@ func (m *boardModel) View() tui.Component {
 	root.SetDirection(tui.Column)
 	root.SetSize(tui.Grow, tui.Grow)
 	root.SetStyle(appBackground)
-	root.AppendChild(m.header())
 
 	if m.err != "" {
 		root.AppendChild(banner("!  "+m.err, errorBackground))
 	}
 	if len(m.boards) == 0 {
 		root.AppendChild(emptyWorkspace())
-		root.AppendChild(m.footer())
 		return root
 	}
 
 	root.AppendChild(m.boardPicker())
-	root.AppendChild(m.boardSummary())
 	root.AppendChild(m.boardColumns())
-	root.AppendChild(m.footer())
 	return root
-}
-
-func (m *boardModel) header() tui.Component {
-	header := components.NewDiv()
-	header.SetDirection(tui.Row)
-	header.SetSize(tui.Grow, tui.Px(2))
-	header.SetPadding(tui.Padding{Left: tui.Px(2), Right: tui.Px(2)})
-	header.SetStyle(headerBackground)
-
-	brand := fixedBox(tui.Px(25), tui.Grow, headerBackground)
-	brand.AppendChild(text("◆  AGENTBOARD\nworkflow capability demo", headerBackground, components.AlignLeft))
-	header.AppendChild(brand)
-	header.AppendChild(spacer(tui.Px(1), tui.Grow, headerBackground))
-
-	modeLabel, modeDetail := "USER MODE", "SSH identity"
-	if m.selectedBoardType() == "user" {
-		modeLabel, modeDetail = "PERSONAL MODE", "move your private tasks"
-	} else if m.selectedBoardType() == "project" && m.identity.OwnsApp {
-		modeLabel, modeDetail = "OWNER MODE", "review gates enabled"
-	} else if m.selectedBoardType() == "project" {
-		modeLabel, modeDetail = "MEMBER MODE", "work on shared tasks"
-	}
-	modeStyle := styled([3]uint8{25, 26, 37}, [3]uint8{151, 154, 177}, tui.Bold)
-	mode := fixedBox(tui.Grow, tui.Grow, modeStyle)
-	mode.AppendChild(text(modeLabel+"\n"+modeDetail, modeStyle, components.AlignRight))
-	header.AppendChild(mode)
-	return header
 }
 
 func (m *boardModel) boardPicker() tui.Component {
 	picker := components.NewDiv()
 	picker.SetDirection(tui.Row)
-	picker.SetSize(tui.Grow, tui.Px(2))
+	picker.SetSize(tui.Grow, tui.Px(1))
 	picker.SetPadding(tui.Padding{Left: tui.Px(2), Right: tui.Px(2)})
 	picker.SetStyle(tabsBackground)
 
@@ -317,29 +284,11 @@ func (m *boardModel) boardPicker() tui.Component {
 	return picker
 }
 
-func (m *boardModel) boardSummary() tui.Component {
-	board := m.boards[m.selected]
-	summary := components.NewDiv()
-	summary.SetSize(tui.Grow, tui.Px(2))
-	summary.SetPadding(tui.Padding{Left: tui.Px(2), Right: tui.Px(2)})
-	summary.SetStyle(tabsBackground)
-
-	kind, detail := "PERSONAL BOARD", "private to your SSH identity"
-	if board.Type == "project" {
-		kind = "PROJECT  /  " + board.Project
-		detail = fmt.Sprintf("shared with %d member%s", len(board.Members), plural(len(board.Members)))
-	}
-	count := fmt.Sprintf("%d task%s", len(m.tasks), plural(len(m.tasks)))
-	content := fmt.Sprintf("%s  ·  %s\n%s  ·  live updates", kind, count, detail)
-	summary.AppendChild(text(content, styled([3]uint8{20, 21, 30}, [3]uint8{173, 176, 196}), components.AlignLeft))
-	return summary
-}
-
 func (m *boardModel) boardColumns() tui.Component {
 	columns := components.NewDiv()
 	columns.SetDirection(tui.Row)
 	columns.SetSize(tui.Grow, tui.Grow)
-	columns.SetPadding(tui.Padding{Top: tui.Px(1), Bottom: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
+	columns.SetPadding(tui.Padding{Bottom: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
 	columns.SetStyle(appBackground)
 
 	for statusIndex, status := range workflow {
@@ -430,31 +379,6 @@ func (m *boardModel) taskCard(index int, theme statusTheme) tui.Component {
 	return card
 }
 
-func (m *boardModel) footer() tui.Component {
-	footer := components.NewDiv()
-	footer.SetDirection(tui.Row)
-	footer.SetSize(tui.Grow, tui.Px(2))
-	footer.SetPadding(tui.Padding{Top: tui.Px(1), Left: tui.Px(2), Right: tui.Px(2)})
-	footer.SetStyle(footerBackground)
-
-	context := "USER  ·  connected with your SSH identity"
-	hints := "←/→ board  ↑/↓ task  ↵/click  q"
-	if m.selectedBoardType() == "user" {
-		context = "PERSONAL  ·  left edge moves back  ·  task moves forward"
-	} else if m.selectedBoardType() == "project" && m.identity.OwnsApp {
-		context = "OWNER  ·  left edge reverses  ·  task advances review"
-	} else if m.selectedBoardType() == "project" {
-		context = "MEMBER  ·  left edge moves back  ·  task moves forward"
-	}
-	left := fixedBox(tui.Grow, tui.Grow, footerBackground)
-	left.AppendChild(text(context, footerBackground, components.AlignLeft))
-	footer.AppendChild(left)
-	right := fixedBox(tui.Px(36), tui.Grow, footerBackground)
-	right.AppendChild(text(hints, footerBackground, components.AlignRight))
-	footer.AppendChild(right)
-	return footer
-}
-
 func emptyWorkspace() tui.Component {
 	empty := fixedBox(tui.Grow, tui.Grow, panelBackground)
 	empty.SetPadding(tui.Padding{Top: tui.Px(3), Left: tui.Px(4), Right: tui.Px(4)})
@@ -502,11 +426,4 @@ func shortTaskID(id string) string {
 		return "#" + suffix
 	}
 	return id
-}
-
-func plural(count int) string {
-	if count == 1 {
-		return ""
-	}
-	return "s"
 }
