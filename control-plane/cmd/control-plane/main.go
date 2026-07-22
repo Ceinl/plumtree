@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -19,6 +21,7 @@ import (
 
 	buildworker "github.com/Ceinl/plumtree/build-worker"
 	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
+	"github.com/Ceinl/plumtree/control-plane/internal/buildassets"
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
 	"github.com/Ceinl/plumtree/control-plane/internal/gatewaybackend"
 	"github.com/Ceinl/plumtree/control-plane/internal/httpapi"
@@ -36,39 +39,50 @@ const (
 
 // buildBackend selects the source-to-WASM build implementation. A non-empty URL
 // targets a separate build-worker process; otherwise an in-process sandboxed
-// builder is used. devRoot, when it contains sibling sdk/ and tui-runtime/
-// modules, ties them into the build workspace so the in-process builder resolves
-// the unpublished SDK without a registry — a local development convenience. In
-// production the SDK is published and resolved through GOPROXY, so devRoot is
-// left unset and the build stays fully hermetic (GOPROXY=off).
-func buildBackend(url, token, devRoot string) httpapi.BuildBackend {
+// builder is used. The in-process builder defaults to the SDK, TUI runtime, and
+// offline module proxy embedded in the server binary. devRoot replaces those
+// assets with modules from a repository checkout for local development.
+func buildBackend(url, token, devRoot string) (httpapi.BuildBackend, func() error, error) {
 	if url != "" {
-		return buildworker.NewClient(url, token)
+		return buildworker.NewClient(url, token), func() error { return nil }, nil
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		return nil, nil, errors.New("in-process builds require a Go toolchain on PATH (or configure -build-url)")
 	}
 	cfg := buildworker.Config{}
-	if mods := workspaceModules(devRoot); len(mods) > 0 {
+	if devRoot != "" {
+		mods, err := workspaceModules(devRoot)
+		if err != nil {
+			return nil, nil, err
+		}
 		cfg.WorkspaceModules = mods
 		// The workspace provides the unpublished SDK/runtime; their transitive
 		// dependencies still resolve through the operator's proxy.
 		cfg.GoProxy = env("GOPROXY", "https://proxy.golang.org,direct")
+		return buildworker.NewBuilder(cfg), func() error { return nil }, nil
 	}
-	return buildworker.NewBuilder(cfg)
+
+	assets, err := buildassets.Extract()
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare embedded build dependencies: %w", err)
+	}
+	cfg.WorkspaceModules = assets.WorkspaceModules
+	cfg.GoProxy = assets.GoProxy
+	return buildworker.NewBuilder(cfg), assets.Cleanup, nil
 }
 
-// workspaceModules returns the local module directories under devRoot to add to
-// the build workspace, or nil when devRoot is unset or incomplete.
-func workspaceModules(devRoot string) []string {
-	if devRoot == "" {
-		return nil
-	}
+// workspaceModules validates the local development modules under devRoot.
+func workspaceModules(devRoot string) ([]string, error) {
 	var mods []string
 	for _, name := range []string{"sdk", "tui-runtime"} {
 		dir := filepath.Join(devRoot, name)
-		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-			mods = append(mods, dir)
+		fi, err := os.Stat(filepath.Join(dir, "go.mod"))
+		if err != nil || fi.IsDir() {
+			return nil, fmt.Errorf("build dev root %q does not contain a complete %s module", devRoot, name)
 		}
+		mods = append(mods, dir)
 	}
-	return mods
+	return mods, nil
 }
 
 func main() {
@@ -115,7 +129,7 @@ func main() {
 	seedDemo := flag.Bool("seed-demo", false, "seed a demo owner/app for local UI development")
 	buildURL := flag.String("build-url", env("PLUMTREE_BUILD_URL", ""), "remote build-worker URL; empty uses an in-process sandboxed builder")
 	buildToken := flag.String("build-token", env("PLUMTREE_BUILD_TOKEN", ""), "shared token sent to the remote build-worker")
-	buildDevRoot := flag.String("build-dev-root", env("PLUMTREE_DEV_ROOT", ""), "local repo root whose sdk/ and tui-runtime/ tie into the build workspace so the in-process builder resolves the unpublished SDK (local dev only)")
+	buildDevRoot := flag.String("build-dev-root", env("PLUMTREE_DEV_ROOT", ""), "override the embedded sdk/ and tui-runtime/ with modules from a local repository root (development only)")
 	maxConcurrentBuilds := flag.Int("max-concurrent-builds", envInt("PLUMTREE_MAX_CONCURRENT_BUILDS", 2), "max simultaneous source builds; 0 = unlimited")
 	maxQueuedBuilds := flag.Int("max-queued-builds", envInt("PLUMTREE_MAX_QUEUED_BUILDS", 8), "max source builds waiting for capacity; 0 rejects when busy")
 	production := flag.Bool("production", envBool("PLUMTREE_PRODUCTION", false), "enable production safety checks")
@@ -176,7 +190,15 @@ func main() {
 		seed(store)
 	}
 
-	build := buildBackend(*buildURL, *buildToken, *buildDevRoot)
+	build, cleanupBuild, err := buildBackend(*buildURL, *buildToken, *buildDevRoot)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := cleanupBuild(); err != nil {
+			log.Printf("clean up embedded build dependencies: %v", err)
+		}
+	}()
 
 	handler := httpapi.NewWithConfig(httpapi.Config{
 		Store:               store,

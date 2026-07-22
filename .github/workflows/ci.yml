@@ -33,6 +33,11 @@ jobs:
           fi
       - name: Check whitespace
         run: git diff --check
+      - name: Check embedded build assets
+        run: |
+          cd control-plane
+          go generate ./internal/buildassets
+          git diff --exit-code -- internal/buildassets/bundle.tar.gz
       - name: Vet workspace modules
         run: ./scripts/workspace-check.sh vet
 

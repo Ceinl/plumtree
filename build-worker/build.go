@@ -54,10 +54,10 @@ type Config struct {
 	AllowedModules []string
 	// WorkspaceModules are local module directories (e.g. an unpublished SDK and
 	// TUI runtime) tied into a generated go.work alongside the uploaded source so
-	// the build resolves them without a published version. This is a local
-	// development path; production resolves published modules through GoProxy.
-	// When set, GOFLAGS uses -mod=mod and GoProxy should permit transitive
-	// dependency downloads (it is not forced to "off").
+	// the build resolves them without a published version. They may come from a
+	// development checkout or from assets bundled with the worker. GoProxy must
+	// resolve any transitive dependencies, either through a trusted remote mirror
+	// or a bundled file proxy.
 	WorkspaceModules []string
 	// ExtraEnv is appended to the hermetic build environment.
 	ExtraEnv []string
