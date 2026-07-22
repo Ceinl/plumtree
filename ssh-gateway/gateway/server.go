@@ -39,6 +39,10 @@ type Server struct {
 	// worker process, while this gateway retains credentials and capabilities.
 	RunnerEndpoint string
 	RunnerToken    string
+	// AllowHostCommands gives claimed apps the ability to execute programs as
+	// the gateway OS user. It is off by default and intended only for trusted
+	// apps on private/self-hosted servers.
+	AllowHostCommands bool
 	// MaxConcurrentSessions caps how many sessions run on this gateway at once
 	// (the runner-wide concurrency quota). 0 means unlimited. Per-owner limits
 	// are enforced separately by the Backend's session accounting.

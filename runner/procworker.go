@@ -51,6 +51,9 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	if capBits&capFetch != 0 {
 		caps.Fetch = proxyFetch{rpc}
 	}
+	if capBits&capExec != 0 {
+		caps.Exec = proxyExec{rpc}
+	}
 	caps.Goodbye = new(string)
 	logs := &boundedBuffer{max: maxSessionLog}
 	var runErr error
@@ -237,6 +240,33 @@ func (f proxyFetch) Fetch(_ context.Context, req abi.FetchRequest) (abi.FetchRes
 		return abi.FetchResponse{}, errEgressUnavailable
 	default:
 		return abi.FetchResponse{}, errRPC
+	}
+}
+
+type proxyExec struct{ rpc *workerRPC }
+
+func (e proxyExec) Run(ctx context.Context, req abi.ExecRequest) (abi.ExecResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return abi.ExecResponse{}, err
+	}
+	rp, err := e.rpc.call(opExec, abi.EncodeExecRequest(req))
+	if err != nil || len(rp) == 0 {
+		if ctx.Err() != nil {
+			return abi.ExecResponse{}, ctx.Err()
+		}
+		return abi.ExecResponse{}, errRPC
+	}
+	switch rp[0] {
+	case 0:
+		resp, err := abi.DecodeExecResponse(rp[1:])
+		if err != nil {
+			return abi.ExecResponse{}, errRPC
+		}
+		return resp, nil
+	case 2:
+		return abi.ExecResponse{}, ErrExecTooLarge
+	default:
+		return abi.ExecResponse{}, errRPC
 	}
 }
 

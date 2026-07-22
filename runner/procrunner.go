@@ -65,6 +65,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 	if err := validateLimits(lim); err != nil {
 		return err
 	}
+	callerCtx := ctx
+	if lim.SessionTimeout > 0 {
+		var cancelSession context.CancelFunc
+		ctx, cancelSession = context.WithTimeout(ctx, lim.SessionTimeout)
+		defer cancelSession()
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	worker, err := pr.startWorker(ctx)
 	if err != nil {
@@ -97,6 +103,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 		o, payload, err := readMsgBounded(worker.out, maxWorkerPayload)
 		if err != nil {
 			// Worker exited or pipe closed. Prefer the caller's cancellation cause.
+			if callerCtx.Err() != nil {
+				return callerCtx.Err()
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ErrSessionDeadline
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -125,6 +137,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			return nil
 		}
 		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, out); err != nil {
+			if callerCtx.Err() != nil {
+				return callerCtx.Err()
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ErrSessionDeadline
+			}
 			return err
 		}
 	}
@@ -135,6 +153,7 @@ const (
 	maxWorkerOutput = 64 << 10
 	maxWorkerError  = 64 << 10
 	maxEncodedFetch = 2 + abi.FetchMaxMethod + 2 + abi.FetchMaxURL + 4 + abi.FetchMaxBody
+	maxEncodedExec  = 4 + abi.ExecMaxName + 4 + abi.ExecMaxArgs*(4+abi.ExecMaxArg)
 )
 
 func maxWorkerPayload(o op) uint32 {
@@ -159,6 +178,8 @@ func maxWorkerPayload(o op) uint32 {
 		return abi.EnvMaxKey
 	case opFetch:
 		return maxEncodedFetch
+	case opExec:
+		return maxEncodedExec
 	case opDone:
 		return 8 + maxWorkerError + abi.GoodbyeMaxLen + maxSessionLog
 	case opOutput:
@@ -390,6 +411,26 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 
 	case opFetch:
 		return pr.serveFetch(ctx, w, payload, caps)
+
+	case opExec:
+		if caps.Exec == nil {
+			return writeMsg(w, opResp, []byte{1})
+		}
+		req, err := abi.DecodeExecRequest(payload)
+		if err != nil || !validExecRequest(req) {
+			return writeMsg(w, opResp, []byte{2})
+		}
+		resp, err := caps.Exec.Run(ctx, req)
+		switch {
+		case errors.Is(err, ErrExecTooLarge):
+			return writeMsg(w, opResp, []byte{2})
+		case err != nil:
+			return writeMsg(w, opResp, []byte{3})
+		case len(resp.Stdout) > abi.ExecMaxOutput || len(resp.Stderr) > abi.ExecMaxOutput:
+			return writeMsg(w, opResp, []byte{2})
+		default:
+			return writeMsg(w, opResp, append([]byte{0}, abi.EncodeExecResponse(resp)...))
+		}
 
 	case opOutput:
 		if out == nil || len(payload) > maxWorkerOutput {

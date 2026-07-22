@@ -41,6 +41,7 @@ const (
 	opOutput  op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
 	opKVList  op = 15
 	opKVCAS   op = 16
+	opExec    op = 17
 )
 
 // maxFrame bounds a single protocol message, guarding against a corrupt length.
@@ -105,6 +106,7 @@ const (
 	capAuth  byte = 1 << 2
 	capEnv   byte = 1 << 3
 	capFetch byte = 1 << 4
+	capExec  byte = 1 << 5
 )
 
 // capMask returns the presence bitmask for caps.
@@ -124,6 +126,9 @@ func capMask(caps Capabilities) byte {
 	}
 	if caps.Fetch != nil {
 		m |= capFetch
+	}
+	if caps.Exec != nil {
+		m |= capExec
 	}
 	return m
 }

@@ -50,6 +50,7 @@ func main() {
 		RunnerWorker:          flags.runnerWorker,
 		RunnerEndpoint:        flags.runnerEndpoint,
 		RunnerToken:           flags.runnerToken,
+		AllowHostCommands:     flags.allowHostCommands,
 		Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
 		Ready: func(a net.Addr) {
 			host, port, _ := net.SplitHostPort(a.String())
@@ -65,6 +66,9 @@ func main() {
 		fmt.Printf("runner isolation: %s\n", flags.runnerWorker)
 	} else {
 		fmt.Println("runner isolation: in-process sandbox")
+	}
+	if flags.allowHostCommands {
+		fmt.Fprintln(os.Stderr, "WARNING: host commands enabled; claimed apps execute with the ssh-gateway user's authority")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -91,6 +95,7 @@ type config struct {
 	maxConnectionsPerIP int
 	production          bool
 	ackUnlimited        bool
+	allowHostCommands   bool
 }
 
 func parseFlags() config {
@@ -110,6 +115,7 @@ func parseFlags() config {
 	maxConnectionsPerIP := flag.Int("max-connections-per-ip", envInt("PLUMTREE_MAX_CONNECTIONS_PER_IP", gateway.DefaultMaxConnectionsPerIP), "maximum admitted TCP connections per client IP; negative disables")
 	production := flag.Bool("production", envBool("PLUMTREE_PRODUCTION", false), "enable production safety checks")
 	ackUnlimited := flag.Bool("acknowledge-unlimited-limits", envBool("PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS", false), "allow production startup with critical limits disabled")
+	allowHostCommands := flag.Bool("allow-host-commands", envBool("PLUMTREE_ALLOW_HOST_COMMANDS", false), "allow claimed apps to execute local programs as the gateway user (trusted self-hosting only)")
 	flag.Parse()
 	return config{
 		controlURL:          *controlURL,
@@ -128,6 +134,7 @@ func parseFlags() config {
 		maxConnectionsPerIP: *maxConnectionsPerIP,
 		production:          *production,
 		ackUnlimited:        *ackUnlimited,
+		allowHostCommands:   *allowHostCommands,
 	}
 }
 

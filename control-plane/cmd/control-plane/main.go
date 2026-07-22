@@ -109,6 +109,7 @@ func main() {
 	maxAppsPerOwner := flag.Int("max-apps-per-owner", envInt("PLUMTREE_MAX_APPS_PER_OWNER", firstPositiveInt(fileCfg.MaxAppsPerOwner, 25)), "max apps a single owner may create; 0 = unlimited")
 	deployClaimTTL := flag.Duration("deploy-claim-ttl", envDuration("PLUMTREE_DEPLOY_CLAIM_TTL", firstDuration(fileTTL, control.DeployClaimTTL)), "how long an unclaimed deploy may exist before garbage collection")
 	anonPreview := flag.Bool("anonymous-preview", envBool("PLUMTREE_ANONYMOUS_PREVIEW", false), "allow running any deploy unclaimed at ssh preview-<deployID>@host, in the tightest sandbox")
+	allowHostCommands := flag.Bool("allow-host-commands", envBool("PLUMTREE_ALLOW_HOST_COMMANDS", fileCfg.AllowHostCommands), "allow claimed apps to execute local programs as the server user (trusted self-hosting only)")
 	rateLimit := flag.Int("rate-limit", envInt("PLUMTREE_RATE_LIMIT", 20), "dashboard/API requests per second per client IP; 0 = unlimited")
 	rateBurst := flag.Int("rate-burst", envInt("PLUMTREE_RATE_BURST", 40), "dashboard/API rate-limit burst per client IP")
 	seedDemo := flag.Bool("seed-demo", false, "seed a demo owner/app for local UI development")
@@ -223,6 +224,9 @@ func main() {
 	if *gatewayToken != "" {
 		fmt.Println("  gateway API enabled at /internal/gateway (for a standalone ssh-gateway)")
 	}
+	if *allowHostCommands {
+		fmt.Fprintln(os.Stderr, "WARNING: host commands enabled; claimed apps execute with the server user's authority")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -251,6 +255,7 @@ func main() {
 			RunnerWorker:          *runnerWorker,
 			RunnerEndpoint:        *runnerEndpoint,
 			RunnerToken:           *runnerToken,
+			AllowHostCommands:     *allowHostCommands,
 			Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
 			Ready: func(a net.Addr) {
 				host, port, _ := net.SplitHostPort(a.String())

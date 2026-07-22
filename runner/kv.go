@@ -55,6 +55,9 @@ type Capabilities struct {
 	// Fetch is the gated outbound-HTTP capability, or nil for default-deny egress
 	// (the common case; only claimed apps with an allowlist get one).
 	Fetch Fetcher
+	// Exec runs local programs as the server OS user. It is nil by default and
+	// should only be installed for claimed apps on an explicitly trusted host.
+	Exec Commander
 	// Goodbye is an optional message set by the guest, displayed on the user's
 	// terminal after the session ends (after the alt-screen is closed). The
 	// host allocates Goodbye = new(string) before calling Run and reads the

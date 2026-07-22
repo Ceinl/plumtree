@@ -86,8 +86,9 @@ func TestCapMask(t *testing.T) {
 		Auth:  StaticAuth{},
 		Env:   MapEnv{},
 		Fetch: NewAllowlistFetcher([]string{"example.com"}),
+		Exec:  LocalCommander{},
 	}
-	if m, want := capMask(full), capKV|capBus|capAuth|capEnv|capFetch; m != want {
+	if m, want := capMask(full), capKV|capBus|capAuth|capEnv|capFetch|capExec; m != want {
 		t.Errorf("full caps mask = %#b, want %#b", m, want)
 	}
 	if m := capMask(Capabilities{KV: NewMemStore(0, 0)}); m != capKV {
