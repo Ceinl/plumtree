@@ -115,10 +115,13 @@ func deployReadOptions(deployArg string) (*deployMetadata, string, string, strin
 }
 
 // usableDeployMetadata reports whether saved metadata can update an existing
-// deploy in place: it just needs the deploy identity, since the server URL and
-// token now come from the environment rather than the file.
-func usableDeployMetadata(meta *deployMetadata) bool {
-	return meta != nil && meta.DeployID != "" && meta.ClaimToken != ""
+// deploy in place. Deploy identities are scoped to the server that issued them,
+// while the shared deploy token comes from runtime configuration.
+func usableDeployMetadata(meta *deployMetadata, serverURL string) bool {
+	return meta != nil &&
+		meta.DeployID != "" &&
+		meta.ClaimToken != "" &&
+		normalizedServerURL(meta.ServerURL) == normalizedServerURL(serverURL)
 }
 
 func normalizedServerURL(raw string) string {

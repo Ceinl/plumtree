@@ -68,7 +68,7 @@ func cmdDeploy(args []string) error {
 
 	var res deployResponse
 	usedExistingClaim := false
-	if usableDeployMetadata(meta) {
+	if usableDeployMetadata(meta, server) {
 		res, err = putDeploy(context.Background(), server, devToken, meta.DeployID, meta.ClaimToken, req)
 		if err == nil {
 			usedExistingClaim = true
@@ -97,7 +97,6 @@ func cmdDeploy(args []string) error {
 	}
 	nextMeta := deployMetadata{
 		ServerURL:      server,
-		DevToken:       devToken,
 		DeployID:       res.Deploy.ID,
 		ClaimToken:     claimToken,
 		ClaimURL:       claimURL,

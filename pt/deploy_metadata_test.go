@@ -85,6 +85,20 @@ func TestDeployReadOptionsDefaultsLocalDevToken(t *testing.T) {
 	}
 }
 
+func TestUsableDeployMetadataRequiresMatchingServer(t *testing.T) {
+	meta := &deployMetadata{
+		ServerURL:  "https://plumtree.example/",
+		DeployID:   "dep_000001",
+		ClaimToken: "claim-token",
+	}
+	if !usableDeployMetadata(meta, "https://plumtree.example") {
+		t.Fatal("matching server metadata was not usable")
+	}
+	if usableDeployMetadata(meta, "https://other.example") {
+		t.Fatal("metadata from another server was usable")
+	}
+}
+
 func TestClaimTokenFromURL(t *testing.T) {
 	raw := "http://localhost:18080/claim/dep_000001/token_abc-123"
 	if got := claimTokenFromURL(raw, "dep_000001"); got != "token_abc-123" {
