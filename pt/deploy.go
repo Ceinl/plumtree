@@ -21,10 +21,12 @@ func cmdDeploy(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("usage: pt deploy")
 	}
-	server := resolveServerURL()
-	devToken := resolveDevToken()
+	server, devToken, err := resolveConnection()
+	if err != nil {
+		return err
+	}
 	if devToken == "" {
-		return errors.New("missing deploy token; set PLUMTREE_DEV_TOKEN in the environment")
+		return errors.New("missing deploy token; run `pt configure --token TOKEN` or set PLUMTREE_DEV_TOKEN")
 	}
 
 	proj, err := findProject()

@@ -88,50 +88,35 @@ go run ./cmd/control-plane \
   -ssh-addr 127.0.0.1:2222
 ```
 
-Register the current app/deploy. The control-plane URL and deploy token come
-from the environment, not flags — so a distributed `pt` can publish to the main
-server without the author configuring anything, and CI can set them as secrets:
+Configure the control-plane URL and deploy token once, then register the current
+app/deploy:
 
 ```bash
-export PLUMTREE_SERVER_URL=http://localhost:18080   # built-in default; bake via -ldflags for prod
-export PLUMTREE_DEV_TOKEN=local-dev                 # build config, baked into release binaries
+pt configure --addr http://localhost:18080 --token local-dev
 pt deploy
 ```
+
+The shorter git-style form is equivalent:
+
+```bash
+pt --addr http://localhost:18080 --token local-dev
+```
+
+Run `pt configure` with no flags to show the saved address and whether a token
+is configured. The token itself is never printed. Use `--clear-addr` or
+`--clear-token` to remove a saved value. Configuration is stored with mode
+`0600` under the OS user config directory (`plumtree/pt.json`).
 
 The first deploy prints `Claim: pt claim` and writes `.plumtree/deploy.json`.
 Run `pt claim` within 5 minutes, sign in with Shoo in the browser, and choose a
 handle if needed. Later `pt deploy` runs update the same claimed app by using
 the saved deploy claim token.
 
-### Baking the server into a release
-
-`PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` can be compiled into the binary so
-a distributed `pt` publishes to your control plane with no configuration — a user
-downloads the release and just runs `pt deploy`. Inject them with `-ldflags`:
-
-```bash
-# pt is `package main`, so the symbol prefix is `main`, not the import path —
-# using the import path silently bakes nothing.
-go build -trimpath -ldflags "\
-  -X main.defaultServerURL=https://your-control-plane.example \
-  -X main.defaultDevToken=$PLUMTREE_DEV_TOKEN" -o pt ./pt
-```
-
-Or use the Makefile, which bakes the local dev values from `ORIGIN` and
-`DEV_TOKEN`:
-
-```bash
-make install-pt                                   # baked pt onto your PATH
-make build-pt                                      # baked ./pt-bin in the repo root
-make install-pt ORIGIN=https://prod.example DEV_TOKEN=...
-```
-
-The release workflow at `.github/workflows/release.yml` does this on tag push,
-reading the two values from repository secrets. The matching `PLUMTREE_*`
-environment variables override the baked values for your own local development.
-
-> The deploy token is embedded in the published binaries and can be extracted by
-> anyone who downloads them. Use a narrowly-scoped token and rotate it if leaked.
+Public releases are generic and contain no server address or deploy token.
+`PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` remain available as temporary
+environment overrides, which is useful for CI. Environment values take
+precedence over `pt configure`; `PLUMTREE_PT_CONFIG` selects an alternate config
+file for isolated automation.
 
 After claiming, these commands use the same saved local claim metadata:
 

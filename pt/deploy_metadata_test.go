@@ -11,6 +11,7 @@ import (
 func seedDeployProject(t *testing.T, meta deployMetadata) {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("PLUMTREE_PT_CONFIG", filepath.Join(t.TempDir(), "pt.json"))
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/app\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +31,8 @@ func seedDeployProject(t *testing.T, meta deployMetadata) {
 	t.Cleanup(func() { os.Chdir(oldwd) })
 }
 
-// The deploy identity comes from the saved file; the server URL and token come
-// from the environment, not the file or any flag.
+// The deploy identity comes from the saved file; environment variables override
+// the global pt configuration and legacy values in per-project metadata.
 func TestDeployReadOptionsUsesEnvForServerAndToken(t *testing.T) {
 	seedDeployProject(t, deployMetadata{
 		ServerURL:  "http://stale-from-file:9999",

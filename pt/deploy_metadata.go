@@ -63,10 +63,9 @@ func updateCurrentDeployMetadata(meta deployMetadata) error {
 	return writeDeployMetadata(proj, meta)
 }
 
-// defaultServerURL and defaultDevToken are baked into the binary at build time
-// so a released pt publishes to the maintainer's control plane with no
-// configuration: a user downloads the release and runs `pt deploy`. The release
-// build injects them from CI secrets, e.g. in GitHub Actions:
+// defaultServerURL and defaultDevToken remain linker-injectable for private
+// builds. Public release binaries leave both empty and use runtime configuration
+// written by `pt configure` instead. A private build may inject them with:
 //
 //	go build -ldflags "\
 //	  -X 'main.defaultServerURL=$PLUMTREE_SERVER_URL' \
@@ -75,8 +74,7 @@ func updateCurrentDeployMetadata(meta deployMetadata) error {
 // pt is `package main`, so the linker symbol path is `main`, not the import
 // path github.com/Ceinl/plumtree/pt.
 //
-// Both are empty in an un-baked local build; the matching PLUMTREE_* environment
-// variables override the baked values for the maintainer's own development.
+// Matching PLUMTREE_* environment variables override saved and baked values.
 var (
 	defaultServerURL = ""
 	defaultDevToken  = ""
@@ -86,23 +84,9 @@ var (
 // supplies one, so an un-baked dev build still targets the local control plane.
 const localServerURL = "http://localhost:18080"
 
-// resolveServerURL returns the deploy target: PLUMTREE_SERVER_URL if set, then
-// the value baked at build time, then the local dev server. The address is build
-// or environment configuration, not a per-command flag, so authors publish to
-// the maintainer's server without knowing or passing it.
-func resolveServerURL() string {
-	return normalizedServerURL(firstNonEmpty(os.Getenv("PLUMTREE_SERVER_URL"), defaultServerURL, localServerURL))
-}
-
-// resolveDevToken returns the deploy token: PLUMTREE_DEV_TOKEN if set, then the
-// value baked at build time. Empty when neither is present.
-func resolveDevToken() string {
-	return firstNonEmpty(os.Getenv("PLUMTREE_DEV_TOKEN"), defaultDevToken)
-}
-
 // deployReadOptions resolves the target for the read-only commands (inspect,
 // logs, whoami): the deploy identity comes from the per-app .plumtree/deploy.json
-// while the server URL and token come from the environment.
+// while the server URL and token come from runtime configuration.
 func deployReadOptions(deployArg string) (*deployMetadata, string, string, string, error) {
 	proj, err := findProject()
 	if err != nil {
@@ -115,8 +99,11 @@ func deployReadOptions(deployArg string) (*deployMetadata, string, string, strin
 	if meta == nil {
 		return nil, "", "", "", errors.New("no deploy claim metadata found; run pt deploy first")
 	}
-	server := resolveServerURL()
-	devToken := firstNonEmpty(resolveDevToken(), "local-dev")
+	server, devToken, err := resolveConnection()
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	devToken = firstNonEmpty(devToken, "local-dev")
 	deployID := deployArg
 	if deployID == "" {
 		deployID = meta.DeployID
