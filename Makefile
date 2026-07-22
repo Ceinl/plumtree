@@ -5,7 +5,6 @@ ADDR ?= 127.0.0.1:18080
 ORIGIN ?= http://localhost:18080
 DEV_TOKEN ?= local-dev
 SSH_ADDR ?= 127.0.0.1:2222
-SSH_HOST ?= plumtree.dev
 SESSION_TIMEOUT ?= 0
 SSH_IDLE_TIMEOUT ?= -1s
 BUILD_DEV_ROOT ?= $(abspath $(CURDIR))
@@ -41,7 +40,6 @@ run-server:
 		-dev-token $(DEV_TOKEN) \
 		-build-dev-root "$(BUILD_DEV_ROOT)" \
 		-ssh-addr $(SSH_ADDR) \
-		-ssh-host $(SSH_HOST) \
 		-session-timeout $(SESSION_TIMEOUT) \
 		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT)
 
@@ -52,7 +50,6 @@ run-server-memory:
 		-dev-token $(DEV_TOKEN) \
 		-build-dev-root "$(BUILD_DEV_ROOT)" \
 		-ssh-addr $(SSH_ADDR) \
-		-ssh-host $(SSH_HOST) \
 		-session-timeout $(SESSION_TIMEOUT) \
 		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT) \
 		-state-file ""
@@ -64,7 +61,6 @@ seed-server:
 		-dev-token $(DEV_TOKEN) \
 		-build-dev-root "$(BUILD_DEV_ROOT)" \
 		-ssh-addr $(SSH_ADDR) \
-		-ssh-host $(SSH_HOST) \
 		-session-timeout $(SESSION_TIMEOUT) \
 		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT) \
 		-seed-demo

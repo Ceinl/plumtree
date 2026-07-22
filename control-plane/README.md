@@ -61,8 +61,12 @@ The same process also starts a local SSH gateway by default. After `pt deploy`,
 connect to the deployed app without starting `pt dev --ssh`:
 
 ```bash
-ssh <app>@plumtree.dev
+ssh -p 2222 -o HostKeyAlias=plumtree-dev -o StrictHostKeyChecking=accept-new <app>@127.0.0.1
 ```
+
+The server does not modify `~/.ssh/config` by default. Pass
+`-ssh-host plumtree-local` (or set `PLUMTREE_SSH_HOST`) to opt into a managed
+alias and connect with `ssh <app>@plumtree-local`.
 
 Control-plane state is persisted by default in the OS config directory. On
 macOS, that is:

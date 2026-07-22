@@ -109,7 +109,7 @@ func main() {
 	runnerEndpoint := flag.String("runner-endpoint", env("PLUMTREE_RUNNER_ENDPOINT", ""), "remote runner broker endpoint (required for embedded SSH in production)")
 	runnerToken := flag.String("runner-token", env("PLUMTREE_RUNNER_TOKEN", ""), "shared token for the remote runner broker")
 	sshAddr := flag.String("ssh-addr", env("PLUMTREE_SSH_ADDR", "127.0.0.1:2222"), "SSH gateway listen address; empty disables SSH")
-	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", firstNonEmpty(fileCfg.SSHHost, "plumtree.dev")), "local SSH host alias written to ~/.ssh/config")
+	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", fileCfg.SSHHost), "optional local SSH host alias to write to ~/.ssh/config; empty prints a raw SSH command")
 	noSSHConfig := flag.Bool("no-ssh-config", false, "do not update ~/.ssh/config for the local SSH gateway")
 	maxFPS := flag.Int("max-fps", 60, "SSH repaint cap")
 	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", gateway.DefaultMaxConcurrentSessions), "max concurrent SSH sessions on this runner; 0 = unlimited")
@@ -288,7 +288,7 @@ func main() {
 				var connect func(handle string) string
 				fmt.Println()
 				switch {
-				case *noSSHConfig:
+				case !shouldInstallDevSSHConfig(*sshHost, *noSSHConfig):
 					fmt.Printf("Users connect over SSH (gateway %s:%s):\n", connectHost, port)
 					connect = func(h string) string {
 						return fmt.Sprintf("ssh -p %s -o HostKeyAlias=plumtree-dev -o StrictHostKeyChecking=accept-new %s@%s", port, h, connectHost)
@@ -540,6 +540,10 @@ const (
 	sshConfigBegin     = "# BEGIN PLUMTREE DEV"
 	sshConfigEnd       = "# END PLUMTREE DEV"
 )
+
+func shouldInstallDevSSHConfig(host string, disabled bool) bool {
+	return !disabled && strings.TrimSpace(host) != ""
+}
 
 func installDevSSHConfig(host, targetHost, port string) (string, error) {
 	home, err := os.UserHomeDir()
