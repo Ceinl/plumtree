@@ -42,6 +42,11 @@ func main() {
 		err = cmdEgress(os.Args[2:])
 	case "whoami":
 		err = cmdWhoami(os.Args[2:])
+	case "configure", "config":
+		err = cmdConfigure(os.Args[2:], os.Stdin, os.Stdout)
+	case "--addr", "--token", "--token-stdin", "--clear-addr", "--clear-token":
+		// Convenient git-style shorthand: `pt --addr URL --token`.
+		err = cmdConfigure(os.Args[1:], os.Stdin, os.Stdout)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -74,6 +79,8 @@ Usage:
   pt secret set|list|rm          manage this app's server-side secrets (claimed apps)
   pt egress add|list|rm          manage this app's outbound HTTP allowlist (claimed apps)
   pt whoami                     show the claimed app namespace for this project
+  pt configure [flags]          save or show server address and deploy token
+  pt --addr URL --token         shorthand with hidden interactive token input
 
 pt dev flags:
   --ssh                serve over SSH; connect with: ssh <app>@plumtree.dev
@@ -88,8 +95,9 @@ pt dev flags:
   --max-fps            tty/ssh repaint cap (default 60)
 
 Environment (deploy/inspect/logs/whoami/secret/egress):
-  PLUMTREE_SERVER_URL  control-plane URL to publish to (preset; built-in default)
-  PLUMTREE_DEV_TOKEN   deploy token; build config, baked into release binaries
+  PLUMTREE_SERVER_URL  temporary control-plane URL override
+  PLUMTREE_DEV_TOKEN   temporary deploy-token override
+  PLUMTREE_PT_CONFIG   alternate pt configuration file
 `)
 }
 

@@ -21,10 +21,12 @@ func cmdDeploy(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("usage: pt deploy")
 	}
-	server := resolveServerURL()
-	devToken := resolveDevToken()
+	server, devToken, err := resolveConnection()
+	if err != nil {
+		return err
+	}
 	if devToken == "" {
-		return errors.New("missing deploy token; set PLUMTREE_DEV_TOKEN in the environment")
+		return errors.New("missing deploy token; run `pt configure --token` or set PLUMTREE_DEV_TOKEN")
 	}
 
 	proj, err := findProject()
@@ -66,7 +68,7 @@ func cmdDeploy(args []string) error {
 
 	var res deployResponse
 	usedExistingClaim := false
-	if usableDeployMetadata(meta) {
+	if usableDeployMetadata(meta, server) {
 		res, err = putDeploy(context.Background(), server, devToken, meta.DeployID, meta.ClaimToken, req)
 		if err == nil {
 			usedExistingClaim = true
@@ -95,7 +97,6 @@ func cmdDeploy(args []string) error {
 	}
 	nextMeta := deployMetadata{
 		ServerURL:      server,
-		DevToken:       devToken,
 		DeployID:       res.Deploy.ID,
 		ClaimToken:     claimToken,
 		ClaimURL:       claimURL,

@@ -39,10 +39,11 @@ ssh -p 2222 <owner>/<app>@<host>        # once something is deployed
   container has no gateway credential, host key, KV volume, or control-plane
   route; it uses a read-only root and bounded tmpfs scratch. A disposable
   `plumtree-runner-worker` process still wraps each wazero sandbox inside it.
-- **Tokens.** Shared operator tokens are compared constant-time. The
-  `PLUMTREE_DEV_TOKEN` ends up inside published `pt` binaries — treat it as
-  build config, not a secret, and rotate it if abused (see
-  `.github/workflows/release.yml`).
+- **Tokens.** Shared operator tokens are compared constant-time. Public `pt`
+  binaries are generic and contain no deploy credential; authors configure a
+  token at runtime with `pt configure --token`, which reads it without
+  exposing it in shell history and stores it in a user-only config file. Keep
+  the token narrowly scoped and rotate it if abused.
 - **State encryption.** The control-plane snapshot (including app secret
   values) uses AES-256-GCM envelope encryption. Each write has a new data key;
   its wrapping key (KEK) comes from the `control_plane_state_kek` Docker secret

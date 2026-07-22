@@ -7,7 +7,8 @@ This is a Plumtree {{.Kind}} app named `{{.Name}}`.
 - Run locally: `pt dev`
 - Deterministic smoke check: `{{.CheckCommand}}`
 - Serve over SSH for manual testing: `pt dev --ssh`
-- Deploy: set `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` in the environment, then `pt deploy` (no flags)
+- Configure once: `pt configure --addr URL --token`
+- Deploy: `pt deploy` (CI may override with `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN`)
 
 ## Project Rules
 

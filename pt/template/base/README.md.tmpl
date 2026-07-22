@@ -23,16 +23,16 @@ Plumtree {{.Kind}} app.
 
 ## Deploy
 
-The control-plane URL and deploy token come from the environment
-(`PLUMTREE_SERVER_URL`, `PLUMTREE_DEV_TOKEN`) — set them once locally, or as
-GitHub Actions secrets in CI:
+Configure the control-plane URL and deploy token once:
 
 ```bash
-export PLUMTREE_SERVER_URL=http://127.0.0.1:18080
-export PLUMTREE_DEV_TOKEN=local-dev
+pt configure --addr http://127.0.0.1:18080 --token
 pt deploy
 pt claim
 ```
+
+CI may use `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` as temporary
+environment overrides instead of changing the saved user configuration.
 
 After the first claim, later deploys (locally or from CI) reuse the deploy id in
 `.plumtree/deploy.json` to update the same app.
