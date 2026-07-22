@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"sync"
-	"syscall"
 
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -67,7 +66,10 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			w, h = int(p.Columns), int(p.Rows)
 			mu.Unlock()
 			select {
-			case winch <- syscall.SIGWINCH:
+			// TTYSource treats this channel as a resize notification and does
+			// not inspect the signal value. os.Interrupt is portable, unlike
+			// syscall.SIGWINCH, so the gateway can also build on Windows.
+			case winch <- os.Interrupt:
 			default:
 			}
 			req.Reply(true, nil)

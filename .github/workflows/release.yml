@@ -1,54 +1,36 @@
 name: release
 
-# Build the pt CLI for a tagged release with the maintainer's control-plane URL
-# and deploy token baked into the binary, so users who download the release can
-# run `pt deploy` against your server with no configuration. The values come from
-# repository secrets PLUMTREE_SERVER_URL and PLUMTREE_DEV_TOKEN.
-#
-# NOTE: the deploy token is embedded in the published binaries and can be
-# extracted by anyone who downloads them. Use a token scoped only to what deploy
-# needs, and rotate it if leaked.
-
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
-
-      - name: Build pt binaries (server + token baked in)
-        env:
-          PLUMTREE_SERVER_URL: ${{ secrets.PLUMTREE_SERVER_URL }}
-          PLUMTREE_DEV_TOKEN: ${{ secrets.PLUMTREE_DEV_TOKEN }}
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Test workspace modules
+        run: ./scripts/workspace-check.sh test
+      - name: Build release assets
+        run: ./scripts/build-release.sh dist
+      - name: Verify checksums
         run: |
-          set -euo pipefail
-          # pt is `package main`, so the linker symbol path is `main`, not the
-          # import path github.com/Ceinl/plumtree/pt. Using the import path here
-          # silently bakes nothing.
-          ldflags="-s -w \
-            -X main.defaultServerURL=${PLUMTREE_SERVER_URL} \
-            -X main.defaultDevToken=${PLUMTREE_DEV_TOKEN}"
-          mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            os=${target%/*}; arch=${target#*/}
-            ext=""; [ "$os" = "windows" ] && ext=".exe"
-            out="dist/pt-${os}-${arch}${ext}"
-            echo "building $out"
-            (cd pt && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
-              go build -trimpath -ldflags "$ldflags" -o "../$out" .)
-          done
-
-      - name: Publish release
+          cd dist
+          sha256sum --check checksums.txt
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

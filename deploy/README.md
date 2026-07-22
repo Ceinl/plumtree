@@ -95,13 +95,25 @@ The build-worker image bakes `sdk/` and `tui-runtime/` at build time — rebuild
 it (`docker compose build build-worker`) whenever they change, or deployed
 authors compile against a stale SDK.
 
-## Releasing pt
+## Releases
 
-Tagged pushes (`v*`) trigger `.github/workflows/release.yml`, which bakes the
-server URL and deploy token into the published binaries. Set the repo secrets
-once:
+Pull requests and pushes to `main` run `.github/workflows/ci.yml`, which checks
+formatting, vets and tests every module declared by `go.work`, runs the race
+detector, and cross-builds the public release contract.
 
-```sh
-gh secret set PLUMTREE_SERVER_URL --body "https://plumtree.example.com"
-gh secret set PLUMTREE_DEV_TOKEN  --body "<same value as .env>"
+Tagged pushes (`v*`) trigger `.github/workflows/release.yml`. Releases are
+generic: server URLs and deploy credentials are runtime configuration and are
+never embedded in public binaries. Each release publishes:
+
+```text
+pt-{linux,darwin}-{amd64,arm64}
+pt-windows-amd64.exe
+plumtree-server-{linux,darwin}-{amd64,arm64}
+plumtree-server-windows-amd64.exe
+checksums.txt
 ```
+
+`plumtree-server` is the all-in-one control-plane binary used for local and
+small self-hosted setups. The production topology remains the separate
+containers described above. `checksums.txt` covers every binary and is the
+machine-readable contract consumed by `ptinstall`.

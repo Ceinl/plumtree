@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [[ -n "$unformatted" ]]; then
+            echo "The following Go files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Check whitespace
+        run: git diff --check
+      - name: Vet workspace modules
+        run: ./scripts/workspace-check.sh vet
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Test workspace modules
+        run: ./scripts/workspace-check.sh test
+      - name: Test workspace modules with race detector
+        run: ./scripts/workspace-check.sh race
+
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Cross-build release assets
+        run: ./scripts/build-release.sh dist
+      - name: Verify release asset contract
+        run: |
+          expected=(
+            checksums.txt
+            pt-linux-amd64
+            pt-linux-arm64
+            pt-darwin-amd64
+            pt-darwin-arm64
+            pt-windows-amd64.exe
+            plumtree-server-linux-amd64
+            plumtree-server-linux-arm64
+            plumtree-server-darwin-amd64
+            plumtree-server-darwin-arm64
+            plumtree-server-windows-amd64.exe
+          )
+          for asset in "${expected[@]}"; do
+            test -s "dist/$asset"
+          done
+          cd dist
+          sha256sum --check checksums.txt

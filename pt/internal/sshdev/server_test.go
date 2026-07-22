@@ -16,6 +16,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// Race instrumentation substantially slows wazero compilation on CI runners.
+// Keep the end-to-end SSH assertion bounded while allowing the instrumented
+// runtime enough time to produce its first frame.
+const sshIntegrationTimeout = 30 * time.Second
+
 // buildCounter compiles the SDK counter example to WASM, skipping if the
 // toolchain build fails.
 func buildCounter(t *testing.T) []byte {
@@ -81,7 +86,7 @@ func TestServeOverSSH(t *testing.T) {
 	var addr string
 	select {
 	case addr = <-addrCh:
-	case <-time.After(3 * time.Second):
+	case <-time.After(sshIntegrationTimeout):
 		t.Fatal("server did not start")
 	}
 
@@ -115,7 +120,7 @@ func TestServeOverSSH(t *testing.T) {
 	}
 
 	// The initial frame must arrive over the SSH stream.
-	if !waitForContains(&out, "Count: 0", 3*time.Second) {
+	if !waitForContains(&out, "Count: 0", sshIntegrationTimeout) {
 		t.Fatalf("did not receive initial frame; got %q", out.String())
 	}
 	if !strings.Contains(out.String(), "\x1b[?1006h") {
@@ -132,7 +137,7 @@ func TestServeOverSSH(t *testing.T) {
 	go func() { sess.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(sshIntegrationTimeout):
 		t.Fatal("session did not end after 'q' — input not delivered?")
 	}
 	if !strings.Contains(out.String(), "\x1b[?1006l") {
