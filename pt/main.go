@@ -43,10 +43,10 @@ func main() {
 	case "whoami":
 		err = cmdWhoami(os.Args[2:])
 	case "configure", "config":
-		err = cmdConfigure(os.Args[2:], os.Stdout)
-	case "--addr", "--token", "--clear-addr", "--clear-token":
-		// Convenient git-style shorthand: `pt --addr URL --token TOKEN`.
-		err = cmdConfigure(os.Args[1:], os.Stdout)
+		err = cmdConfigure(os.Args[2:], os.Stdin, os.Stdout)
+	case "--addr", "--token", "--token-stdin", "--clear-addr", "--clear-token":
+		// Convenient git-style shorthand: `pt --addr URL --token`.
+		err = cmdConfigure(os.Args[1:], os.Stdin, os.Stdout)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -80,7 +80,7 @@ Usage:
   pt egress add|list|rm          manage this app's outbound HTTP allowlist (claimed apps)
   pt whoami                     show the claimed app namespace for this project
   pt configure [flags]          save or show server address and deploy token
-  pt --addr URL --token TOKEN   shorthand for pt configure
+  pt --addr URL --token         shorthand with hidden interactive token input
 
 pt dev flags:
   --ssh                serve over SSH; connect with: ssh <app>@plumtree.dev

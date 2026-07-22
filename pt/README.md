@@ -92,20 +92,23 @@ Configure the control-plane URL and deploy token once, then register the current
 app/deploy:
 
 ```bash
-pt configure --addr http://localhost:18080 --token local-dev
+pt configure --addr http://localhost:18080 --token
 pt deploy
 ```
 
 The shorter git-style form is equivalent:
 
 ```bash
-pt --addr http://localhost:18080 --token local-dev
+pt --addr http://localhost:18080 --token
 ```
 
 Run `pt configure` with no flags to show the saved address and whether a token
-is configured. The token itself is never printed. Use `--clear-addr` or
-`--clear-token` to remove a saved value. Configuration is stored with mode
-`0600` under the OS user config directory (`plumtree/pt.json`).
+is configured. With an interactive terminal, `--token` prompts without echoing
+the token; it also accepts a single line from standard input for secret managers
+and CI (`--token-stdin` is an explicit alias). The token itself is never
+printed. Use `--clear-addr` or `--clear-token` to remove a saved value.
+Configuration is stored with mode `0600` under the OS user config directory
+(`plumtree/pt.json`).
 
 The first deploy prints `Claim: pt claim` and writes `.plumtree/deploy.json`.
 Run `pt claim` within 5 minutes, sign in with Shoo in the browser, and choose a

@@ -14,7 +14,7 @@ STATE_FILE ?= $(STATE_DIR)/control-plane-state.json
 KV_DIR ?= $(STATE_DIR)/kv
 
 # Public and local pt builds are generic. Configure the installed client with
-# `pt configure --addr URL --token TOKEN`; environment variables remain
+# `pt configure --addr URL --token`; environment variables remain
 # temporary overrides for CI.
 PT_LDFLAGS ?= -s -w
 
@@ -75,8 +75,8 @@ clear-server:
 
 build-pt:
 	cd pt && GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(abspath $(CURDIR))/pt-bin" .
-	@echo "built generic pt-bin; run 'pt-bin configure --addr URL --token TOKEN'"
+	@echo "built generic pt-bin; run 'pt-bin configure --addr URL --token'"
 
 install-pt:
 	cd pt && GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" .
-	@echo "installed generic pt; run 'pt configure --addr URL --token TOKEN'"
+	@echo "installed generic pt; run 'pt configure --addr URL --token'"

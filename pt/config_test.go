@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -23,8 +24,8 @@ func TestConfigureWritesSecureConfig(t *testing.T) {
 	var out bytes.Buffer
 	if err := cmdConfigure([]string{
 		"--addr", "https://plumtree.example/",
-		"--token", "deploy-secret",
-	}, &out); err != nil {
+		"--token-stdin",
+	}, strings.NewReader("deploy-secret\n"), &out); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "deploy-secret") {
@@ -54,7 +55,7 @@ func TestConfigureUpdatesOnlySpecifiedValue(t *testing.T) {
 	if _, err := writePTConfig(ptConfig{ServerURL: "https://old.example", DeployToken: "keep-me"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdConfigure([]string{"--addr", "https://new.example"}, &bytes.Buffer{}); err != nil {
+	if err := cmdConfigure([]string{"--addr", "https://new.example"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := readPTConfig()
@@ -66,12 +67,26 @@ func TestConfigureUpdatesOnlySpecifiedValue(t *testing.T) {
 	}
 }
 
+func TestConfigureTokenAliasReadsStdin(t *testing.T) {
+	isolatePTConfig(t)
+	if err := cmdConfigure([]string{"--token"}, strings.NewReader("deploy-secret\n"), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := readPTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DeployToken != "deploy-secret" {
+		t.Fatalf("deploy token = %q", cfg.DeployToken)
+	}
+}
+
 func TestConfigureClearsToken(t *testing.T) {
 	isolatePTConfig(t)
 	if _, err := writePTConfig(ptConfig{ServerURL: "https://plumtree.example", DeployToken: "remove-me"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdConfigure([]string{"--clear-token"}, &bytes.Buffer{}); err != nil {
+	if err := cmdConfigure([]string{"--clear-token"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := readPTConfig()
@@ -103,6 +118,67 @@ func TestResolveConnectionPrecedence(t *testing.T) {
 	}
 	if server != "https://env.example" || token != "env-token" {
 		t.Fatalf("environment connection = %q %q", server, token)
+	}
+}
+
+func TestResolveConnectionRejectsInvalidEnvironmentURL(t *testing.T) {
+	isolatePTConfig(t)
+	t.Setenv("PLUMTREE_SERVER_URL", "ssh://plumtree.example")
+	if _, _, err := resolveConnection(); err == nil || !strings.Contains(err.Error(), "scheme must be http or https") {
+		t.Fatalf("resolveConnection error = %v", err)
+	}
+}
+
+func TestConfigureRejectsPermissiveExistingConfigBeforeWritingToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file modes do not model group/world permissions")
+	}
+	path := isolatePTConfig(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := cmdConfigure([]string{"--token-stdin"}, strings.NewReader("new-secret\n"), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "insecure permissions") {
+		t.Fatalf("cmdConfigure error = %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "new-secret") {
+		t.Fatalf("permissive config exposed the new deploy token: %q", b)
+	}
+}
+
+func TestWritePTConfigAtomicallyReplacesPermissiveFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file modes do not model group/world permissions")
+	}
+	path := isolatePTConfig(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writePTConfig(ptConfig{DeployToken: "new-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config permissions = %o, want 600", got)
 	}
 }
 
