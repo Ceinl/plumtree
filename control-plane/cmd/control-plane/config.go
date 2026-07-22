@@ -18,6 +18,9 @@ import (
 // so a config file is a convenient baseline that flags/env can still override
 // per run. Keep this in sync with config.example.json.
 type fileConfig struct {
+	// AllowHostCommands lets claimed apps execute local programs as the server
+	// OS user. It is for trusted apps on private/self-hosted servers only.
+	AllowHostCommands bool `json:"allowHostCommands"`
 	// PublicOrigin is the dashboard/claim base URL advertised to authors, e.g.
 	// "https://plumtree.dev". Maps to -origin / PLUMTREE_PUBLIC_ORIGIN.
 	PublicOrigin string `json:"publicOrigin"`

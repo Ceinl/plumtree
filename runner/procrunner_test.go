@@ -62,6 +62,19 @@ func TestProcessRunnerCounter(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerProxiesHostCommands(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "testdata/execguest", "GOWORK=off")
+	var out strings.Builder
+	pr := NewProcessRunner(worker)
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Exec: LocalCommander{}}, nil, &out); err != nil {
+		t.Fatalf("ProcessRunner.RunCLI: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "exit=0 stdout=host-ok") {
+		t.Fatalf("host command did not cross worker protocol: %q", got)
+	}
+}
+
 func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
 	worker := buildWorker(t)
 	wasm := buildGuest(t, "../sdk/examples/mousebutton")

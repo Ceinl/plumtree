@@ -68,6 +68,7 @@ func runCLI(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim
 	hostMod = registerAuth(hostMod, caps.Auth)
 	hostMod = registerEnv(hostMod, caps.Env)
 	hostMod = registerFetch(hostMod, caps.Fetch)
+	hostMod = registerExec(hostMod, caps.Exec)
 	if _, err := hostMod.Instantiate(ctx); err != nil {
 		return fmt.Errorf("install host module: %w", err)
 	}

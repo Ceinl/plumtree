@@ -135,6 +135,24 @@ guest. More trust unlocks more capability:
 | `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
 | `ctx.Env`   | server-side secrets                    | **claimed** apps    |
 | `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
+| `sdk.Exec`  | run a program as the server OS user   | **claimed** apps when operator-enabled |
+
+### Trusted self-hosted apps
+
+Private/self-hosted servers can opt into host command execution for claimed
+apps. Set `allowHostCommands` to `true` in the server JSON config, pass
+`-allow-host-commands`, or set `PLUMTREE_ALLOW_HOST_COMMANDS=true`. Apps can
+then invoke installed tools directly:
+
+```go
+result, err := sdk.Exec("codex", "exec", "summarize the current project")
+```
+
+The option is off by default and never applies to unclaimed preview apps. It is
+an intentional trust-boundary change: commands inherit the server process's
+user, working directory, and environment. Enable it only when every claimed app
+and author on that server is trusted. Command output is capped and execution is
+cancelled when the app session ends.
 
 ## The `pt` CLI
 

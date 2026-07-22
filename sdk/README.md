@@ -63,6 +63,18 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 The guest returns structured cells (rune + RGB + decoration), never raw ANSI;
 the host owns all terminal output. Build and run apps with `pt dev`.
 
+## Trusted host commands
+
+`sdk.Exec(name, args...)` executes a local program and returns its exit code,
+stdout, and stderr. Native development always uses the current process context;
+hosted apps receive this capability only when the server operator explicitly
+enables `allowHostCommands`, and only after the app is claimed. For shell
+syntax, invoke a shell explicitly: `sdk.Exec("sh", "-lc", script)`.
+
+This capability is intended for trusted apps on private/self-hosted servers,
+including apps that invoke locally installed AI-agent CLIs. It grants the app
+the server process's OS authority; it is not part of the default sandbox.
+
 Does not own: platform capability implementations, SSH serving, deploy storage.
 
 ## JSON actions over SSH

@@ -29,6 +29,13 @@ ssh -p 2222 <owner>/<app>@<host>        # once something is deployed
 
 ## Security posture
 
+`PLUMTREE_ALLOW_HOST_COMMANDS=true` is available on the SSH gateway for trusted
+self-hosted installations. It allows every claimed app to execute programs as
+the gateway container user; unclaimed previews remain restricted. This bypasses
+the normal WASM capability boundary by design. Leave it unset on multi-tenant
+servers. In containers, only programs and files available inside the gateway
+container are reachable unless the operator deliberately mounts more.
+
 - **build-worker has no internet egress.** It sits on an `internal: true`
   network with the control plane. Author builds resolve the unpublished
   SDK from module dirs baked into the image and their transitive deps from a
