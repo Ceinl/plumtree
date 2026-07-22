@@ -122,6 +122,9 @@ checksums.txt
 ```
 
 `plumtree-server` is the all-in-one control-plane binary used for local and
-small self-hosted setups. The production topology remains the separate
-containers described above. `checksums.txt` covers every binary and is the
-machine-readable contract consumed by `ptinstall`.
+small self-hosted setups. It embeds the matching Plumtree SDK, TUI runtime, and
+an offline module proxy, so in-process builds do not require a Plumtree source
+checkout or network module resolution. A compatible Go toolchain must still be
+available on `PATH` to compile deployed applications. The production topology
+remains the separate containers described above. `checksums.txt` covers every
+binary and is the machine-readable contract consumed by `ptinstall`.

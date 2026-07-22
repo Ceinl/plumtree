@@ -7,6 +7,13 @@ output_dir=${1:-"$workspace_root/dist"}
 mkdir -p "$output_dir"
 output_dir=$(cd "$output_dir" && pwd)
 
+# Regenerate the server's hermetic build bundle so every release contains the
+# SDK and TUI runtime from the exact source revision being built.
+(
+  cd "$workspace_root/control-plane"
+  go generate ./internal/buildassets
+)
+
 targets=(
   linux/amd64
   linux/arm64
