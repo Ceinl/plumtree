@@ -222,8 +222,15 @@ A multi-module Go workspace (`go.work`), split by product boundary:
 The end-to-end author loop works against a local control plane:
 
 ```
-pt new → pt dev → pt dev --ssh → pt deploy → pt claim → ssh <app>@plumtree.dev
+server: go run ./control-plane/cmd/control-plane
+author: pt new → pt dev → pt deploy → pt claim → ssh -p 2222 <app>@127.0.0.1
 ```
+
+Local server startup is zero-config: HTTP and SSH bind to loopback, and a
+private persistent deploy token is shared automatically with a same-user `pt`
+client. Use `--tailscale` to detect and bind the machine's Tailscale IPv4
+address; startup then prints the one-time client configuration needed on other
+machines.
 
 A deployed app is built server-side from uploaded source, stored as a WASM
 artifact, and streamed over SSH; every session runs in its own wazero sandbox

@@ -12,8 +12,10 @@ import (
 
 func isolatePTConfig(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "nested", "pt.json")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "pt.json")
 	t.Setenv("PLUMTREE_PT_CONFIG", path)
+	t.Setenv("PLUMTREE_DEV_TOKEN_FILE", filepath.Join(dir, "dev-token"))
 	t.Setenv("PLUMTREE_SERVER_URL", "")
 	t.Setenv("PLUMTREE_DEV_TOKEN", "")
 	return path
@@ -126,6 +128,69 @@ func TestResolveConnectionRejectsInvalidEnvironmentURL(t *testing.T) {
 	t.Setenv("PLUMTREE_SERVER_URL", "ssh://plumtree.example")
 	if _, _, err := resolveConnection(); err == nil || !strings.Contains(err.Error(), "scheme must be http or https") {
 		t.Fatalf("resolveConnection error = %v", err)
+	}
+}
+
+func TestResolveConnectionUsesManagedTokenForLocalDefault(t *testing.T) {
+	isolatePTConfig(t)
+	t.Setenv("PLUMTREE_DEV_TOKEN", "seed")
+	os.Unsetenv("PLUMTREE_DEV_TOKEN")
+	path, err := localDevTokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("managed-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server, token, err := resolveConnection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server != localServerURL || token != "managed-token" {
+		t.Fatalf("connection = %q %q, want %q managed-token", server, token, localServerURL)
+	}
+}
+
+func TestConfigureShowsManagedLocalToken(t *testing.T) {
+	isolatePTConfig(t)
+	t.Setenv("PLUMTREE_DEV_TOKEN", "seed")
+	os.Unsetenv("PLUMTREE_DEV_TOKEN")
+	path, err := localDevTokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("managed-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := cmdConfigure(nil, strings.NewReader(""), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Token:   automatic local token") {
+		t.Fatalf("configure output = %q", out.String())
+	}
+}
+
+func TestResolveConnectionDoesNotUseManagedTokenForRemoteServer(t *testing.T) {
+	isolatePTConfig(t)
+	t.Setenv("PLUMTREE_DEV_TOKEN", "seed")
+	os.Unsetenv("PLUMTREE_DEV_TOKEN")
+	path, err := localDevTokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("local-only-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writePTConfig(ptConfig{ServerURL: "https://remote.example"}); err != nil {
+		t.Fatal(err)
+	}
+	server, token, err := resolveConnection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server != "https://remote.example" || token != "" {
+		t.Fatalf("remote connection = %q %q", server, token)
 	}
 }
 

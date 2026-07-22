@@ -136,6 +136,11 @@ func resolveConnection() (serverURL, deployToken string, err error) {
 	if err != nil {
 		return "", "", err
 	}
+	usingLocalDefault := firstNonEmpty(
+		os.Getenv("PLUMTREE_SERVER_URL"),
+		cfg.ServerURL,
+		defaultServerURL,
+	) == ""
 	rawServerURL := firstNonEmpty(
 		os.Getenv("PLUMTREE_SERVER_URL"),
 		cfg.ServerURL,
@@ -151,6 +156,14 @@ func resolveConnection() (serverURL, deployToken string, err error) {
 		cfg.DeployToken,
 		defaultDevToken,
 	)
+	if deployToken == "" && usingLocalDefault {
+		if _, explicitlySet := os.LookupEnv("PLUMTREE_DEV_TOKEN"); !explicitlySet {
+			deployToken, err = readLocalDevToken()
+			if err != nil {
+				return "", "", err
+			}
+		}
+	}
 	return serverURL, deployToken, nil
 }
 
@@ -262,6 +275,12 @@ func printPTConfig(out io.Writer, cfg ptConfig) {
 	token := "not configured"
 	if cfg.DeployToken != "" {
 		token = "configured"
+	} else if cfg.ServerURL == "" && os.Getenv("PLUMTREE_SERVER_URL") == "" && defaultServerURL == "" {
+		if _, explicitlySet := os.LookupEnv("PLUMTREE_DEV_TOKEN"); !explicitlySet {
+			if localToken, err := readLocalDevToken(); err == nil && localToken != "" {
+				token = "automatic local token"
+			}
+		}
 	}
 	fmt.Fprintf(out, "Address: %s\n", addr)
 	fmt.Fprintf(out, "Token:   %s\n", token)

@@ -96,10 +96,11 @@ func main() {
 	fileTTL, _ := fileCfg.deployClaimTTL() // already validated by loadConfig
 
 	flag.String("config", configPath, "path to a JSON operator config file (PLUMTREE_CONFIG)")
-	addr := flag.String("addr", env("PLUMTREE_ADDR", ":8080"), "HTTP listen address")
+	addr := flag.String("addr", env("PLUMTREE_ADDR", "127.0.0.1:8080"), "HTTP listen address")
 	origin := flag.String("origin", env("PLUMTREE_PUBLIC_ORIGIN", firstNonEmpty(fileCfg.PublicOrigin, "http://localhost:8080")), "public dashboard origin")
 	shooBase := flag.String("shoo-base-url", env("SHOO_BASE_URL", shoo.DefaultBaseURL), "Shoo base URL")
-	devToken := flag.String("dev-token", env("PLUMTREE_DEV_TOKEN", ""), "enable local dev deploy API with this token")
+	devTokenDefault, devTokenEnvSet := os.LookupEnv("PLUMTREE_DEV_TOKEN")
+	devToken := flag.String("dev-token", devTokenDefault, "enable local dev deploy API with this token; defaults to a generated local token outside production")
 	gatewayToken := flag.String("gateway-token", env("PLUMTREE_GATEWAY_TOKEN", ""), "enable the gateway API (/internal/gateway) for a standalone SSH gateway with this shared token")
 	stateFile := flag.String("state-file", env("PLUMTREE_STATE_FILE", defaultStateFile()), "persistent state file; empty disables persistence")
 	stateEncryptionKeyFile := flag.String("state-encryption-key-file", env("PLUMTREE_STATE_ENCRYPTION_KEY_FILE", ""), "file containing a base64 32-byte snapshot KEK; mount it outside the state volume")
@@ -111,6 +112,7 @@ func main() {
 	sshAddr := flag.String("ssh-addr", env("PLUMTREE_SSH_ADDR", "127.0.0.1:2222"), "SSH gateway listen address; empty disables SSH")
 	sshHost := flag.String("ssh-host", env("PLUMTREE_SSH_HOST", fileCfg.SSHHost), "optional local SSH host alias to write to ~/.ssh/config; empty prints a raw SSH command")
 	noSSHConfig := flag.Bool("no-ssh-config", false, "do not update ~/.ssh/config for the local SSH gateway")
+	tailscaleMode := flag.Bool("tailscale", envBool("PLUMTREE_TAILSCALE", false), "detect this machine's Tailscale IPv4 address and advertise HTTP and SSH on it")
 	maxFPS := flag.Int("max-fps", 60, "SSH repaint cap")
 	maxSessions := flag.Int("max-sessions", envInt("PLUMTREE_MAX_SESSIONS", gateway.DefaultMaxConcurrentSessions), "max concurrent SSH sessions on this runner; 0 = unlimited")
 	sessionTimeout := flag.Duration("session-timeout", envDuration("PLUMTREE_SESSION_TIMEOUT", runner.DefaultLimits.SessionTimeout), "maximum lifetime of one app session; 0 disables")
@@ -135,6 +137,29 @@ func main() {
 	production := flag.Bool("production", envBool("PLUMTREE_PRODUCTION", false), "enable production safety checks")
 	ackUnlimited := flag.Bool("acknowledge-unlimited-limits", envBool("PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS", false), "allow production startup with critical limits disabled")
 	flag.Parse()
+	setFlags := visitedFlagNames()
+	if *tailscaleMode {
+		ip, err := detectTailscaleIPv4(context.Background())
+		if err != nil {
+			log.Fatal(err)
+		}
+		applyTailscaleDefaults(ip, addr, origin, sshAddr, networkOverrides{
+			addr:   setFlags["addr"] || envIsSet("PLUMTREE_ADDR"),
+			origin: setFlags["origin"] || envIsSet("PLUMTREE_PUBLIC_ORIGIN") || fileCfg.PublicOrigin != "",
+			ssh:    setFlags["ssh-addr"] || envIsSet("PLUMTREE_SSH_ADDR"),
+		})
+	}
+	managedDevToken := false
+	managedDevTokenPath := ""
+	if !*production && !setFlags["dev-token"] && !devTokenEnvSet {
+		token, path, err := loadOrCreateDevToken()
+		if err != nil {
+			log.Fatal(err)
+		}
+		*devToken = token
+		managedDevToken = true
+		managedDevTokenPath = path
+	}
 	if err := validateProductionLimits(*production, *ackUnlimited, *sshAddr != "", productionLimits{
 		maxSessions: *maxSessions, maxSessionsPerAppDay: *maxSessionsPerAppDay,
 		maxDeploysPerHour: *maxDeploysPerHour, maxAppsPerOwner: *maxAppsPerOwner,
@@ -248,6 +273,19 @@ func main() {
 	}
 	if *allowHostCommands {
 		fmt.Fprintln(os.Stderr, "WARNING: host commands enabled; claimed apps execute with the server user's authority")
+	}
+	if *devToken != "" {
+		fmt.Println()
+		fmt.Println("Client setup:")
+		if managedDevToken && !*tailscaleMode {
+			fmt.Println("  pt deploy            uses the generated local token automatically")
+		} else {
+			fmt.Printf("  pt configure --addr %s --token\n", originURL)
+		}
+		if managedDevToken && *tailscaleMode {
+			fmt.Printf("  token: %s\n", *devToken)
+			fmt.Printf("  saved: %s\n", managedDevTokenPath)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

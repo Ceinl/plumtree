@@ -82,7 +82,7 @@ var (
 
 // localServerURL is the fallback when neither a baked value nor the environment
 // supplies one, so an un-baked dev build still targets the local control plane.
-const localServerURL = "http://localhost:18080"
+const localServerURL = "http://127.0.0.1:8080"
 
 // deployReadOptions resolves the target for the read-only commands (inspect,
 // logs, whoami): the deploy identity comes from the per-app .plumtree/deploy.json
