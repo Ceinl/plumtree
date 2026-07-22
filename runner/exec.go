@@ -30,6 +30,7 @@ func (LocalCommander) Run(ctx context.Context, req abi.ExecRequest) (abi.ExecRes
 	cmdCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(cmdCtx, req.Name, req.Args...)
+	configureCommandGroup(cmd)
 	stdout := &execBuffer{max: abi.ExecMaxOutput, cancel: cancel}
 	stderr := &execBuffer{max: abi.ExecMaxOutput, cancel: cancel}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -106,6 +107,9 @@ func registerExec(b wazero.HostModuleBuilder, commander Commander) wazero.HostMo
 			}
 			if err != nil {
 				return abi.ExecErrFailed
+			}
+			if len(resp.Stdout) > abi.ExecMaxOutput || len(resp.Stderr) > abi.ExecMaxOutput {
+				return abi.ExecErrTooLarge
 			}
 			enc := abi.EncodeExecResponse(resp)
 			n := int32(len(enc))

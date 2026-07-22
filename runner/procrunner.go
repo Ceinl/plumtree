@@ -65,6 +65,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 	if err := validateLimits(lim); err != nil {
 		return err
 	}
+	callerCtx := ctx
+	if lim.SessionTimeout > 0 {
+		var cancelSession context.CancelFunc
+		ctx, cancelSession = context.WithTimeout(ctx, lim.SessionTimeout)
+		defer cancelSession()
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	worker, err := pr.startWorker(ctx)
 	if err != nil {
@@ -97,6 +103,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 		o, payload, err := readMsgBounded(worker.out, maxWorkerPayload)
 		if err != nil {
 			// Worker exited or pipe closed. Prefer the caller's cancellation cause.
+			if callerCtx.Err() != nil {
+				return callerCtx.Err()
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ErrSessionDeadline
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -125,6 +137,12 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			return nil
 		}
 		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, out); err != nil {
+			if callerCtx.Err() != nil {
+				return callerCtx.Err()
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ErrSessionDeadline
+			}
 			return err
 		}
 	}
@@ -408,6 +426,8 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 			return writeMsg(w, opResp, []byte{2})
 		case err != nil:
 			return writeMsg(w, opResp, []byte{3})
+		case len(resp.Stdout) > abi.ExecMaxOutput || len(resp.Stderr) > abi.ExecMaxOutput:
+			return writeMsg(w, opResp, []byte{2})
 		default:
 			return writeMsg(w, opResp, append([]byte{0}, abi.EncodeExecResponse(resp)...))
 		}

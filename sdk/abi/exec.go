@@ -47,6 +47,9 @@ func DecodeExecRequest(b []byte) (ExecRequest, error) {
 	if !ok || len(rest) < 4 {
 		return r, ErrShort
 	}
+	if len(name) > ExecMaxName {
+		return r, ErrShort
+	}
 	r.Name = string(name)
 	n := binary.LittleEndian.Uint32(rest[:4])
 	rest = rest[4:]
@@ -57,6 +60,9 @@ func DecodeExecRequest(b []byte) (ExecRequest, error) {
 	for range n {
 		arg, next, ok := takeU32Bytes(rest)
 		if !ok {
+			return ExecRequest{}, ErrShort
+		}
+		if len(arg) > ExecMaxArg {
 			return ExecRequest{}, ErrShort
 		}
 		r.Args = append(r.Args, string(arg))

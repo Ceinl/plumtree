@@ -1,6 +1,9 @@
 package abi
 
-import "testing"
+import (
+	"encoding/binary"
+	"testing"
+)
 
 func TestExecRequestAndResponseRoundTrip(t *testing.T) {
 	req := ExecRequest{Name: "sh", Args: []string{"-lc", "printf hello"}}
@@ -12,6 +15,27 @@ func TestExecRequestAndResponseRoundTrip(t *testing.T) {
 	gotResp, err := DecodeExecResponse(EncodeExecResponse(resp))
 	if err != nil || gotResp.ExitCode != 7 || string(gotResp.Stdout) != "out" || string(gotResp.Stderr) != "err" {
 		t.Fatalf("response round trip = %#v, %v", gotResp, err)
+	}
+}
+
+func TestDecodeExecRejectsOversizedFields(t *testing.T) {
+	name := make([]byte, ExecMaxName+1)
+	request := make([]byte, 4+len(name)+4)
+	binary.LittleEndian.PutUint32(request, uint32(len(name)))
+	copy(request[4:], name)
+	if _, err := DecodeExecRequest(request); err == nil {
+		t.Fatal("DecodeExecRequest accepted an oversized name")
+	}
+
+	arg := make([]byte, ExecMaxArg+1)
+	request = make([]byte, 4+1+4+4+len(arg))
+	binary.LittleEndian.PutUint32(request, 1)
+	request[4] = 'x'
+	binary.LittleEndian.PutUint32(request[5:], 1)
+	binary.LittleEndian.PutUint32(request[9:], uint32(len(arg)))
+	copy(request[13:], arg)
+	if _, err := DecodeExecRequest(request); err == nil {
+		t.Fatal("DecodeExecRequest accepted an oversized argument")
 	}
 }
 

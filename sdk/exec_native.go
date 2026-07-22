@@ -3,7 +3,7 @@
 package sdk
 
 import (
-	"bytes"
+	"context"
 	"errors"
 	"os/exec"
 
@@ -14,14 +14,17 @@ func execCommand(name string, args []string) (ExecResult, error) {
 	if !validExecRequest(name, args) {
 		return ExecResult{}, ErrExecTooLarge
 	}
-	cmd := exec.Command(name, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout := &execOutputBuffer{max: abi.ExecMaxOutput, cancel: cancel}
+	stderr := &execOutputBuffer{max: abi.ExecMaxOutput, cancel: cancel}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
-	if stdout.Len() > abi.ExecMaxOutput || stderr.Len() > abi.ExecMaxOutput {
+	if stdout.overflow || stderr.overflow {
 		return ExecResult{}, ErrExecTooLarge
 	}
-	result := ExecResult{ExitCode: 0, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	result := ExecResult{ExitCode: 0, Stdout: stdout.b, Stderr: stderr.b}
 	if err == nil {
 		return result, nil
 	}
@@ -31,6 +34,25 @@ func execCommand(name string, args []string) (ExecResult, error) {
 		return result, nil
 	}
 	return ExecResult{}, ErrExecFailed
+}
+
+type execOutputBuffer struct {
+	max      int
+	b        []byte
+	overflow bool
+	cancel   context.CancelFunc
+}
+
+func (b *execOutputBuffer) Write(p []byte) (int, error) {
+	n := min(max(b.max-len(b.b), 0), len(p))
+	if n > 0 {
+		b.b = append(b.b, p[:n]...)
+	}
+	if n < len(p) {
+		b.overflow = true
+		b.cancel()
+	}
+	return len(p), nil
 }
 
 func validExecRequest(name string, args []string) bool {

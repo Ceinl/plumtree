@@ -245,9 +245,15 @@ func (f proxyFetch) Fetch(_ context.Context, req abi.FetchRequest) (abi.FetchRes
 
 type proxyExec struct{ rpc *workerRPC }
 
-func (e proxyExec) Run(_ context.Context, req abi.ExecRequest) (abi.ExecResponse, error) {
+func (e proxyExec) Run(ctx context.Context, req abi.ExecRequest) (abi.ExecResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return abi.ExecResponse{}, err
+	}
 	rp, err := e.rpc.call(opExec, abi.EncodeExecRequest(req))
 	if err != nil || len(rp) == 0 {
+		if ctx.Err() != nil {
+			return abi.ExecResponse{}, ctx.Err()
+		}
 		return abi.ExecResponse{}, errRPC
 	}
 	switch rp[0] {
