@@ -30,6 +30,9 @@ func TestDashboardServesShooClient(t *testing.T) {
 		!strings.Contains(body, "/api/me/handle") || !strings.Contains(body, "/api/me/ssh-keys") {
 		t.Fatalf("dashboard missing Shoo client or API calls")
 	}
+	if !strings.Contains(body, `aria-label="SSH key name"`) || !strings.Contains(body, `aria-label="OpenSSH public key"`) {
+		t.Fatal("dashboard SSH key fields are missing accessible labels")
+	}
 	if strings.Contains(body, "EventSource") || strings.Contains(body, "access_token") {
 		t.Fatalf("dashboard exposes bearer credentials through an SSE URL")
 	}

@@ -167,8 +167,8 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       <section id="sshKeysSection" class="section" hidden>
         <h2>SSH Keys</h2>
         <form id="sshKeyForm" class="key-form">
-          <input id="sshKeyName" name="name" placeholder="laptop" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" required>
-          <textarea id="sshPublicKey" name="publicKey" placeholder="ssh-ed25519 AAAA..." required></textarea>
+          <input id="sshKeyName" name="name" aria-label="SSH key name" placeholder="laptop" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" required>
+          <textarea id="sshPublicKey" name="publicKey" aria-label="OpenSSH public key" placeholder="ssh-ed25519 AAAA..." required></textarea>
           <button type="submit">Add key</button>
         </form>
         <p class="hint">Paste an OpenSSH public key. Private keys never leave your device.</p>
@@ -392,7 +392,12 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       try {
         clearError();
         const me = await api("/api/me", auth.token);
-        await loadSSHKeys(auth.token);
+        try {
+          await loadSSHKeys(auth.token);
+        } catch (error) {
+          // Key management is independent of handle setup and app loading.
+          sshKeysSection.hidden = true;
+        }
         if (me.owner.needsHandle) {
           showHandleSetup();
           return;

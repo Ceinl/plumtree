@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -41,6 +42,10 @@ func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request body must contain exactly one JSON object"})
 			return
 		}
 		publicKey, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(req.PublicKey)))

@@ -115,6 +115,16 @@ func TestSSHKeyRegistrationRejectsInvalidPublicKey(t *testing.T) {
 	}
 }
 
+func TestSSHKeyRegistrationRejectsTrailingJSON(t *testing.T) {
+	server := New(control.NewStore(), fakeVerifier{claims: shoo.Claims{PairwiseSub: "ps_alice"}}, "http://localhost:8080")
+	authorizedKey, _ := testAuthorizedKey(t)
+	body := `{"name":"laptop","publicKey":` + mustJSON(t, authorizedKey) + `}{"name":"second"}`
+	rec := serveTestRequest(t, server, http.MethodPost, "/api/me/ssh-keys", strings.NewReader(body), "test-token")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func testAuthorizedKey(t *testing.T) (string, string) {
 	t.Helper()
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
