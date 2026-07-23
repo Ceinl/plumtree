@@ -65,6 +65,11 @@ Browser auth uses
 Shoo (`https://shoo.dev`) and the API verifies every bearer `id_token`
 server-side against Shoo's JWKS before returning owner/app data.
 
+Trusted self-hosted servers can skip Shoo for deploy ownership with
+`-auto-claim-owner HANDLE` (or `PLUMTREE_AUTO_CLAIM_OWNER`). New `pt deploy`
+requests are immediately claimed to that owner using the configured deploy
+token. Leave the option empty on public or multi-user servers.
+
 For local development, the generated token enables `POST /api/dev/deploy`.
 Pass `-dev-token TOKEN` or set `PLUMTREE_DEV_TOKEN` to replace it; explicitly
 setting either to an empty value disables deploys. The CLI creates a short-lived anonymous deploy

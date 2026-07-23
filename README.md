@@ -178,6 +178,10 @@ pt inspect <deploy|handle>  # deploy details
 Shoo browser flow that binds the deploy to your owner. Possession of the claim
 token (in `.plumtree/deploy.json`) authorizes later updates, secrets, and egress.
 
+For a trusted single-owner server, `control-plane -auto-claim-owner HANDLE`
+combines deploy and claim without Shoo. This mode trusts the server's deploy
+token and should not be enabled for a public or multi-user deployment.
+
 ## Security model
 
 RCE is the product, not a bug — every app is hostile by default, so the goal is

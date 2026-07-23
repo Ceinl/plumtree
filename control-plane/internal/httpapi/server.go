@@ -23,16 +23,17 @@ type BuildBackend interface {
 }
 
 type Server struct {
-	store        *control.Store
-	verifier     TokenVerifier
-	appOrigin    string
-	devToken     string
-	gatewayToken string
-	build        BuildBackend
-	buildSlots   chan struct{}
-	buildQueue   chan struct{}
-	limiter      *ipLimiter
-	suspensions  *suspensionHub
+	store          *control.Store
+	verifier       TokenVerifier
+	appOrigin      string
+	devToken       string
+	autoClaimOwner string
+	gatewayToken   string
+	build          BuildBackend
+	buildSlots     chan struct{}
+	buildQueue     chan struct{}
+	limiter        *ipLimiter
+	suspensions    *suspensionHub
 }
 
 func New(store *control.Store, verifier TokenVerifier, appOrigin string) *Server {
@@ -44,6 +45,10 @@ type Config struct {
 	Verifier  TokenVerifier
 	AppOrigin string
 	DevToken  string
+	// AutoClaimOwner, when set, claims new deploys directly to this owner handle
+	// using the dev deploy token instead of requiring the Shoo browser flow.
+	// This is intended only for trusted self-hosted servers.
+	AutoClaimOwner string
 	// GatewayToken, when set, enables the operator-internal gateway API
 	// (/internal/gateway/*) that a standalone SSH gateway calls to resolve apps
 	// and record sessions. Empty disables those endpoints (all-in-one mode, where
@@ -79,16 +84,17 @@ func NewWithConfig(cfg Config) *Server {
 	}
 	suspensions := newSuspensionHub()
 	server := &Server{
-		store:        store,
-		verifier:     cfg.Verifier,
-		appOrigin:    cfg.AppOrigin,
-		devToken:     cfg.DevToken,
-		gatewayToken: cfg.GatewayToken,
-		build:        cfg.Build,
-		buildSlots:   buildSlots,
-		buildQueue:   buildQueue,
-		limiter:      newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
-		suspensions:  suspensions,
+		store:          store,
+		verifier:       cfg.Verifier,
+		appOrigin:      cfg.AppOrigin,
+		devToken:       cfg.DevToken,
+		autoClaimOwner: cfg.AutoClaimOwner,
+		gatewayToken:   cfg.GatewayToken,
+		build:          cfg.Build,
+		buildSlots:     buildSlots,
+		buildQueue:     buildQueue,
+		limiter:        newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
+		suspensions:    suspensions,
 	}
 	store.RegisterSuspensionListener(suspensions.publish)
 	return server
@@ -108,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/claims/", s.handleClaimAPI)
 	mux.HandleFunc("/api/dev/deploy/", s.handleDevDeployPath)
 	mux.HandleFunc("/api/dev/deploy", s.handleDevDeploy)
+	mux.HandleFunc("/api/dev/ping", s.handleDevPing)
 	mux.HandleFunc(gatewayapi.BasePath+"/identity", s.handleGatewayIdentity)
 	mux.HandleFunc(gatewayapi.BasePath+"/resolve", s.handleGatewayResolve)
 	mux.HandleFunc(gatewayapi.BasePath+"/sessions", s.handleGatewayStartSession)

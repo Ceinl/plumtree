@@ -46,6 +46,22 @@ func TestPostDeploySendsDevTokenOnly(t *testing.T) {
 	}
 }
 
+func TestPostDeployReadsAutoClaimToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"app":{"handle":"local/counter"},"deploy":{"id":"dep_000001","claimToken":"claim-token","claimed":true}}`))
+	}))
+	defer srv.Close()
+
+	res, err := postDeploy(context.Background(), srv.URL, "secret", deployRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deploy.ClaimToken != "claim-token" || !res.Deploy.Claimed {
+		t.Fatalf("response = %+v", res)
+	}
+}
+
 func TestPutDeploySendsClaimToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/dev/deploy/dep_000001" {

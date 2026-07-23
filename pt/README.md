@@ -12,6 +12,7 @@ Owns:
 - `pt claim` — open the browser claim page for the current deploy. This is the
   author-auth step (Shoo browser login); there is no separate `pt auth login`.
 - `pt whoami`, `pt inspect`, `pt logs` — inspect the current claimed deploy.
+- `pt ping`, `pt ping list` — verify configured server access and list active deployments.
 - `pt secret set|list|rm` — manage a claimed app's server-side secrets (`ctx.Env`).
 - `pt egress add|list|rm` — manage a claimed app's default-deny egress allowlist
   (`ctx.Fetch`).
@@ -119,11 +120,24 @@ Run `pt claim` within 5 minutes, sign in with Shoo in the browser, and choose a
 handle if needed. Later `pt deploy` runs update the same claimed app by using
 the saved deploy claim token.
 
+On a trusted self-hosted control plane started with
+`-auto-claim-owner HANDLE`, the first `pt deploy` is claimed immediately to that
+owner. The CLI saves the returned claim credential for later updates, and no
+Shoo browser step is required.
+
 Public releases are generic and contain no server address or deploy token.
 `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` remain available as temporary
 environment overrides, which is useful for CI. Environment values take
 precedence over `pt configure`; `PLUMTREE_PT_CONFIG` selects an alternate config
 file for isolated automation.
+
+Verify the resolved server and credentials from any directory. Add `list` to
+show the active claimed deployments on that server:
+
+```bash
+pt ping
+pt ping list
+```
 
 After claiming, these commands use the same saved local claim metadata:
 

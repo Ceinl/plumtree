@@ -1,6 +1,7 @@
 {
   "publicOrigin": "https://plumtree.dev",
   "sshHost": "plumtree.dev",
+  "autoClaimOwner": "",
   "allowHostCommands": false,
   "deployClaimTtl": "5m",
   "maxAppsPerOwner": 25,

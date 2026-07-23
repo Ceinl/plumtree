@@ -75,6 +75,37 @@ func TestDevDeployCreatesClaimRequiredDeploy(t *testing.T) {
 	}
 }
 
+func TestDevDeployAutoClaimsWithoutShoo(t *testing.T) {
+	store := control.NewStore()
+	server := NewWithConfig(Config{
+		Store:          store,
+		DevToken:       "secret",
+		AutoClaimOwner: "local",
+	})
+
+	created := createDevDeploy(t, server, []byte("local wasm"))
+	if !created.Deploy.Claimed {
+		t.Fatalf("deploy claimed = false, response = %+v", created)
+	}
+	if created.App.Handle != "local/counter" {
+		t.Fatalf("app handle = %q, want local/counter", created.App.Handle)
+	}
+	if created.Deploy.ClaimToken == "" {
+		t.Fatal("auto-claimed response is missing claim token")
+	}
+	if created.Deploy.ClaimURL != "" || created.ClaimURL != "" {
+		t.Fatalf("auto-claimed response exposed Shoo claim URL: %+v", created)
+	}
+
+	rec := serveDevRequest(t, server, http.MethodGet, "/api/dev/deploy/"+url.PathEscape(created.Deploy.ID), nil, created.Deploy.ClaimToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("inspect status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"handle":"local/counter"`) {
+		t.Fatalf("inspect body = %s", rec.Body.String())
+	}
+}
+
 func TestClaimDeployAttachesToAuthenticatedOwner(t *testing.T) {
 	store := control.NewStore()
 	owner, _, err := store.EnsureOwnerForIdentity(control.IdentityInput{
@@ -251,6 +282,7 @@ type devDeployHTTPResponse struct {
 	Deploy struct {
 		ID             string `json:"id"`
 		ClaimURL       string `json:"claimUrl"`
+		ClaimToken     string `json:"claimToken"`
 		Claimed        bool   `json:"claimed"`
 		ClaimExpiresAt string `json:"claimExpiresAt"`
 	} `json:"deploy"`

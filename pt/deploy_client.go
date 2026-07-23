@@ -33,6 +33,7 @@ type deployResponse struct {
 	Deploy struct {
 		ID             string `json:"id"`
 		ClaimURL       string `json:"claimUrl"`
+		ClaimToken     string `json:"claimToken"`
 		Claimed        bool   `json:"claimed"`
 		ClaimExpiresAt string `json:"claimExpiresAt"`
 	} `json:"deploy"`
@@ -75,6 +76,26 @@ type logsResponse struct {
 		Log          string `json:"log"`
 		LogTruncated bool   `json:"logTruncated"`
 	} `json:"sessions"`
+}
+
+type pingResponse struct {
+	Status string `json:"status"`
+	Apps   []struct {
+		Handle         string `json:"handle"`
+		ActiveDeployID string `json:"activeDeployId"`
+	} `json:"apps"`
+}
+
+func getPing(ctx context.Context, serverURL, devToken string) (pingResponse, error) {
+	target := strings.TrimRight(serverURL, "/") + "/api/dev/ping"
+	var out pingResponse
+	if err := doControlGET(ctx, target, devToken, "", &out); err != nil {
+		return out, err
+	}
+	if out.Status != "ok" {
+		return out, errors.New("unexpected ping response from control plane")
+	}
+	return out, nil
 }
 
 func postDeploy(ctx context.Context, serverURL, devToken string, payload deployRequest) (deployResponse, error) {

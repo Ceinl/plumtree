@@ -42,6 +42,13 @@ type App struct {
 	CreatedAt time.Time
 }
 
+// DeployedApp pairs an active app with its namespace owner for server-level
+// administrative listings.
+type DeployedApp struct {
+	App   App
+	Owner Owner
+}
+
 // Artifact describes a content-addressed WASM artifact produced by build
 // workers. The control plane stores metadata only, never raw source or WASM.
 type Artifact struct {

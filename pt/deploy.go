@@ -84,7 +84,7 @@ func cmdDeploy(args []string) error {
 	}
 
 	claimURL := responseClaimURL(res)
-	claimToken := ""
+	claimToken := res.Deploy.ClaimToken
 	if claimURL != "" {
 		claimToken = claimTokenFromURL(claimURL, res.Deploy.ID)
 	}
@@ -143,6 +143,10 @@ func cmdClaim(args []string) error {
 	}
 	if meta == nil {
 		return errors.New("no deploy claim metadata found; run pt deploy first")
+	}
+	if meta.AppHandle != "" {
+		fmt.Printf("Deploy is already claimed as %s.\n", terminalSafeText(meta.AppHandle))
+		return nil
 	}
 	link := deployClaimURL(meta)
 	if link == "" {
