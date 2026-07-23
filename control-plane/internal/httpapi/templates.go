@@ -26,7 +26,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
       letter-spacing: 0;
     }
-    button, table, input { font: inherit; letter-spacing: 0; }
+    button, table, input, textarea { font: inherit; letter-spacing: 0; }
     .shell { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; }
     aside {
       border-right: 1px solid var(--line);
@@ -81,6 +81,25 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       color: var(--ink);
       padding: 8px 10px;
     }
+    .section { margin-top: 36px; }
+    .section h2 { margin: 0 0 14px; font-size: 26px; }
+    .key-form {
+      display: grid;
+      grid-template-columns: minmax(140px, 220px) 1fr auto;
+      gap: 10px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+    .key-form input, .key-form textarea {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--ink);
+      border-radius: 6px;
+      background: #fffaf0;
+      color: var(--ink);
+      padding: 8px 10px;
+    }
+    .key-form textarea { min-height: 74px; resize: vertical; font-family: ui-monospace, monospace; font-size: 13px; }
     .hint { margin: 0; color: var(--muted); font-size: 13px; }
     .table-wrap { border: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; min-width: 720px; }
@@ -98,6 +117,8 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       .topbar { flex-direction: column; }
       .claim-row { flex-direction: column; }
       .claim-row button { width: 100%; }
+      .key-form { grid-template-columns: 1fr; }
+      .key-form button { width: 100%; }
     }
   </style>
 </head>
@@ -111,7 +132,8 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
         <span id="identity">Waiting for Shoo</span>
       </div>
       <nav aria-label="Primary">
-        <a href="/dashboard">Apps</a>
+        <a href="#appsSection">Apps</a>
+        <a href="#sshKeysSection">SSH Keys</a>
       </nav>
     </aside>
     <main>
@@ -133,13 +155,31 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
         </form>
       </section>
       <div id="error" class="error" hidden></div>
-      <div id="empty" class="empty" hidden>No apps in this namespace yet.</div>
-      <div id="apps" class="table-wrap" hidden>
-        <table>
-          <thead><tr><th>Handle</th><th>Active deploy</th><th>Connections / day</th><th>Created</th></tr></thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
+      <section id="appsSection">
+        <div id="empty" class="empty" hidden>No apps in this namespace yet.</div>
+        <div id="apps" class="table-wrap" hidden>
+          <table>
+            <thead><tr><th>Handle</th><th>Active deploy</th><th>Connections / day</th><th>Created</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <section id="sshKeysSection" class="section" hidden>
+        <h2>SSH Keys</h2>
+        <form id="sshKeyForm" class="key-form">
+          <input id="sshKeyName" name="name" placeholder="laptop" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" required>
+          <textarea id="sshPublicKey" name="publicKey" placeholder="ssh-ed25519 AAAA..." required></textarea>
+          <button type="submit">Add key</button>
+        </form>
+        <p class="hint">Paste an OpenSSH public key. Private keys never leave your device.</p>
+        <div id="sshKeysEmpty" class="empty">No SSH keys registered.</div>
+        <div id="sshKeys" class="table-wrap" hidden>
+          <table>
+            <thead><tr><th>Name</th><th>Fingerprint</th><th>Added</th><th></th></tr></thead>
+            <tbody id="sshKeyRows"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
   </div>
   <script nonce="{{.CSPNonce}}">
@@ -154,6 +194,13 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
     const handleSetup = document.getElementById("handleSetup");
     const handleForm = document.getElementById("handleForm");
     const handleInput = document.getElementById("handleInput");
+    const sshKeysSection = document.getElementById("sshKeysSection");
+    const sshKeyForm = document.getElementById("sshKeyForm");
+    const sshKeyName = document.getElementById("sshKeyName");
+    const sshPublicKey = document.getElementById("sshPublicKey");
+    const sshKeys = document.getElementById("sshKeys");
+    const sshKeysEmpty = document.getElementById("sshKeysEmpty");
+    const sshKeyRows = document.getElementById("sshKeyRows");
     let activeToken = "";
     let appsStream = null;
 
@@ -273,6 +320,37 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       empty.hidden = items.length !== 0;
     }
 
+    function renderSSHKeys(items) {
+      sshKeyRows.textContent = "";
+      for (const key of items) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = "<td></td><td><code></code></td><td></td><td><button class=\"secondary\" type=\"button\">Revoke</button></td>";
+        tr.children[0].textContent = key.name;
+        tr.children[1].firstChild.textContent = key.fingerprint;
+        tr.children[2].textContent = key.createdAt ? new Date(key.createdAt).toLocaleString() : "-";
+        tr.children[3].firstChild.addEventListener("click", () => revokeSSHKey(key.id));
+        sshKeyRows.appendChild(tr);
+      }
+      sshKeys.hidden = items.length === 0;
+      sshKeysEmpty.hidden = items.length !== 0;
+    }
+
+    async function loadSSHKeys(token) {
+      const listing = await api("/api/me/ssh-keys", token);
+      renderSSHKeys(listing.sshKeys || []);
+      sshKeysSection.hidden = false;
+    }
+
+    async function revokeSSHKey(id) {
+      clearError();
+      try {
+        await api("/api/me/ssh-keys/" + encodeURIComponent(id), activeToken, { method: "DELETE" });
+        await loadSSHKeys(activeToken);
+      } catch (error) {
+        showError(error.message);
+      }
+    }
+
     function showHandleSetup() {
       closeAppsStream();
       apps.hidden = true;
@@ -299,6 +377,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
         login.hidden = false;
         signout.hidden = true;
         handleSetup.hidden = true;
+        sshKeysSection.hidden = true;
         owner.textContent = "-";
         identityLabel.textContent = "Not signed in";
         renderApps([]);
@@ -313,6 +392,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       try {
         clearError();
         const me = await api("/api/me", auth.token);
+        await loadSSHKeys(auth.token);
         if (me.owner.needsHandle) {
           showHandleSetup();
           return;
@@ -334,6 +414,21 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
           body: JSON.stringify({ handle })
         });
         await loadApps(activeToken, Object.assign({ auth: { provider: "shoo" } }, me));
+      } catch (error) {
+        showError(error.message);
+      }
+    });
+    sshKeyForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      clearError();
+      try {
+        await api("/api/me/ssh-keys", activeToken, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: sshKeyName.value.trim(), publicKey: sshPublicKey.value.trim() })
+        });
+        sshKeyForm.reset();
+        await loadSSHKeys(activeToken);
       } catch (error) {
         showError(error.message);
       }

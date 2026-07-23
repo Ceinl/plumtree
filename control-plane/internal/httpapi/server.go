@@ -108,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/api/me", s.handleMe)
 	mux.HandleFunc("/api/me/handle", s.handleMeHandle)
+	mux.HandleFunc("/api/me/ssh-keys", s.handleSSHKeys)
+	mux.HandleFunc("/api/me/ssh-keys/", s.handleSSHKeyByID)
 	mux.HandleFunc("/api/apps", s.handleApps)
 	mux.HandleFunc("/api/apps/stream", s.handleAppsStream)
 	mux.HandleFunc("/api/claims/", s.handleClaimAPI)
