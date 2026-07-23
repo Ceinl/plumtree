@@ -17,6 +17,7 @@ func TestEventRoundTrip(t *testing.T) {
 		{Kind: KindMessage, Topic: "", Data: nil},
 		{Kind: KindMouse, MouseX: 12, MouseY: 7, Button: MouseButtonLeft, Action: MouseDown},
 		{Kind: KindMouse, MouseX: 12, MouseY: 7, Button: MouseButtonLeft, Action: MouseUp},
+		{Kind: KindTimer, CommandID: 42},
 	}
 	for _, want := range cases {
 		got, err := DecodeEvent(EncodeEvent(want))

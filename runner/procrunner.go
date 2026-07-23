@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
@@ -93,6 +94,11 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 		if bb, ok := src.(BusBinder); ok {
 			bb.BindBus(sub.Events())
 		}
+	}
+	if !cli {
+		caps.timers = newTimerManager(ctx)
+		defer caps.timers.Close()
+		src = newMergedSource(ctx, src, caps.timers.Events())
 	}
 
 	if err := writeMsg(worker.in, opStart, encodeStart(lim, cli, capMask(caps), args, wasm)); err != nil {
@@ -180,6 +186,10 @@ func maxWorkerPayload(o op) uint32 {
 		return maxEncodedFetch
 	case opExec:
 		return maxEncodedExec
+	case opTimerStart:
+		return 9
+	case opTimerCancel:
+		return 4
 	case opDone:
 		return 8 + maxWorkerError + abi.GoodbyeMaxLen + maxSessionLog
 	case opOutput:
@@ -431,6 +441,23 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		default:
 			return writeMsg(w, opResp, append([]byte{0}, abi.EncodeExecResponse(resp)...))
 		}
+
+	case opTimerStart:
+		if caps.timers == nil || len(payload) != 9 || payload[8] > 1 {
+			return errProtocol
+		}
+		result := caps.timers.Start(time.Duration(binary.LittleEndian.Uint64(payload[:8])), payload[8] == 1)
+		return writeMsg(w, opResp, binary.LittleEndian.AppendUint32(nil, uint32(result)))
+
+	case opTimerCancel:
+		if caps.timers == nil || len(payload) != 4 {
+			return errProtocol
+		}
+		var result byte
+		if caps.timers.Cancel(binary.LittleEndian.Uint32(payload)) {
+			result = 1
+		}
+		return writeMsg(w, opResp, []byte{result})
 
 	case opOutput:
 		if out == nil || len(payload) > maxWorkerOutput {

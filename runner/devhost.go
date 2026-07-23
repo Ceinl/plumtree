@@ -130,6 +130,12 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 
 	wd := &watchdog{timeout: lim.FrameTimeout, cancel: cancel}
 
+	timers := caps.timers
+	if timers == nil {
+		timers = newTimerManager(runCtx)
+		defer timers.Close()
+	}
+
 	// Open a per-session bus subscription and let the Source select on incoming
 	// messages, so a session blocked in recv wakes the moment another session
 	// publishes. The subscription is nil when the app has no Bus capability.
@@ -140,6 +146,9 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 		if bb, ok := src.(BusBinder); ok {
 			bb.BindBus(sub.Events())
 		}
+	}
+	if events := timers.Events(); events != nil {
+		src = newMergedSource(runCtx, src, events)
 	}
 
 	hostMod := r.NewHostModuleBuilder("plumtree").
@@ -192,6 +201,7 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 	hostMod = registerFetch(hostMod, caps.Fetch)
 	hostMod = registerExec(hostMod, caps.Exec)
 	hostMod = registerGoodbye(hostMod, caps.Goodbye)
+	hostMod = registerTimers(hostMod, timers)
 	if _, err := hostMod.Instantiate(runCtx); err != nil {
 		return fmt.Errorf("install host module: %w", err)
 	}

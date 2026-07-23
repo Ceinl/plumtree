@@ -137,6 +137,37 @@ func TestRunCounterExample(t *testing.T) {
 	}
 }
 
+type initialThenIdleSource struct {
+	sent bool
+}
+
+func (s *initialThenIdleSource) Next(ctx context.Context) (abi.Event, bool) {
+	if !s.sent {
+		s.sent = true
+		return abi.Event{Kind: abi.KindResize, W: 30, H: 6}, true
+	}
+	<-ctx.Done()
+	return abi.Event{}, false
+}
+
+func TestHostedTimersWakeAndRedraw(t *testing.T) {
+	wasm := buildGuest(t, "../sdk/examples/timer")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var sink capture
+	err := Run(ctx, wasm, DefaultLimits, Capabilities{}, &initialThenIdleSource{}, &sink, io.Discard)
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatal(err)
+	}
+	if !frameWith(sink.frames, "ticks: 2") {
+		t.Fatalf("recurring timer did not redraw; frames=%d", len(sink.frames))
+	}
+	if !frameWith(sink.frames, "one-shot fired: true") {
+		t.Fatalf("one-shot timer did not redraw; frames=%d", len(sink.frames))
+	}
+}
+
 // End-to-end: the KV capability persists state across sessions. A first session
 // of the real SDK kvcounter example increments and saves its count; a second,
 // fresh guest instance sharing the same store loads and renders that value —

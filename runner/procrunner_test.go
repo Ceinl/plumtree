@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
@@ -85,6 +86,26 @@ func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
 	}
 	if !frameWith(sink.frames, "clicked=1 events=2") {
 		t.Fatalf("isolated hosted click missing; last frame:\n%s", frameText(sink.frames[len(sink.frames)-1]))
+	}
+}
+
+func TestProcessRunnerTimersWakeAndRedraw(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "../sdk/examples/timer")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var sink capture
+	pr := NewProcessRunner(worker)
+	err := pr.Run(ctx, wasm, DefaultLimits, Capabilities{}, &initialThenIdleSource{}, &sink, io.Discard)
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatal(err)
+	}
+	if !frameWith(sink.frames, "ticks: 2") {
+		t.Fatalf("isolated recurring timer did not redraw; frames=%d", len(sink.frames))
+	}
+	if !frameWith(sink.frames, "one-shot fired: true") {
+		t.Fatalf("isolated one-shot timer did not redraw; frames=%d", len(sink.frames))
 	}
 }
 

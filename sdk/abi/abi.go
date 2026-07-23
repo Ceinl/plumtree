@@ -36,7 +36,9 @@ import (
 // header, so DecodeEvent reads past EventLen for that kind only.
 // v3 adds KindMouse. The fixed header remains 13 bytes; mouse events encode
 // button/action plus cell coordinates in fields unused by other event kinds.
-const Version uint8 = 3
+// v4 adds host-backed timers and KindTimer. Timer events carry their command ID
+// in the fixed header's rune field, so the event size remains unchanged.
+const Version uint8 = 4
 
 const (
 	magicEvent byte = 0x01
@@ -59,6 +61,8 @@ const (
 	KindMessage Kind = 3
 	// KindMouse reports a terminal mouse action at zero-based cell coordinates.
 	KindMouse Kind = 4
+	// KindTimer reports that a scheduled one-shot or recurring timer fired.
+	KindTimer Kind = 5
 )
 
 type MouseButton uint8
@@ -121,7 +125,7 @@ const (
 type RGB struct{ R, G, B uint8 }
 
 // Event is an input event sent host -> guest. W/H are set only for KindResize;
-// Topic/Data only for KindMessage.
+// Topic/Data only for KindMessage; CommandID only for KindTimer.
 type Event struct {
 	Kind           Kind
 	Key            KeyType
@@ -133,6 +137,7 @@ type Event struct {
 	MouseX, MouseY int
 	Button         MouseButton
 	Action         MouseAction
+	CommandID      uint32
 }
 
 // Cell is one rendered character: a rune plus structured styling. No ANSI.
@@ -168,6 +173,19 @@ const (
 	BusMaxTopic = 128
 	// BusMaxData caps a published payload's length in bytes.
 	BusMaxData = 3072
+)
+
+// Timer scheduling limits and result codes shared by SDK guests and hosts.
+// Limits are per session. Recurring timers have a higher minimum interval to
+// bound the rate at which an app can wake its own event loop.
+const (
+	TimerMaxActive           = 64
+	TimerMinDelayNanos       = int64(1_000_000)          // 1 ms
+	TimerMinEveryNanos       = int64(10_000_000)         // 10 ms
+	TimerMaxDelayNanos       = int64(24 * 60 * 60 * 1e9) // 24 hours
+	TimerErrInvalid    int32 = -1
+	TimerErrLimit      int32 = -2
+	TimerErrInternal   int32 = -3
 )
 
 // Bus result codes for bus_sub / bus_pub. A non-negative bus_pub return is the

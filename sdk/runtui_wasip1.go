@@ -90,6 +90,8 @@ func eventFromABI(e abi.Event) (Event, bool) {
 		return MessageMsg{Topic: e.Topic, Data: e.Data}, true
 	case abi.KindMouse:
 		return MouseMsg{X: e.MouseX, Y: e.MouseY, Button: MouseButton(e.Button), Action: MouseAction(e.Action)}, true
+	case abi.KindTimer:
+		return TimerMsg{ID: CommandID(e.CommandID)}, true
 	case abi.KindKey:
 		// handled below
 	default:

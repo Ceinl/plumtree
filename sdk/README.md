@@ -63,6 +63,36 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 The guest returns structured cells (rune + RGB + decoration), never raw ANSI;
 the host owns all terminal output. Build and run apps with `pt dev`.
 
+## Asynchronous commands and timers
+
+Commands let an app start asynchronous work while keeping `Update -> View` as
+its only state and rendering model. Timer completions are serialized with
+keyboard, resize, mouse, and pub/sub events through `Model.Update`:
+
+```go
+type model struct {
+    timer sdk.CommandID
+    ticks int
+}
+
+func (m *model) Update(event sdk.Event) {
+    if m.timer == 0 {
+        m.timer, _ = sdk.Schedule(sdk.Every(time.Second))
+    }
+    if timer, ok := event.(sdk.TimerMsg); ok && timer.ID == m.timer {
+        m.ticks++
+        if m.ticks == 10 {
+            sdk.Cancel(m.timer)
+        }
+    }
+}
+```
+
+Use `sdk.After` for a one-shot command and `sdk.Every` for a recurring command.
+Each session may have at most 64 active commands; durations are bounded, and
+all remaining commands are canceled when the session ends. See the complete
+[`examples/timer`](examples/timer) app.
+
 ## Trusted host commands
 
 `sdk.Exec(name, args...)` executes a local program and returns its exit code,
