@@ -20,7 +20,7 @@ func (f fakeVerifier) Verify(context.Context, string) (shoo.Claims, error) {
 }
 
 func TestDashboardServesShooClient(t *testing.T) {
-	server := New(control.NewStore(), fakeVerifier{}, "http://localhost:8080")
+	server := New(control.NewStore(), fakeVerifier{}, "https://plumtree.example")
 	rec := serveTestRequest(t, server, http.MethodGet, "/dashboard", nil, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -32,6 +32,12 @@ func TestDashboardServesShooClient(t *testing.T) {
 	}
 	if !strings.Contains(body, `aria-label="SSH key name"`) || !strings.Contains(body, `aria-label="OpenSSH public key"`) {
 		t.Fatal("dashboard SSH key fields are missing accessible labels")
+	}
+	if !strings.Contains(body, `data-shoo-redirect-uri="https://plumtree.example/shoo/callback"`) {
+		t.Fatalf("dashboard Shoo callback does not use the advertised public origin")
+	}
+	if strings.Contains(body, `new URL("/shoo/callback", window.location.origin)`) {
+		t.Fatalf("dashboard Shoo callback still depends on the request origin")
 	}
 	if strings.Contains(body, "EventSource") || strings.Contains(body, "access_token") {
 		t.Fatalf("dashboard exposes bearer credentials through an SSE URL")
@@ -60,7 +66,11 @@ func TestDashboardServesShooClient(t *testing.T) {
 }
 
 func TestClaimPageRendersUnquotedDeployID(t *testing.T) {
-	server := NewWithConfig(Config{Store: control.NewStore(), DevToken: "secret"})
+	server := NewWithConfig(Config{
+		Store:     control.NewStore(),
+		DevToken:  "secret",
+		AppOrigin: "https://plumtree.example",
+	})
 	rec := serveTestRequest(t, server, http.MethodGet, "/claim/dep_000001/claim-token", nil, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -71,6 +81,15 @@ func TestClaimPageRendersUnquotedDeployID(t *testing.T) {
 	}
 	if !strings.Contains(body, `const claimToken = "claim-token";`) {
 		t.Fatalf("claim page token was not rendered as a plain JS string:\n%s", body)
+	}
+	if !strings.Contains(body, `data-shoo-redirect-uri="https://plumtree.example/shoo/callback"`) {
+		t.Fatalf("claim page Shoo callback does not use the advertised public origin")
+	}
+	if !strings.Contains(body, `window.Shoo.startSignIn({ returnTo: window.location.pathname })`) {
+		t.Fatalf("claim page does not retain its claim path across the shared callback")
+	}
+	if strings.Contains(body, `encodeURIComponent(window.location.href)`) {
+		t.Fatalf("claim page Shoo callback still depends on the request URL")
 	}
 }
 

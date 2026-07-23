@@ -8,7 +8,7 @@ var claimTmpl = template.Must(template.New("claim").Parse(`<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claim Plumtree Deploy</title>
-  <script src="https://shoo.dev/shoo.js"></script>
+  <script src="https://shoo.dev/shoo.js" data-shoo-redirect-uri="{{.ShooRedirectURI}}"></script>
   <style>
     :root { --ink: #1d2522; --muted: #66736e; --paper: #f6f3ec; --line: #d8d1c4; --panel: #fffdf7; --hot: #c7523a; }
     * { box-sizing: border-box; }
@@ -64,7 +64,8 @@ var claimTmpl = template.Must(template.New("claim").Parse(`<!doctype html>
     const handleInput = document.getElementById("handleInput");
     let activeToken = "";
 
-    login.href = "https://shoo.dev/authorize?redirect_uri=" + encodeURIComponent(window.location.href);
+    const shooRedirectURI = document.querySelector("script[data-shoo-redirect-uri]").dataset.shooRedirectUri;
+    login.href = "https://shoo.dev/authorize?redirect_uri=" + encodeURIComponent(shooRedirectURI);
     login.addEventListener("click", (event) => {
       if (window.Shoo && window.Shoo.startSignIn) {
         event.preventDefault();
