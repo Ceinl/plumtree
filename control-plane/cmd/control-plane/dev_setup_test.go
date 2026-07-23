@@ -26,6 +26,55 @@ func TestApplyTailscaleDefaultsPreservesOverrides(t *testing.T) {
 	}
 }
 
+func TestValidatePublicOriginForShoo(t *testing.T) {
+	for _, origin := range []string{
+		"http://localhost:8080",
+		"http://app.localhost:8080",
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+		"https://plumtree.example",
+	} {
+		got, err := validatePublicOrigin(origin, true)
+		if err != nil {
+			t.Errorf("validatePublicOrigin(%q) error = %v", origin, err)
+		}
+		if got != origin {
+			t.Errorf("validatePublicOrigin(%q) = %q", origin, got)
+		}
+	}
+
+	for _, origin := range []string{"http://100.93.98.124:8080", "http://plumtree.example"} {
+		_, err := validatePublicOrigin(origin, true)
+		if err == nil || !strings.Contains(err.Error(), "requires HTTPS") || !strings.Contains(err.Error(), "Tailscale Serve") {
+			t.Errorf("validatePublicOrigin(%q) error = %v, want actionable HTTPS diagnostic", origin, err)
+		}
+	}
+}
+
+func TestValidatePublicOriginAllowsTrustedHTTPAutoClaim(t *testing.T) {
+	got, err := validatePublicOrigin("http://100.93.98.124:8080/", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://100.93.98.124:8080" {
+		t.Fatalf("origin = %q", got)
+	}
+}
+
+func TestValidatePublicOriginRejectsNonOriginURLs(t *testing.T) {
+	for _, origin := range []string{
+		"plumtree.example",
+		"ftp://plumtree.example",
+		"https://user@plumtree.example",
+		"https://plumtree.example/dashboard",
+		"https://plumtree.example?x=1",
+	} {
+		if _, err := validatePublicOrigin(origin, false); err == nil {
+			t.Errorf("validatePublicOrigin(%q) succeeded", origin)
+		}
+	}
+}
+
 func TestParseTailscaleIPv4(t *testing.T) {
 	got, err := parseTailscaleIPv4("100.93.98.124\n")
 	if err != nil || got != "100.93.98.124" {

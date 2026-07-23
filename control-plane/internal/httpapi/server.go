@@ -144,7 +144,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = dashboardTmpl.Execute(w, struct {
-		AppOrigin string
-		CSPNonce  string
-	}{AppOrigin: s.appOrigin, CSPNonce: cspNonce(r.Context())})
+		ShooRedirectURI string
+		CSPNonce        string
+	}{
+		ShooRedirectURI: s.publicURL(r, "/shoo/callback"),
+		CSPNonce:        cspNonce(r.Context()),
+	})
 }

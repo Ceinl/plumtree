@@ -27,6 +27,10 @@ func firstNonEmpty[T ~string](values ...T) string {
 }
 
 func (s *Server) claimURL(r *http.Request, deployID, claimToken string) string {
+	return s.publicURL(r, "/claim/"+url.PathEscape(deployID)+"/"+url.PathEscape(claimToken))
+}
+
+func (s *Server) publicURL(r *http.Request, path string) string {
 	origin := strings.TrimRight(s.appOrigin, "/")
 	if origin == "" {
 		scheme := "http"
@@ -35,7 +39,7 @@ func (s *Server) claimURL(r *http.Request, deployID, claimToken string) string {
 		}
 		origin = scheme + "://" + r.Host
 	}
-	return origin + "/claim/" + url.PathEscape(deployID) + "/" + url.PathEscape(claimToken)
+	return origin + path
 }
 
 func newClaimToken() (string, error) {

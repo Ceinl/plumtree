@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +49,42 @@ func applyTailscaleDefaults(ip string, addr, origin, sshAddr *string, overrides 
 	if !overrides.ssh {
 		*sshAddr = net.JoinHostPort(ip, "2222")
 	}
+}
+
+func validatePublicOrigin(raw string, browserAuth bool) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("invalid public origin %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid public origin %q: scheme must be http or https", raw)
+	}
+	if u.Host == "" || u.User != nil {
+		return "", fmt.Errorf("invalid public origin %q: expected an absolute URL without user information", raw)
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid public origin %q: paths, queries, and fragments are not allowed", raw)
+	}
+	origin := u.Scheme + "://" + u.Host
+	if browserAuth && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+		return "", fmt.Errorf(
+			"Shoo browser authentication requires HTTPS for non-loopback public origin %q; "+
+				"put Plumtree behind an HTTPS reverse proxy and set -origin to its public URL "+
+				"(for Tailscale, use Tailscale Serve with a MagicDNS HTTPS URL), "+
+				"or use -auto-claim for a trusted HTTP-only server",
+			origin,
+		)
+	}
+	return origin, nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func detectTailscaleIPv4(parent context.Context) (string, error) {

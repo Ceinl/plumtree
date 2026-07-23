@@ -150,6 +150,11 @@ func main() {
 			ssh:    setFlags["ssh-addr"] || envIsSet("PLUMTREE_SSH_ADDR"),
 		})
 	}
+	normalizedOrigin, err := validatePublicOrigin(*origin, !*autoClaim)
+	if err != nil {
+		log.Fatal(err)
+	}
+	*origin = normalizedOrigin
 	managedDevToken := false
 	managedDevTokenPath := ""
 	if !*production && !setFlags["dev-token"] && !devTokenEnvSet {

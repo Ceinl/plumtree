@@ -233,9 +233,11 @@ author: pt new → pt dev → pt deploy → pt claim → ssh -p 2222 <app>@127.0
 
 Local server startup is zero-config: HTTP and SSH bind to loopback, and a
 private persistent deploy token is shared automatically with a same-user `pt`
-client. Use `--tailscale` to detect and bind the machine's Tailscale IPv4
-address; startup then prints the one-time client configuration needed on other
-machines.
+client. Use Tailscale Serve with an HTTPS MagicDNS public origin for browser
+authentication from other machines; startup then prints the client
+configuration they need. Trusted HTTP-only tailnets can combine `--tailscale`
+with `--auto-claim` to bypass browser claims. See the control-plane README for
+setup.
 
 A deployed app is built server-side from uploaded source, stored as a WASM
 artifact, and streamed over SSH; every session runs in its own wazero sandbox
