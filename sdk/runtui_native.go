@@ -17,6 +17,7 @@ import (
 // authors can `go run .` their app. The hosted build (GOOS=wasip1) replaces
 // this with the WASM-guest ABI loop; app code is unchanged.
 func RunTUI(m Model, _ Meta) {
+	defer stopCommands()
 	aRoot := &modelRoot{m: m}
 	a := app.New(aRoot)
 	a.OnKey = func(ev keyboard.Event) bool {
@@ -35,6 +36,10 @@ func RunTUI(m Model, _ Meta) {
 	a.OnTick = func() (render bool) {
 		render = drainBus(m)
 		return render || quitRequested
+	}
+	a.Wake = nativeCommands.wake
+	a.OnWake = func() bool {
+		return drainCommands(m) || quitRequested
 	}
 	_ = a.Run(context.Background())
 }

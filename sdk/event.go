@@ -1,7 +1,7 @@
 package sdk
 
 // Event is an input delivered to Model.Update. Type-switch on the concrete
-// types (KeyMsg, ResizeMsg) to handle it.
+// types (KeyMsg, ResizeMsg, TimerMsg) to handle it.
 type Event interface{ isEvent() }
 
 // Key identifies a key press. Printable keys equal their rune (so a switch can
@@ -89,3 +89,12 @@ type MouseMsg struct {
 }
 
 func (MouseMsg) isEvent() {}
+
+// TimerMsg reports completion of a command created by After or Every. ID is
+// the value returned by Schedule and lets a model distinguish multiple timers.
+// Recurring timers deliver the same ID until canceled.
+type TimerMsg struct {
+	ID CommandID
+}
+
+func (TimerMsg) isEvent() {}

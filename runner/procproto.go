@@ -25,23 +25,25 @@ import (
 type op byte
 
 const (
-	opStart   op = 1 // parent -> worker: limits + appType + wasm
-	opResp    op = 2 // parent -> worker: reply to the previous request
-	opRecv    op = 3 // worker -> parent: next input event
-	opPresent op = 4 // worker -> parent: a rendered frame
-	opKVGet   op = 5
-	opKVSet   op = 6
-	opKVDel   op = 7
-	opBusSub  op = 8
-	opBusPub  op = 9
-	opAuth    op = 10
-	opEnv     op = 11
-	opFetch   op = 12
-	opDone    op = 13 // worker -> parent: session finished (err + logs)
-	opOutput  op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
-	opKVList  op = 15
-	opKVCAS   op = 16
-	opExec    op = 17
+	opStart       op = 1 // parent -> worker: limits + appType + wasm
+	opResp        op = 2 // parent -> worker: reply to the previous request
+	opRecv        op = 3 // worker -> parent: next input event
+	opPresent     op = 4 // worker -> parent: a rendered frame
+	opKVGet       op = 5
+	opKVSet       op = 6
+	opKVDel       op = 7
+	opBusSub      op = 8
+	opBusPub      op = 9
+	opAuth        op = 10
+	opEnv         op = 11
+	opFetch       op = 12
+	opDone        op = 13 // worker -> parent: session finished (err + logs)
+	opOutput      op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
+	opKVList      op = 15
+	opKVCAS       op = 16
+	opExec        op = 17
+	opTimerStart  op = 18
+	opTimerCancel op = 19
 )
 
 // maxFrame bounds a single protocol message, guarding against a corrupt length.

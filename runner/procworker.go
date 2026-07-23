@@ -3,8 +3,10 @@ package runner
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
@@ -55,6 +57,9 @@ func RunWorker(in io.Reader, out io.Writer) error {
 		caps.Exec = proxyExec{rpc}
 	}
 	caps.Goodbye = new(string)
+	if !cli {
+		caps.timers = proxyTimers{rpc}
+	}
 	logs := &boundedBuffer{max: maxSessionLog}
 	var runErr error
 	if cli {
@@ -111,6 +116,30 @@ func (s *proxySource) Next(context.Context) (abi.Event, bool) {
 type proxySink struct{ rpc *workerRPC }
 
 func (s *proxySink) Present(f abi.Frame) { _, _ = s.rpc.call(opPresent, abi.EncodeFrame(f)) }
+
+type proxyTimers struct{ rpc *workerRPC }
+
+func (t proxyTimers) Start(delay time.Duration, recurring bool) int32 {
+	payload := binary.LittleEndian.AppendUint64(nil, uint64(delay))
+	if recurring {
+		payload = append(payload, 1)
+	} else {
+		payload = append(payload, 0)
+	}
+	rp, err := t.rpc.call(opTimerStart, payload)
+	if err != nil || len(rp) != 4 {
+		return abi.TimerErrInternal
+	}
+	return int32(binary.LittleEndian.Uint32(rp))
+}
+
+func (t proxyTimers) Cancel(id uint32) bool {
+	rp, err := t.rpc.call(opTimerCancel, binary.LittleEndian.AppendUint32(nil, id))
+	return err == nil && len(rp) == 1 && rp[0] == 1
+}
+
+func (proxyTimers) Events() <-chan abi.Event { return nil }
+func (proxyTimers) Close()                   {}
 
 type proxyOutput struct{ rpc *workerRPC }
 

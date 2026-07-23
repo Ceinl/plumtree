@@ -63,6 +63,10 @@ type Capabilities struct {
 	// host allocates Goodbye = new(string) before calling Run and reads the
 	// result after Run returns.
 	Goodbye *string
+
+	// timers is an internal per-session service. Direct runs create a local
+	// manager; isolated workers install a protocol proxy to the parent manager.
+	timers timerService
 }
 
 // ErrQuota reports that a Set would exceed the store's aggregate key or byte

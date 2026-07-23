@@ -28,7 +28,11 @@ func EncodeEvent(e Event) []byte {
 	} else {
 		b[3] = byte(e.Key)
 	}
-	binary.LittleEndian.PutUint32(b[4:8], uint32(e.Ch))
+	if e.Kind == KindTimer {
+		binary.LittleEndian.PutUint32(b[4:8], e.CommandID)
+	} else {
+		binary.LittleEndian.PutUint32(b[4:8], uint32(e.Ch))
+	}
 	if e.Kind == KindMouse {
 		b[8] = byte(e.Action)
 		binary.LittleEndian.PutUint16(b[9:11], uint16(e.MouseX))
@@ -75,6 +79,10 @@ func DecodeEvent(b []byte) (Event, error) {
 		e.MouseX = int(binary.LittleEndian.Uint16(b[9:11]))
 		e.MouseY = int(binary.LittleEndian.Uint16(b[11:13]))
 		e.Key, e.Mods, e.W, e.H = 0, 0, 0, 0
+	}
+	if e.Kind == KindTimer {
+		e.CommandID = binary.LittleEndian.Uint32(b[4:8])
+		e.Key, e.Ch, e.Mods, e.W, e.H = 0, 0, 0, 0, 0
 	}
 	if e.Kind != KindMessage {
 		if len(b) != EventLen {

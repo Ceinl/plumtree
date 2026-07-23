@@ -41,6 +41,12 @@ type App struct {
 	// frame; return false to skip the repaint for that tick.
 	TickInterval time.Duration
 	OnTick       func() (render bool)
+
+	// Wake lets an external event source wake an otherwise idle loop. OnWake
+	// runs on the loop goroutine before rendering, keeping model mutation
+	// serialized with keyboard, resize, and tick handlers.
+	Wake   <-chan struct{}
+	OnWake func() (render bool)
 }
 
 // New returns an App that renders root, reading input from stdin.
@@ -126,6 +132,11 @@ func (a *App) Run(ctx context.Context) error {
 			a.render(scr)
 		case <-tick:
 			if a.OnTick != nil && !a.OnTick() {
+				continue
+			}
+			a.render(scr)
+		case <-a.Wake:
+			if a.OnWake != nil && !a.OnWake() {
 				continue
 			}
 			a.render(scr)
