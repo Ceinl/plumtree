@@ -8,7 +8,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plumtree Dashboard</title>
-  <script src="https://shoo.dev/shoo.js"></script>
+  <script src="https://shoo.dev/shoo.js" data-shoo-redirect-uri="{{.ShooRedirectURI}}"></script>
   <style>
     :root {
       --ink: #1d2522;
@@ -217,7 +217,8 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!doctype htm
       }
     }
 
-    login.href = "https://shoo.dev/authorize?redirect_uri=" + encodeURIComponent(new URL("/shoo/callback", window.location.origin).href);
+    const shooRedirectURI = document.querySelector("script[data-shoo-redirect-uri]").dataset.shooRedirectUri;
+    login.href = "https://shoo.dev/authorize?redirect_uri=" + encodeURIComponent(shooRedirectURI);
     login.addEventListener("click", (event) => {
       if (window.Shoo && window.Shoo.startSignIn) {
         event.preventDefault();

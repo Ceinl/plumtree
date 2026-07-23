@@ -52,14 +52,33 @@ the server and CLI run as the same user on the same machine.
 To serve over Tailscale instead, use:
 
 ```bash
-go run ./cmd/control-plane --tailscale
+tailscale serve --bg 8080
+go run ./cmd/control-plane \
+  --tailscale \
+  --addr 127.0.0.1:8080 \
+  --origin https://your-node.your-tailnet.ts.net
 ```
 
-The server detects its Tailscale IPv4 address, binds HTTP and SSH to that
-address, and prints the `pt configure` command and token needed by another
-machine. Explicit `-addr`, `-origin`, and `-ssh-addr` values still take
-precedence. Plain startup remains loopback-only; `--tailscale` is the explicit
-opt-in to network access.
+Replace the origin with the HTTPS MagicDNS URL printed by `tailscale serve`.
+Serve terminates TLS and proxies the dashboard/API to loopback; Plumtree
+detects its Tailscale IPv4 address for SSH and prints the `pt configure`
+command and token needed by another machine. Explicit `-addr`, `-origin`, and
+`-ssh-addr` values take precedence over `--tailscale` defaults.
+
+Shoo's browser PKCE flow requires Web Crypto, which browsers expose only on
+HTTPS origins and loopback HTTP origins. Plumtree therefore refuses to start
+Shoo-backed browser auth with a non-loopback HTTP public origin and reports how
+to enable Tailscale Serve. This also ensures dashboard and claim callbacks use
+the advertised `-origin`, rather than whichever host happened to serve the
+page. For a trusted tailnet that only needs deploy and SSH access, bypass the
+browser claim flow explicitly:
+
+```bash
+go run ./cmd/control-plane --tailscale --auto-claim
+```
+
+That HTTP-only mode does not provide Shoo dashboard sign-in. Plain startup
+remains loopback-only.
 
 Browser auth uses
 Shoo (`https://shoo.dev`) and the API verifies every bearer `id_token`

@@ -92,19 +92,31 @@ When `pt` runs as the same user on that machine, deploy immediately:
 pt deploy
 ```
 
-For a server started with `--tailscale`, run the `pt configure` command printed
-by the server on each remote author machine and paste the printed token:
+For a server exposed through Tailscale Serve, run the `pt configure` command
+printed by the server on each remote author machine and paste the printed
+token:
 
 ```bash
-pt configure --addr http://100.x.y.z:8080 --token
+pt configure --addr https://your-node.your-tailnet.ts.net --token
 pt deploy
 ```
 
 The shorter git-style form is equivalent:
 
 ```bash
-pt --addr http://100.x.y.z:8080 --token
+pt --addr https://your-node.your-tailnet.ts.net --token
 ```
+
+Shoo browser sign-in requires HTTPS for remote clients. Proxy port 8080 with
+`tailscale serve --bg 8080` and start the control plane with:
+
+```bash
+control-plane --tailscale --addr 127.0.0.1:8080 \
+  --origin https://your-node.your-tailnet.ts.net
+```
+
+A trusted server may instead use `--tailscale --auto-claim` over HTTP when it
+does not need Shoo claims or dashboard sign-in.
 
 Run `pt configure` with no flags to show the saved address and whether a token
 is configured. With an interactive terminal, `--token` prompts without echoing

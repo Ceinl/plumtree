@@ -53,10 +53,16 @@ func (s *Server) handleClaimPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = claimTmpl.Execute(w, struct {
-		DeployID   string
-		ClaimToken string
-		CSPNonce   string
-	}{DeployID: deployID, ClaimToken: claimToken, CSPNonce: cspNonce(r.Context())})
+		DeployID        string
+		ClaimToken      string
+		ShooRedirectURI string
+		CSPNonce        string
+	}{
+		DeployID:        deployID,
+		ClaimToken:      claimToken,
+		ShooRedirectURI: s.publicURL(r, "/shoo/callback"),
+		CSPNonce:        cspNonce(r.Context()),
+	})
 }
 
 func (s *Server) scheduleDeployClaimCleanup() {
