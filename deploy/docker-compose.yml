@@ -22,6 +22,8 @@ services:
       PLUMTREE_STATE_ENCRYPTION_KEY_FILE: /run/secrets/control_plane_state_kek
       PLUMTREE_BUILD_URL: http://build-worker:8090
       PLUMTREE_ANONYMOUS_PREVIEW: ${PLUMTREE_ANONYMOUS_PREVIEW:-false}
+      # Trusted deployments may let every deploy-token holder bypass Shoo claim.
+      PLUMTREE_AUTO_CLAIM: ${PLUMTREE_AUTO_CLAIM:-false}
       PLUMTREE_PRODUCTION: "true"
       PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS: ${PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS:-false}
       PLUMTREE_MAX_APPS_PER_OWNER: ${PLUMTREE_MAX_APPS_PER_OWNER:-5}

@@ -27,6 +27,7 @@ type Server struct {
 	verifier     TokenVerifier
 	appOrigin    string
 	devToken     string
+	autoClaim    bool
 	gatewayToken string
 	build        BuildBackend
 	buildSlots   chan struct{}
@@ -44,6 +45,9 @@ type Config struct {
 	Verifier  TokenVerifier
 	AppOrigin string
 	DevToken  string
+	// AutoClaim claims every new deploy using the dev deploy token instead of
+	// requiring the Shoo browser flow. This is intended only for trusted servers.
+	AutoClaim bool
 	// GatewayToken, when set, enables the operator-internal gateway API
 	// (/internal/gateway/*) that a standalone SSH gateway calls to resolve apps
 	// and record sessions. Empty disables those endpoints (all-in-one mode, where
@@ -83,6 +87,7 @@ func NewWithConfig(cfg Config) *Server {
 		verifier:     cfg.Verifier,
 		appOrigin:    cfg.AppOrigin,
 		devToken:     cfg.DevToken,
+		autoClaim:    cfg.AutoClaim,
 		gatewayToken: cfg.GatewayToken,
 		build:        cfg.Build,
 		buildSlots:   buildSlots,
@@ -108,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/claims/", s.handleClaimAPI)
 	mux.HandleFunc("/api/dev/deploy/", s.handleDevDeployPath)
 	mux.HandleFunc("/api/dev/deploy", s.handleDevDeploy)
+	mux.HandleFunc("/api/dev/ping", s.handleDevPing)
 	mux.HandleFunc(gatewayapi.BasePath+"/identity", s.handleGatewayIdentity)
 	mux.HandleFunc(gatewayapi.BasePath+"/resolve", s.handleGatewayResolve)
 	mux.HandleFunc(gatewayapi.BasePath+"/sessions", s.handleGatewayStartSession)

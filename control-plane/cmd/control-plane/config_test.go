@@ -28,6 +28,7 @@ func TestLoadConfigParsesLimits(t *testing.T) {
 	body := `{
 	  "publicOrigin": "https://plumtree.dev",
 	  "sshHost": "plumtree.dev",
+	  "autoClaim": true,
 	  "allowHostCommands": true,
 	  "maxAppsPerOwner": 5,
 	  "maxSessionsPerAppPerDay": 100,
@@ -45,6 +46,9 @@ func TestLoadConfigParsesLimits(t *testing.T) {
 	}
 	if !cfg.AllowHostCommands {
 		t.Error("AllowHostCommands = false, want true")
+	}
+	if !cfg.AutoClaim {
+		t.Error("AutoClaim = false, want true")
 	}
 	if cfg.MaxSessionsPerAppPerDay != 100 {
 		t.Errorf("MaxSessionsPerAppPerDay = %d, want 100", cfg.MaxSessionsPerAppPerDay)

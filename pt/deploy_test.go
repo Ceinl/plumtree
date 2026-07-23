@@ -80,3 +80,53 @@ func TestDeployStartsFreshOnConfiguredServerChangeAndDropsLegacyToken(t *testing
 		t.Fatalf("deploy metadata = %+v", meta)
 	}
 }
+
+func TestDeployAcceptsAutoClaimedResponseWithoutClaimURL(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module example.test/app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "plumtree.json"), []byte(`{"name":"counter","type":"tui"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/dev/deploy" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"app": map[string]any{"name": "counter", "handle": "autoclaim/counter"},
+			"deploy": map[string]any{
+				"id":         "dep_000001",
+				"claimed":    true,
+				"claimToken": "auto-claim-token",
+			},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("PLUMTREE_PT_CONFIG", filepath.Join(t.TempDir(), "pt.json"))
+	t.Setenv("PLUMTREE_SERVER_URL", server.URL)
+	t.Setenv("PLUMTREE_DEV_TOKEN", "shared-token")
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(proj); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+
+	if err := cmdDeploy(nil); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := readDeployMetadata(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.AppHandle != "autoclaim/counter" || meta.ClaimToken != "auto-claim-token" || meta.ClaimURL != "" {
+		t.Fatalf("deploy metadata = %+v", meta)
+	}
+}

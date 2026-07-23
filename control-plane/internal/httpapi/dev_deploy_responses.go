@@ -2,7 +2,7 @@ package httpapi
 
 import "github.com/Ceinl/plumtree/control-plane/internal/control"
 
-func devDeployResponse(ownerHandle string, app control.App, deploy control.Deploy, claimed bool, claimURL string) map[string]any {
+func devDeployResponse(ownerHandle string, app control.App, deploy control.Deploy, claimed bool, claimURL, claimToken string) map[string]any {
 	appHandle := ""
 	if ownerHandle != "" && app.Name != "" {
 		appHandle = ownerHandle + "/" + app.Name
@@ -13,6 +13,9 @@ func devDeployResponse(ownerHandle string, app control.App, deploy control.Deplo
 	}
 	if claimURL != "" {
 		deployJSON["claimUrl"] = claimURL
+	}
+	if claimToken != "" {
+		deployJSON["claimToken"] = claimToken
 	}
 	if deploy.ClaimExpiresAt != nil && !claimed {
 		deployJSON["claimExpiresAt"] = deploy.ClaimExpiresAt

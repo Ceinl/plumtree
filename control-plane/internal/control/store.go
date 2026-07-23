@@ -477,6 +477,28 @@ func (s *Store) ListApps(ownerID string) ([]App, error) {
 	return out, nil
 }
 
+// ListDeployedApps returns all claimed apps with an active deploy, ordered by
+// their owner/app handle.
+func (s *Store) ListDeployedApps() []DeployedApp {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]DeployedApp, 0)
+	for _, app := range s.apps {
+		if app.ActiveDeployID == "" {
+			continue
+		}
+		owner, ok := s.owners[app.OwnerID]
+		if !ok || owner.Handle == "" {
+			continue
+		}
+		out = append(out, DeployedApp{App: app, Owner: owner})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Owner.Handle+"/"+out[i].App.Name < out[j].Owner.Handle+"/"+out[j].App.Name
+	})
+	return out
+}
+
 // AppDailyConnections reports how many sessions the app started in the trailing
 // 24h window and the configured per-app daily cap. A cap of 0 means unlimited.
 func (s *Store) AppDailyConnections(appID string) (used, cap int) {

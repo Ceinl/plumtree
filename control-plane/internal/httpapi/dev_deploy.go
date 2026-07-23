@@ -10,6 +10,8 @@ import (
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
 )
 
+const autoClaimOwnerHandle = "autoclaim"
+
 type devDeployRequest struct {
 	AppName           string            `json:"appName"`
 	AppType           string            `json:"appType"`
@@ -75,12 +77,31 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	s.scheduleDeployClaimCleanup()
+	ownerHandle := ""
+	claimURL := ""
+	responseClaimToken := ""
+	claimed := false
+	app := control.App{Name: deploy.AppName}
+	if s.autoClaim {
+		owner, err := s.store.EnsureOwner(autoClaimOwnerHandle)
+		if err != nil {
+			writeControlError(w, err)
+			return
+		}
+		app, deploy, _, err = s.store.ClaimDeploy(deploy.ID, hashClaimToken(claimToken), owner.ID)
+		if err != nil {
+			writeDeployClaimError(w, err)
+			return
+		}
+		ownerHandle = owner.Handle
+		responseClaimToken = claimToken
+		claimed = true
+	} else {
+		s.scheduleDeployClaimCleanup()
+		claimURL = s.claimURL(r, deploy.ID, claimToken)
+	}
 
-	claimURL := s.claimURL(r, deploy.ID, claimToken)
-	resp := devDeployResponse("", control.App{
-		Name: deploy.AppName,
-	}, deploy, false, claimURL)
+	resp := devDeployResponse(ownerHandle, app, deploy, claimed, claimURL, responseClaimToken)
 	if s.store.AnonymousPreviewEnabled() {
 		resp["previewHandle"] = "preview-" + deploy.ID
 	}
@@ -195,7 +216,7 @@ func (s *Server) handleDevDeployUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ownerHandle = owner.Handle
 	}
-	writeJSON(w, http.StatusOK, devDeployResponse(ownerHandle, app, deploy, claimed, ""))
+	writeJSON(w, http.StatusOK, devDeployResponse(ownerHandle, app, deploy, claimed, "", ""))
 }
 
 func (s *Server) handleDevDeployInspect(w http.ResponseWriter, r *http.Request) {

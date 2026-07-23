@@ -99,6 +99,7 @@ func main() {
 	addr := flag.String("addr", env("PLUMTREE_ADDR", "127.0.0.1:8080"), "HTTP listen address")
 	origin := flag.String("origin", env("PLUMTREE_PUBLIC_ORIGIN", firstNonEmpty(fileCfg.PublicOrigin, "http://localhost:8080")), "public dashboard origin")
 	shooBase := flag.String("shoo-base-url", env("SHOO_BASE_URL", shoo.DefaultBaseURL), "Shoo base URL")
+	autoClaim := flag.Bool("auto-claim", envBool("PLUMTREE_AUTO_CLAIM", fileCfg.AutoClaim), "claim every new deploy without Shoo or dashboard interaction (trusted servers only)")
 	devTokenDefault, devTokenEnvSet := os.LookupEnv("PLUMTREE_DEV_TOKEN")
 	devToken := flag.String("dev-token", devTokenDefault, "enable local dev deploy API with this token; defaults to a generated local token outside production")
 	gatewayToken := flag.String("gateway-token", env("PLUMTREE_GATEWAY_TOKEN", ""), "enable the gateway API (/internal/gateway) for a standalone SSH gateway with this shared token")
@@ -230,6 +231,7 @@ func main() {
 		Verifier:            verifier,
 		AppOrigin:           *origin,
 		DevToken:            *devToken,
+		AutoClaim:           *autoClaim,
 		GatewayToken:        *gatewayToken,
 		Build:               build,
 		MaxConcurrentBuilds: *maxConcurrentBuilds,
@@ -264,7 +266,11 @@ func main() {
 	fmt.Println("Authors — deploy, then claim to own the app:")
 	if *devToken != "" {
 		fmt.Println("  pt deploy            build & upload the current app (server-side)")
-		fmt.Printf("  pt claim             open the browser claim to take ownership (within %s)\n", *deployClaimTTL)
+		if *autoClaim {
+			fmt.Println("  auto-claim:          every new deploy is accepted (Shoo claim disabled)")
+		} else {
+			fmt.Printf("  pt claim             open the browser claim to take ownership (within %s)\n", *deployClaimTTL)
+		}
 	} else {
 		fmt.Println("  deploy is disabled — start with -dev-token TOKEN to allow `pt deploy`")
 	}
