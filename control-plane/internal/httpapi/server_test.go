@@ -26,8 +26,12 @@ func TestDashboardServesShooClient(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "https://shoo.dev/shoo.js") || !strings.Contains(body, "/api/apps") || !strings.Contains(body, "/api/me/handle") {
+	if !strings.Contains(body, "https://shoo.dev/shoo.js") || !strings.Contains(body, "/api/apps") ||
+		!strings.Contains(body, "/api/me/handle") || !strings.Contains(body, "/api/me/ssh-keys") {
 		t.Fatalf("dashboard missing Shoo client or API calls")
+	}
+	if !strings.Contains(body, `aria-label="SSH key name"`) || !strings.Contains(body, `aria-label="OpenSSH public key"`) {
+		t.Fatal("dashboard SSH key fields are missing accessible labels")
 	}
 	if !strings.Contains(body, `data-shoo-redirect-uri="https://plumtree.example/shoo/callback"`) {
 		t.Fatalf("dashboard Shoo callback does not use the advertised public origin")

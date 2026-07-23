@@ -186,6 +186,49 @@ func TestOpenStoreMigratesLegacyIdentityHandle(t *testing.T) {
 	}
 }
 
+func TestSSHKeyRegistrationAndRevocationPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.CreateOwner("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := store.RegisterSSHKey(SSHKeyInput{
+		OwnerID: owner.ID, Name: "laptop", PublicKey: "ssh-ed25519 AAAATEST", Fingerprint: "SHA256:registered",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := reopened.ListSSHKeys(owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0].ID != key.ID {
+		t.Fatalf("reopened keys = %+v", keys)
+	}
+	if err := reopened.RevokeSSHKey(owner.ID, key.ID); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err = OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err = reopened.ListSSHKeys(owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("keys after persisted revocation = %+v", keys)
+	}
+}
+
 func TestEncryptedSnapshotDoesNotExposeSecretAndReopens(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	key := []byte("01234567890123456789012345678901")

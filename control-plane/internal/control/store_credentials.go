@@ -64,6 +64,37 @@ func (s *Store) RegisterSSHKey(in SSHKeyInput) (SSHKey, error) {
 	return key, nil
 }
 
+// ListSSHKeys returns an owner's registered SSH keys ordered by ID.
+func (s *Store) ListSSHKeys(ownerID string) ([]SSHKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.owners[ownerID]; !ok {
+		return nil, fmt.Errorf("%w: owner %q", ErrNotFound, ownerID)
+	}
+	var keys []SSHKey
+	for _, key := range s.sshKeys {
+		if key.OwnerID == ownerID {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].ID < keys[j].ID })
+	return keys, nil
+}
+
+// RevokeSSHKey removes one of an owner's registered SSH keys. A key owned by
+// someone else is reported as not found so ownership cannot be probed.
+func (s *Store) RevokeSSHKey(ownerID, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.sshKeys[id]
+	if !ok || key.OwnerID != ownerID {
+		return fmt.Errorf("%w: SSH key %q", ErrNotFound, id)
+	}
+	delete(s.sshKeys, id)
+	delete(s.sshKeyByFingerprint, key.Fingerprint)
+	return s.persistLocked()
+}
+
 func (s *Store) CreateCIToken(in CITokenInput) (CIToken, error) {
 	if err := ValidateName(in.Name); err != nil {
 		return CIToken{}, err
