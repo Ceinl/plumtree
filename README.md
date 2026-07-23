@@ -178,9 +178,10 @@ pt inspect <deploy|handle>  # deploy details
 Shoo browser flow that binds the deploy to your owner. Possession of the claim
 token (in `.plumtree/deploy.json`) authorizes later updates, secrets, and egress.
 
-For a trusted single-owner server, `control-plane -auto-claim-owner HANDLE`
-combines deploy and claim without Shoo. This mode trusts the server's deploy
-token and should not be enabled for a public or multi-user deployment.
+For a trusted server, `control-plane -auto-claim` combines deploy and claim
+without Shoo, a handle prompt, or dashboard interaction. Every deploy-token
+holder shares the internal `autoclaim/<app>` namespace, so leave this mode
+disabled when those clients should not trust one another.
 
 ## Security model
 

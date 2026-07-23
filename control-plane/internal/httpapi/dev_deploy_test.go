@@ -78,17 +78,17 @@ func TestDevDeployCreatesClaimRequiredDeploy(t *testing.T) {
 func TestDevDeployAutoClaimsWithoutShoo(t *testing.T) {
 	store := control.NewStore()
 	server := NewWithConfig(Config{
-		Store:          store,
-		DevToken:       "secret",
-		AutoClaimOwner: "local",
+		Store:     store,
+		DevToken:  "secret",
+		AutoClaim: true,
 	})
 
 	created := createDevDeploy(t, server, []byte("local wasm"))
 	if !created.Deploy.Claimed {
 		t.Fatalf("deploy claimed = false, response = %+v", created)
 	}
-	if created.App.Handle != "local/counter" {
-		t.Fatalf("app handle = %q, want local/counter", created.App.Handle)
+	if created.App.Handle != "autoclaim/counter" {
+		t.Fatalf("app handle = %q, want autoclaim/counter", created.App.Handle)
 	}
 	if created.Deploy.ClaimToken == "" {
 		t.Fatal("auto-claimed response is missing claim token")
@@ -101,7 +101,7 @@ func TestDevDeployAutoClaimsWithoutShoo(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("inspect status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"handle":"local/counter"`) {
+	if !strings.Contains(rec.Body.String(), `"handle":"autoclaim/counter"`) {
 		t.Fatalf("inspect body = %s", rec.Body.String())
 	}
 }

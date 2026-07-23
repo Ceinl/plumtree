@@ -10,6 +10,8 @@ import (
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
 )
 
+const autoClaimOwnerHandle = "autoclaim"
+
 type devDeployRequest struct {
 	AppName           string            `json:"appName"`
 	AppType           string            `json:"appType"`
@@ -80,8 +82,8 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 	responseClaimToken := ""
 	claimed := false
 	app := control.App{Name: deploy.AppName}
-	if s.autoClaimOwner != "" {
-		owner, err := s.store.EnsureOwner(s.autoClaimOwner)
+	if s.autoClaim {
+		owner, err := s.store.EnsureOwner(autoClaimOwnerHandle)
 		if err != nil {
 			writeControlError(w, err)
 			return

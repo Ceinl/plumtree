@@ -18,9 +18,9 @@ import (
 // so a config file is a convenient baseline that flags/env can still override
 // per run. Keep this in sync with config.example.json.
 type fileConfig struct {
-	// AutoClaimOwner claims new deploys directly to this owner handle without
-	// Shoo. It is intended for trusted self-hosted servers only.
-	AutoClaimOwner string `json:"autoClaimOwner"`
+	// AutoClaim claims every new deploy without Shoo. It is intended for trusted
+	// servers where anyone holding the deploy token may publish an app.
+	AutoClaim bool `json:"autoClaim"`
 	// AllowHostCommands lets claimed apps execute local programs as the server
 	// OS user. It is for trusted apps on private/self-hosted servers only.
 	AllowHostCommands bool `json:"allowHostCommands"`

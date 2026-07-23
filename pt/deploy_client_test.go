@@ -49,7 +49,7 @@ func TestPostDeploySendsDevTokenOnly(t *testing.T) {
 func TestPostDeployReadsAutoClaimToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"app":{"handle":"local/counter"},"deploy":{"id":"dep_000001","claimToken":"claim-token","claimed":true}}`))
+		_, _ = w.Write([]byte(`{"app":{"handle":"autoclaim/counter"},"deploy":{"id":"dep_000001","claimToken":"claim-token","claimed":true}}`))
 	}))
 	defer srv.Close()
 

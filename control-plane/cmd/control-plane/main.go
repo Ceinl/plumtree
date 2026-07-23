@@ -99,7 +99,7 @@ func main() {
 	addr := flag.String("addr", env("PLUMTREE_ADDR", "127.0.0.1:8080"), "HTTP listen address")
 	origin := flag.String("origin", env("PLUMTREE_PUBLIC_ORIGIN", firstNonEmpty(fileCfg.PublicOrigin, "http://localhost:8080")), "public dashboard origin")
 	shooBase := flag.String("shoo-base-url", env("SHOO_BASE_URL", shoo.DefaultBaseURL), "Shoo base URL")
-	autoClaimOwner := flag.String("auto-claim-owner", env("PLUMTREE_AUTO_CLAIM_OWNER", fileCfg.AutoClaimOwner), "claim new deploys directly to this owner handle without Shoo (trusted self-hosting only)")
+	autoClaim := flag.Bool("auto-claim", envBool("PLUMTREE_AUTO_CLAIM", fileCfg.AutoClaim), "claim every new deploy without Shoo or dashboard interaction (trusted servers only)")
 	devTokenDefault, devTokenEnvSet := os.LookupEnv("PLUMTREE_DEV_TOKEN")
 	devToken := flag.String("dev-token", devTokenDefault, "enable local dev deploy API with this token; defaults to a generated local token outside production")
 	gatewayToken := flag.String("gateway-token", env("PLUMTREE_GATEWAY_TOKEN", ""), "enable the gateway API (/internal/gateway) for a standalone SSH gateway with this shared token")
@@ -139,11 +139,6 @@ func main() {
 	ackUnlimited := flag.Bool("acknowledge-unlimited-limits", envBool("PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS", false), "allow production startup with critical limits disabled")
 	flag.Parse()
 	setFlags := visitedFlagNames()
-	if *autoClaimOwner != "" {
-		if err := control.ValidateName(*autoClaimOwner); err != nil {
-			log.Fatalf("invalid auto-claim owner: %v", err)
-		}
-	}
 	if *tailscaleMode {
 		ip, err := detectTailscaleIPv4(context.Background())
 		if err != nil {
@@ -236,7 +231,7 @@ func main() {
 		Verifier:            verifier,
 		AppOrigin:           *origin,
 		DevToken:            *devToken,
-		AutoClaimOwner:      *autoClaimOwner,
+		AutoClaim:           *autoClaim,
 		GatewayToken:        *gatewayToken,
 		Build:               build,
 		MaxConcurrentBuilds: *maxConcurrentBuilds,
@@ -271,8 +266,8 @@ func main() {
 	fmt.Println("Authors — deploy, then claim to own the app:")
 	if *devToken != "" {
 		fmt.Println("  pt deploy            build & upload the current app (server-side)")
-		if *autoClaimOwner != "" {
-			fmt.Printf("  auto-claim:          new deploys are owned by %s (Shoo claim disabled)\n", *autoClaimOwner)
+		if *autoClaim {
+			fmt.Println("  auto-claim:          every new deploy is accepted (Shoo claim disabled)")
 		} else {
 			fmt.Printf("  pt claim             open the browser claim to take ownership (within %s)\n", *deployClaimTTL)
 		}

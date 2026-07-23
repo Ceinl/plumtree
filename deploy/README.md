@@ -36,10 +36,11 @@ the normal WASM capability boundary by design. Leave it unset on multi-tenant
 servers. In containers, only programs and files available inside the gateway
 container are reachable unless the operator deliberately mounts more.
 
-`PLUMTREE_AUTO_CLAIM_OWNER=HANDLE` is a separate trusted single-owner option on
-the control plane. It claims each new deploy directly to that handle using the
-shared deploy token and removes the Shoo browser step. Leave it empty for public
-or multi-user servers.
+`PLUMTREE_AUTO_CLAIM=true` is a separate trusted-server option on the control
+plane. It accepts every new deploy authenticated by the shared deploy token and
+removes the Shoo login, handle prompt, claim page, and dashboard step. All such
+clients share the internal `autoclaim/<app>` namespace, so leave it disabled
+when deploy-token holders should not trust one another.
 
 - **build-worker has no internet egress.** It sits on an `internal: true`
   network with the control plane. Author builds resolve the unpublished

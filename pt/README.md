@@ -120,10 +120,11 @@ Run `pt claim` within 5 minutes, sign in with Shoo in the browser, and choose a
 handle if needed. Later `pt deploy` runs update the same claimed app by using
 the saved deploy claim token.
 
-On a trusted self-hosted control plane started with
-`-auto-claim-owner HANDLE`, the first `pt deploy` is claimed immediately to that
-owner. The CLI saves the returned claim credential for later updates, and no
-Shoo browser step is required.
+On a trusted control plane started with `-auto-claim`, every authenticated
+`pt deploy` is accepted immediately. The CLI saves the returned claim
+credential for later updates; no Shoo login, handle choice, claim page, or
+dashboard visit is required. These apps use the server's internal
+`autoclaim/<app>` namespace.
 
 Public releases are generic and contain no server address or deploy token.
 `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` remain available as temporary
