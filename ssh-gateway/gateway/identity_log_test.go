@@ -16,4 +16,7 @@ func TestIdentityLogValueShortensFingerprints(t *testing.T) {
 	if got := identityLogValue(runner.Identity{User: "local"}); got != "local" {
 		t.Fatalf("short identity changed simple user to %q", got)
 	}
+	if got := identityLogValue(runner.Identity{User: "anonymous:1234567890abcdef"}); got != "anonymous:12345678…" {
+		t.Fatalf("anonymous identity = %q", got)
+	}
 }

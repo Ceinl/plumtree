@@ -37,7 +37,8 @@ func main() {
 
 	limits := runner.DefaultLimits
 	limits.SessionTimeout = flags.sessionTimeout
-	useColor := gatewayColorEnabled(os.Stdout)
+	summaryColor := gatewayColorEnabled(os.Stdout)
+	eventColor := gatewayColorEnabled(os.Stderr)
 	runnerSummary := "in-process sandbox"
 	if flags.runnerEndpoint != "" {
 		runnerSummary = "remote broker " + flags.runnerEndpoint
@@ -58,10 +59,10 @@ func main() {
 		RunnerEndpoint:        flags.runnerEndpoint,
 		RunnerToken:           flags.runnerToken,
 		AllowHostCommands:     flags.allowHostCommands,
-		Logf:                  func(f string, a ...any) { writeGatewayEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
+		Logf:                  func(f string, a ...any) { writeGatewayEvent(os.Stderr, fmt.Sprintf(f, a...), eventColor) },
 		Ready: func(a net.Addr) {
 			host, port, _ := net.SplitHostPort(a.String())
-			writeGatewaySummary(os.Stdout, net.JoinHostPort(gateway.HostFromListen(host), port), flags.controlURL, runnerSummary, useColor)
+			writeGatewaySummary(os.Stdout, net.JoinHostPort(gateway.HostFromListen(host), port), flags.controlURL, runnerSummary, summaryColor)
 		},
 	}
 	if flags.allowHostCommands {

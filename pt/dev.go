@@ -102,7 +102,8 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 	if err := validateSSHHost(host); err != nil {
 		return err
 	}
-	useColor := devColorEnabled(os.Stdout)
+	summaryColor := devColorEnabled(os.Stdout)
+	eventColor := devColorEnabled(os.Stderr)
 	srv := &sshdev.Server{
 		Wasm:    wasm,
 		Limits:  lim,
@@ -110,7 +111,7 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 		AppType: man.Type,
 		AppName: man.Name,
 		MaxFPS:  maxFPS,
-		Logf:    func(f string, a ...any) { writeDevEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
+		Logf:    func(f string, a ...any) { writeDevEvent(os.Stderr, fmt.Sprintf(f, a...), eventColor) },
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -128,7 +129,7 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 		if installConfig {
 			path, err := installDevSSHConfig(host, connectHost, port)
 			if err != nil {
-				writeDevEvent(os.Stderr, fmt.Sprintf("SSH config update failed: %v", err), useColor)
+				writeDevEvent(os.Stderr, fmt.Sprintf("SSH config update failed: %v", err), eventColor)
 				command = fmt.Sprintf("ssh -p %s -o HostKeyAlias=%s -o StrictHostKeyChecking=accept-new %s@%s", port, devSSHHostKeyAlias, name, connectHost)
 			} else {
 				command = fmt.Sprintf("ssh %s@%s", name, host)
@@ -137,7 +138,7 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 		} else {
 			command = fmt.Sprintf("ssh -p %s -o HostKeyAlias=%s -o StrictHostKeyChecking=accept-new %s@%s", port, devSSHHostKeyAlias, name, connectHost)
 		}
-		writeDevSSHSummary(os.Stdout, name, man.Type, command, configPath, useColor)
+		writeDevSSHSummary(os.Stdout, name, man.Type, command, configPath, summaryColor)
 	}
 	return srv.ListenAndServe(ctx, addr, ready)
 }

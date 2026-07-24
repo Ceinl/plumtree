@@ -231,7 +231,8 @@ func main() {
 		}
 	}()
 
-	useColor := colorEnabled(os.Stdout)
+	stdoutColor := colorEnabled(os.Stdout)
+	stderrColor := colorEnabled(os.Stderr)
 	handler := httpapi.NewWithConfig(httpapi.Config{
 		Store:               store,
 		Verifier:            verifier,
@@ -244,7 +245,7 @@ func main() {
 		MaxQueuedBuilds:     *maxQueuedBuilds,
 		RateLimitPerSec:     *rateLimit,
 		RateLimitBurst:      *rateBurst,
-		Logf:                func(f string, a ...any) { writeRuntimeEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
+		Logf:                func(f string, a ...any) { writeRuntimeEvent(os.Stderr, fmt.Sprintf(f, a...), stderrColor) },
 	}).Handler()
 	originURL := strings.TrimRight(*origin, "/")
 	stateSummary := "memory (ephemeral)"
@@ -324,7 +325,7 @@ func main() {
 			RunnerEndpoint:        *runnerEndpoint,
 			RunnerToken:           *runnerToken,
 			AllowHostCommands:     *allowHostCommands,
-			Logf:                  func(f string, a ...any) { writeRuntimeEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
+			Logf:                  func(f string, a ...any) { writeRuntimeEvent(os.Stderr, fmt.Sprintf(f, a...), stderrColor) },
 			Ready: func(a net.Addr) {
 				host, port, _ := net.SplitHostPort(a.String())
 				connectHost := gateway.HostFromListen(host)
@@ -353,7 +354,7 @@ func main() {
 					summary.Note = strings.TrimSpace(summary.Note + " · preview " + connect("preview-<deployID>"))
 					summary.Note = strings.TrimPrefix(summary.Note, "· ")
 				}
-				writeStartupSummary(os.Stdout, summary, useColor)
+				writeStartupSummary(os.Stdout, summary, stdoutColor)
 			},
 		}
 		go func() {
@@ -363,7 +364,7 @@ func main() {
 		}()
 	} else {
 		summary.SSH = "disabled"
-		writeStartupSummary(os.Stdout, summary, useColor)
+		writeStartupSummary(os.Stdout, summary, stdoutColor)
 	}
 
 	select {

@@ -249,7 +249,7 @@ func (s *Server) identityFromConn(c *ssh.ServerConn) runner.Identity {
 				return identity
 			}
 			if err != nil {
-				s.logf("resolve SSH identity %q: %v", fp, err)
+				s.logf("resolve SSH identity %q: %v", identityLogValue(runner.Identity{User: fp}), err)
 			}
 			// Resolution failures fail closed. Possession of the key is proved,
 			// but the gateway must not assert that it belongs to a platform owner.
