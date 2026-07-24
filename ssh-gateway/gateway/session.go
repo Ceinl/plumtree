@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -191,16 +192,20 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 		cancel:   cancel,
 	})
 	defer s.sessions.remove(sessionID)
+	startedAt := time.Now()
+	s.logf("session start id=%s app=%q deploy=%s identity=%q", sessionID, run.AppName, run.DeployID, identityLogValue(identity))
 
 	caps := s.capsFor(run.AppID, run.OwnerID)
 	caps.Auth = runner.StaticAuth{Identity: identity}
 	log, truncated := s.runSessionArgs(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
+	sessionDuration := time.Since(startedAt)
 	if err := s.Backend.RecordSessionLog(sessionID, log, truncated); err != nil {
 		s.logf("record session log %q: %v", sessionID, err)
 	}
 	if err := s.Backend.EndSession(sessionID); err != nil {
 		s.logf("end session %q: %v", sessionID, err)
 	}
+	s.logf("session end id=%s app=%q duration=%s log=%dB truncated=%t", sessionID, run.AppName, sessionDuration.Round(time.Millisecond), len(log), truncated)
 	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	ch.Close()
 	cancel()

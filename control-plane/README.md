@@ -108,6 +108,14 @@ The server does not modify `~/.ssh/config` by default. Pass
 `-ssh-host plumtree-local` (or set `PLUMTREE_SSH_HOST`) to opt into a managed
 alias and connect with `ssh <app>@plumtree-local`.
 
+For a public standard-port command such as `ssh owner/app@apps.example.com`,
+the gateway must own port 22 on the app-facing address. The all-in-one binary
+already supports this with `-ssh-addr <app-ip>:22` (or
+`PLUMTREE_SSH_ADDR=<app-ip>:22`; the Makefile equivalent is
+`SSH_ADDR=<app-ip>:22 make run-server`). Do not use an address whose port 22 is
+still serving administrator SSH. Production should prefer the standalone
+gateway on a dedicated service IP as described in `deploy/README.md`.
+
 Control-plane state is persisted by default in the OS config directory. On
 macOS, that is:
 

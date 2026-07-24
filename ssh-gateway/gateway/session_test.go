@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Ceinl/plumtree/runner"
@@ -137,8 +138,8 @@ func buildTestBinary(t *testing.T, dir, pkg string, extraEnv []string) string {
 }
 
 type testChannel struct {
-	stdout bytes.Buffer
-	stderr bytes.Buffer
+	stdout lockedBuffer
+	stderr lockedBuffer
 }
 
 func (c *testChannel) Read([]byte) (int, error)    { return 0, io.EOF }
@@ -150,3 +151,26 @@ func (c *testChannel) SendRequest(string, bool, []byte) (bool, error) {
 	return false, nil
 }
 func (c *testChannel) Stderr() io.ReadWriter { return &c.stderr }
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Read(p)
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}

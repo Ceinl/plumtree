@@ -34,6 +34,7 @@ type Server struct {
 	buildQueue   chan struct{}
 	limiter      *ipLimiter
 	suspensions  *suspensionHub
+	logf         func(format string, args ...any)
 }
 
 func New(store *control.Store, verifier TokenVerifier, appOrigin string) *Server {
@@ -66,6 +67,9 @@ type Config struct {
 	// bucket depth (defaults to RateLimitPerSec).
 	RateLimitPerSec int
 	RateLimitBurst  int
+	// Logf receives concise operator-facing lifecycle events. Credentials and
+	// request headers are never passed to it.
+	Logf func(format string, args ...any)
 }
 
 func NewWithConfig(cfg Config) *Server {
@@ -94,9 +98,16 @@ func NewWithConfig(cfg Config) *Server {
 		buildQueue:   buildQueue,
 		limiter:      newIPLimiter(cfg.RateLimitPerSec, cfg.RateLimitBurst, time.Now),
 		suspensions:  suspensions,
+		logf:         cfg.Logf,
 	}
 	store.RegisterSuspensionListener(suspensions.publish)
 	return server
+}
+
+func (s *Server) logEvent(format string, args ...any) {
+	if s.logf != nil {
+		s.logf(format, args...)
+	}
 }
 
 func (s *Server) Handler() http.Handler {
