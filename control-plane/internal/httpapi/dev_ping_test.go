@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
@@ -91,6 +93,49 @@ func TestDevPingListsOnlyActiveDeployedApps(t *testing.T) {
 	}
 	if len(body.Apps) != 1 || body.Apps[0].Handle != "alice/counter" || body.Apps[0].ActiveDeployID != deploy.ID {
 		t.Fatalf("apps = %+v", body.Apps)
+	}
+}
+
+func TestDevPingLogsLifecycleWithoutCredentials(t *testing.T) {
+	var logs []string
+	server := NewWithConfig(Config{
+		Store:    control.NewStore(),
+		DevToken: "secret-never-log",
+		Logf: func(format string, args ...any) {
+			logs = append(logs, fmt.Sprintf(format, args...))
+		},
+	})
+
+	request := func(method, token string) {
+		req := httptest.NewRequest(method, "/api/dev/ping", nil)
+		req.RemoteAddr = "100.64.1.9:43123"
+		if token != "" {
+			req.Header.Set("X-Plumtree-Dev-Token", token)
+		}
+		server.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	}
+	request(http.MethodGet, "secret-never-log")
+	request(http.MethodGet, "wrong-never-log")
+	request(http.MethodPost, "secret-never-log")
+
+	want := []string{
+		`ping auth=ok peer="100.64.1.9" apps=0`,
+		`ping auth=failed peer="100.64.1.9"`,
+		`ping auth=not-checked peer="100.64.1.9" result=method-not-allowed`,
+	}
+	if len(logs) != len(want) {
+		t.Fatalf("logs = %q, want %d events", logs, len(want))
+	}
+	for i := range want {
+		if logs[i] != want[i] {
+			t.Errorf("log[%d] = %q, want %q", i, logs[i], want[i])
+		}
+	}
+	joined := strings.Join(logs, "\n")
+	for _, credential := range []string{"secret-never-log", "wrong-never-log"} {
+		if strings.Contains(joined, credential) {
+			t.Fatalf("logs exposed credential %q: %s", credential, joined)
+		}
 	}
 }
 

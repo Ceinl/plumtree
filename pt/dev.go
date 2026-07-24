@@ -102,6 +102,7 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 	if err := validateSSHHost(host); err != nil {
 		return err
 	}
+	useColor := devColorEnabled(os.Stdout)
 	srv := &sshdev.Server{
 		Wasm:    wasm,
 		Limits:  lim,
@@ -109,7 +110,7 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 		AppType: man.Type,
 		AppName: man.Name,
 		MaxFPS:  maxFPS,
-		Logf:    func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
+		Logf:    func(f string, a ...any) { writeDevEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -122,20 +123,21 @@ func runSSH(ctx context.Context, wasm []byte, lim runner.Limits, caps runner.Cap
 		if name == "" {
 			name = "app"
 		}
-		fmt.Printf("pt dev — serving %q (%s) over SSH on port %s\n\n", man.Name, man.Type, port)
+		command := ""
+		configPath := ""
 		if installConfig {
 			path, err := installDevSSHConfig(host, connectHost, port)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  ssh config update failed: %v\n", err)
-				fmt.Printf("Connect:\n  ssh -p %s -o HostKeyAlias=%s -o StrictHostKeyChecking=accept-new %s@%s\n\n", port, devSSHHostKeyAlias, name, connectHost)
+				writeDevEvent(os.Stderr, fmt.Sprintf("SSH config update failed: %v", err), useColor)
+				command = fmt.Sprintf("ssh -p %s -o HostKeyAlias=%s -o StrictHostKeyChecking=accept-new %s@%s", port, devSSHHostKeyAlias, name, connectHost)
 			} else {
-				fmt.Printf("SSH config: %s maps %s -> %s:%s\n\n", path, host, connectHost, port)
-				fmt.Printf("Connect:\n  ssh %s@%s\n\n", name, host)
+				command = fmt.Sprintf("ssh %s@%s", name, host)
+				configPath = path
 			}
 		} else {
-			fmt.Printf("Connect:\n  ssh -p %s -o HostKeyAlias=%s -o StrictHostKeyChecking=accept-new %s@%s\n\n", port, devSSHHostKeyAlias, name, connectHost)
+			command = fmt.Sprintf("ssh -p %s -o HostKeyAlias=%s -o StrictHostKeyChecking=accept-new %s@%s", port, devSSHHostKeyAlias, name, connectHost)
 		}
-		fmt.Println("Ctrl-C to stop.")
+		writeDevSSHSummary(os.Stdout, name, man.Type, command, configPath, useColor)
 	}
 	return srv.ListenAndServe(ctx, addr, ready)
 }

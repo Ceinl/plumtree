@@ -37,6 +37,13 @@ func main() {
 
 	limits := runner.DefaultLimits
 	limits.SessionTimeout = flags.sessionTimeout
+	useColor := gatewayColorEnabled(os.Stdout)
+	runnerSummary := "in-process sandbox"
+	if flags.runnerEndpoint != "" {
+		runnerSummary = "remote broker " + flags.runnerEndpoint
+	} else if flags.runnerWorker != "" {
+		runnerSummary = "local worker " + flags.runnerWorker
+	}
 	gw := &gateway.Server{
 		Backend:               httpbackend.New(flags.controlURL, flags.gatewayToken),
 		Limits:                limits,
@@ -51,21 +58,11 @@ func main() {
 		RunnerEndpoint:        flags.runnerEndpoint,
 		RunnerToken:           flags.runnerToken,
 		AllowHostCommands:     flags.allowHostCommands,
-		Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
+		Logf:                  func(f string, a ...any) { writeGatewayEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
 		Ready: func(a net.Addr) {
 			host, port, _ := net.SplitHostPort(a.String())
-			fmt.Printf("ssh gateway: listening on %s:%s\n", gateway.HostFromListen(host), port)
-			fmt.Printf("control plane: %s\n", flags.controlURL)
+			writeGatewaySummary(os.Stdout, net.JoinHostPort(gateway.HostFromListen(host), port), flags.controlURL, runnerSummary, useColor)
 		},
-	}
-
-	fmt.Printf("starting ssh-gateway on %s\n", flags.sshAddr)
-	if flags.runnerEndpoint != "" {
-		fmt.Printf("runner isolation: remote broker %s\n", flags.runnerEndpoint)
-	} else if flags.runnerWorker != "" {
-		fmt.Printf("runner isolation: %s\n", flags.runnerWorker)
-	} else {
-		fmt.Println("runner isolation: in-process sandbox")
 	}
 	if flags.allowHostCommands {
 		fmt.Fprintln(os.Stderr, "WARNING: host commands enabled; claimed apps execute with the ssh-gateway user's authority")

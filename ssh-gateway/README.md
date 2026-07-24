@@ -56,6 +56,14 @@ All flags also read from `PLUMTREE_*` environment variables (see `-h`).
 Production refuses to start without the remote broker boundary; the local
 `-runner-worker` mode shares the gateway's OS authority and is for development.
 
+For zero-config end-user commands (`ssh owner/app@apps.example.com`), expose the
+gateway on port 22. The process can listen there directly with
+`PLUMTREE_SSH_ADDR=0.0.0.0:22` when it has permission to bind privileged ports;
+the production Compose topology instead keeps the unprivileged container port
+2222 and publishes it through `PLUMTREE_SSH_PUBLISH_ADDR=<dedicated-ip>:22`.
+Keep host administrator SSH on a separate management address or move and verify
+it before assigning Plumtree the same address's port 22; see `deploy/README.md`.
+
 In all-in-one mode the control plane embeds this `gateway` package directly via
 an in-process `Backend` adapter, so there is no HTTP hop and no token needed.
 

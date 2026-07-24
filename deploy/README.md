@@ -5,7 +5,7 @@ Four services, built from this repo, wired by `docker-compose.yml`:
 | Service | Image | Exposure |
 |---|---|---|
 | `control-plane` | `Dockerfile.control-plane` | `:8080` — dashboard/API; put a TLS reverse proxy in front |
-| `ssh-gateway` | `Dockerfile.ssh-gateway` | `:2222` — public SSH; forward `:22` to it (or run it on 22) |
+| `ssh-gateway` | `Dockerfile.ssh-gateway` | container `:2222`, published by `PLUMTREE_SSH_PUBLISH_ADDR` (`:2222` safely by default, dedicated-IP `:22` for production) |
 | `runner-broker` | `Dockerfile.runner-broker` | none — networkless; authenticated Unix socket from the gateway only |
 | `build-worker` | `Dockerfile.build-worker` | none — internal network only |
 
@@ -26,6 +26,51 @@ Smoke test:
 curl -s http://localhost:8080/          # dashboard
 ssh -p 2222 <owner>/<app>@<host>        # once something is deployed
 ```
+
+## Standard-port SSH
+
+The end-user goal is deliberately ordinary SSH, with no local config and no
+nonstandard port:
+
+```sh
+ssh <owner>/<app>@apps.example.com
+```
+
+The gateway must own TCP port 22 on the address behind `apps.example.com` for
+that to work. The robust layout gives Plumtree a dedicated app-facing IP (or a
+dedicated gateway host) and keeps administrator SSH on a separate management
+IP. Set the host publish address in `deploy/.env`:
+
+```dotenv
+PLUMTREE_SSH_PUBLISH_ADDR=192.0.2.50:22
+```
+
+Then point `apps.example.com` at `192.0.2.50` and recreate only the gateway:
+
+```sh
+docker compose up -d --build ssh-gateway
+ssh <owner>/<app>@apps.example.com
+```
+
+Binding a specific IP matters. If host `sshd` listens on `0.0.0.0:22` or
+`[::]:22`, it already owns port 22 on every address and the Compose publish
+will fail until `sshd` is restricted to the management address. Confirm a new
+administrator session through that management address before changing or
+closing the existing session.
+
+On a single-address host, the fallback is to move administrator SSH to a
+different, firewalled port first (for example 22222), verify a second admin
+login and out-of-band recovery, and only then set:
+
+```dotenv
+PLUMTREE_SSH_PUBLISH_ADDR=0.0.0.0:22
+```
+
+That preserves administration, but administrators must use the alternate port;
+end users keep the universal port-22 command. A DNS name alone cannot share one
+IP/port between OpenSSH and Plumtree, and a normal TCP proxy cannot route on the
+SSH username because it is encrypted. Do not stop or rebind the existing SSH
+service until the replacement admin path has been proven.
 
 ## Security posture
 

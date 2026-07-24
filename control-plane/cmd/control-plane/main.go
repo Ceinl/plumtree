@@ -231,6 +231,7 @@ func main() {
 		}
 	}()
 
+	useColor := colorEnabled(os.Stdout)
 	handler := httpapi.NewWithConfig(httpapi.Config{
 		Store:               store,
 		Verifier:            verifier,
@@ -243,69 +244,65 @@ func main() {
 		MaxQueuedBuilds:     *maxQueuedBuilds,
 		RateLimitPerSec:     *rateLimit,
 		RateLimitBurst:      *rateBurst,
+		Logf:                func(f string, a ...any) { writeRuntimeEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
 	}).Handler()
 	originURL := strings.TrimRight(*origin, "/")
-	fmt.Println()
-	fmt.Println("Plumtree control plane")
-	fmt.Printf("  dashboard:  %s/dashboard\n", originURL)
-	fmt.Printf("  http api:   %s\n", *addr)
+	stateSummary := "memory (ephemeral)"
 	if *stateFile != "" {
-		fmt.Printf("  state:      %s\n", *stateFile)
-	} else {
-		fmt.Println("  state:      in-memory (ephemeral)")
+		stateSummary = *stateFile
 	}
+	buildSummary := "sandboxed in-process build"
 	if *buildURL != "" {
-		fmt.Printf("  build:      remote worker %s\n", *buildURL)
-	} else {
-		fmt.Println("  build:      in-process sandbox")
+		buildSummary = "remote build " + *buildURL
 	}
-	if configPath != "" {
-		fmt.Printf("  config:     %s\n", configPath)
-	}
-
-	fmt.Println()
-	fmt.Printf("Limits: %s apps/owner · %s connections/app/day · %s new deploys/hour · claim window %s\n",
-		unlimitedOr(*maxAppsPerOwner), unlimitedOr(*maxSessionsPerAppDay), unlimitedOr(*maxDeploysPerHour), *deployClaimTTL)
-
-	fmt.Println()
-	fmt.Println("Authors — deploy, then claim to own the app:")
+	nextStep := "deploy disabled · set -dev-token to enable"
 	if *devToken != "" {
-		fmt.Println("  pt deploy            build & upload the current app (server-side)")
-		if *autoClaim {
-			fmt.Println("  auto-claim:          every new deploy is accepted (Shoo claim disabled)")
-		} else {
-			fmt.Printf("  pt claim             open the browser claim to take ownership (within %s)\n", *deployClaimTTL)
+		nextStep = "pt deploy  →  pt claim"
+		if !managedDevToken || *tailscaleMode {
+			nextStep = fmt.Sprintf("pt configure --addr %s --token", originURL)
+		} else if *autoClaim {
+			nextStep = "pt deploy  →  auto-claimed"
 		}
-	} else {
-		fmt.Println("  deploy is disabled — start with -dev-token TOKEN to allow `pt deploy`")
-	}
-	if *gatewayToken != "" {
-		fmt.Println("  gateway API enabled at /internal/gateway (for a standalone ssh-gateway)")
 	}
 	if *allowHostCommands {
 		fmt.Fprintln(os.Stderr, "WARNING: host commands enabled; claimed apps execute with the server user's authority")
 	}
-	if *devToken != "" {
-		fmt.Println()
-		fmt.Println("Client setup:")
-		if managedDevToken && !*tailscaleMode {
-			fmt.Println("  pt deploy            uses the generated local token automatically")
-		} else {
-			fmt.Printf("  pt configure --addr %s --token\n", originURL)
-		}
-		if managedDevToken && *tailscaleMode {
-			fmt.Printf("  token: %s\n", *devToken)
-			fmt.Printf("  saved: %s\n", managedDevTokenPath)
-		}
+	mode := "development"
+	if *production {
+		mode = "production"
 	}
-
+	claimSummary := "Shoo claims"
+	if *autoClaim {
+		claimSummary = "auto-claim"
+	}
+	summary := startupSummary{
+		Mode:      mode,
+		Dashboard: originURL + "/dashboard",
+		Stack:     stateSummary + " · " + buildSummary + " · " + claimSummary,
+		Limits: fmt.Sprintf("%s apps · %s/app/day · %s deploys/h · %s live · %s sessions · %s claims",
+			unlimitedOr(*maxAppsPerOwner), unlimitedOr(*maxSessionsPerAppDay), unlimitedOr(*maxDeploysPerHour), unlimitedOr(*maxSessions), briefDuration(*sessionTimeout), briefDuration(*deployClaimTTL)),
+		Next: nextStep,
+	}
+	if managedDevToken && *tailscaleMode {
+		summary.Note = "deploy credential saved at " + managedDevTokenPath
+	} else if configPath != "" {
+		summary.Note = "config " + configPath
+	}
+	if *gatewayToken != "" {
+		summary.Note = strings.TrimSpace(summary.Note + " · standalone gateway API enabled")
+		summary.Note = strings.TrimPrefix(summary.Note, "· ")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errCh := make(chan error, 2)
 
 	httpServer := newHTTPServer(*addr, handler)
+	httpListener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatal(err)
+	}
 	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(httpListener); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -327,7 +324,7 @@ func main() {
 			RunnerEndpoint:        *runnerEndpoint,
 			RunnerToken:           *runnerToken,
 			AllowHostCommands:     *allowHostCommands,
-			Logf:                  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "  "+f+"\n", a...) },
+			Logf:                  func(f string, a ...any) { writeRuntimeEvent(os.Stderr, fmt.Sprintf(f, a...), useColor) },
 			Ready: func(a net.Addr) {
 				host, port, _ := net.SplitHostPort(a.String())
 				connectHost := gateway.HostFromListen(host)
@@ -335,27 +332,28 @@ func main() {
 				// connect renders the ssh command a user runs for a given handle,
 				// matching whichever connection style is active (alias vs raw port).
 				var connect func(handle string) string
-				fmt.Println()
 				switch {
 				case !shouldInstallDevSSHConfig(*sshHost, *noSSHConfig):
-					fmt.Printf("Users connect over SSH (gateway %s:%s):\n", connectHost, port)
 					connect = func(h string) string {
 						return fmt.Sprintf("ssh -p %s -o HostKeyAlias=plumtree-dev -o StrictHostKeyChecking=accept-new %s@%s", port, h, connectHost)
 					}
 				default:
 					if path, err := installDevSSHConfig(*sshHost, connectHost, port); err == nil {
-						fmt.Printf("Users connect over SSH (gateway %s:%s, aliased %q in %s):\n", connectHost, port, *sshHost, path)
 						connect = func(h string) string { return fmt.Sprintf("ssh %s@%s", h, *sshHost) }
+						if summary.Note == "" {
+							summary.Note = "SSH alias installed in " + path
+						}
 					} else {
 						fmt.Fprintf(os.Stderr, "ssh config update failed: %v\n", err)
-						fmt.Printf("Users connect over SSH (gateway %s:%s):\n", connectHost, port)
 						connect = func(h string) string { return fmt.Sprintf("ssh -p %s %s@%s", port, h, connectHost) }
 					}
 				}
-				fmt.Printf("  claimed app:         %s\n", connect("<app>"))
+				summary.SSH = connect("<owner>/<app>")
 				if *anonPreview {
-					fmt.Printf("  unclaimed preview:   %s\n", connect("preview-<deployID>"))
+					summary.Note = strings.TrimSpace(summary.Note + " · preview " + connect("preview-<deployID>"))
+					summary.Note = strings.TrimPrefix(summary.Note, "· ")
 				}
+				writeStartupSummary(os.Stdout, summary, useColor)
 			},
 		}
 		go func() {
@@ -364,8 +362,8 @@ func main() {
 			}
 		}()
 	} else {
-		fmt.Println()
-		fmt.Println("SSH gateway disabled (-ssh-addr empty); deployed apps are not connectable here.")
+		summary.SSH = "disabled"
+		writeStartupSummary(os.Stdout, summary, useColor)
 	}
 
 	select {

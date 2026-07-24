@@ -210,7 +210,7 @@ func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 	defer sshConn.Close()
 	go ssh.DiscardRequests(reqs)
 	identity := s.identityFromConn(sshConn)
-	s.logf("connected: user=%q id=%q from %s", sshConn.User(), identity.User, nConn.RemoteAddr())
+	s.logf("connection open app=%q identity=%q auth=%s from=%s", sshConn.User(), identityLogValue(identity), identity.Kind, nConn.RemoteAddr())
 
 	for newCh := range chans {
 		if newCh.ChannelType() != "session" {
@@ -224,6 +224,17 @@ func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 		}
 		go s.handleSession(ctx, ch, chReqs, sshConn.User(), identity)
 	}
+}
+
+func identityLogValue(identity runner.Identity) string {
+	value := identity.User
+	if strings.HasPrefix(value, "SHA256:") && len(value) > 18 {
+		return value[:18] + "…"
+	}
+	if strings.HasPrefix(value, "anonymous:") && len(value) > 18 {
+		return value[:18] + "…"
+	}
+	return value
 }
 
 // identityFromConn distinguishes three cases: a registered, proved key is an

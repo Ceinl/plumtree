@@ -1,8 +1,8 @@
 # Production topology: four services, least privilege each.
 #
-#   internet ──▶ ssh-gateway:2222 ──▶ control-plane:8080 (internal)
-#                         │
-#                         └── Unix socket ──▶ runner-broker (no network)
+#   internet ──▶ ${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}
+#                         └──▶ ssh-gateway:2222 ──▶ control-plane:8080 (internal)
+#                                      └── Unix socket ──▶ runner-broker (no network)
 #   internet ──▶ control-plane:8080 (dashboard/API, put a TLS proxy in front)
 #   control-plane ──▶ build-worker:8090 (internal only, no egress at all)
 #
@@ -70,7 +70,9 @@ services:
       PLUMTREE_SSH_HANDSHAKE_TIMEOUT: ${PLUMTREE_SSH_HANDSHAKE_TIMEOUT:-10s}
       PLUMTREE_SSH_IDLE_TIMEOUT: ${PLUMTREE_SSH_IDLE_TIMEOUT:-5m}
     ports:
-      - "2222:2222"
+      # Use a dedicated app-facing address on port 22 for zero-config clients,
+      # while leaving administrator SSH bound to its management address.
+      - "${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}:2222"
     volumes:
       - ssh-gateway-data:/data
       - runner-socket:/run/plumtree
