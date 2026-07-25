@@ -1,4 +1,4 @@
-module github.com/Ceinl/plumtree/examples/codex-ssh
+module github.com/Ceinl/plumtree/examples/tic-tac-toe
 
 go 1.26.5
 

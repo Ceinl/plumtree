@@ -8,7 +8,7 @@ use (
 	./examples/agentboard
 	./examples/ascii-saver
 	./examples/chat
-	./examples/codex-ssh
+	./examples/tic-tac-toe
 	./pt
 	./runner
 	./sdk
