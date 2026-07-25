@@ -23,7 +23,7 @@ func (s *Server) handleDevPing(w http.ResponseWriter, r *http.Request) {
 	apps := make([]map[string]string, 0, len(deployed))
 	for _, item := range deployed {
 		apps = append(apps, map[string]string{
-			"handle":         item.Owner.Handle + "/" + item.App.Name,
+			"handle":         publicAppHandle(item.Owner.Handle, item.App.Name),
 			"activeDeployId": item.App.ActiveDeployID,
 		})
 	}

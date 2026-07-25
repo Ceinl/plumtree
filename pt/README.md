@@ -136,7 +136,7 @@ On a trusted control plane started with `-auto-claim`, every authenticated
 `pt deploy` is accepted immediately. The CLI saves the returned claim
 credential for later updates; no Shoo login, handle choice, claim page, or
 dashboard visit is required. These apps use the server's internal
-`autoclaim/<app>` namespace.
+`autoclaim/<app>` namespace but connect as `<app>@<host>`.
 
 Public releases are generic and contain no server address or deploy token.
 `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` remain available as temporary

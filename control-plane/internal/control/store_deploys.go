@@ -232,7 +232,15 @@ func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error
 		}
 		app = s.apps[appID]
 	} else {
-		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: use owner/app format, got %q", ErrNotFound, handle)
+		ownerID, ok := s.ownerByHandle[AutoClaimOwnerHandle]
+		if !ok {
+			return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: use owner/app format, got %q", ErrNotFound, handle)
+		}
+		appID, ok := s.appByOwnerName[appKey{ownerID: ownerID, name: handle}]
+		if !ok {
+			return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: app %q", ErrNotFound, handle)
+		}
+		app = s.apps[appID]
 	}
 	if app.ActiveDeployID == "" {
 		return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: app %q has no active deploy", ErrNotFound, handle)

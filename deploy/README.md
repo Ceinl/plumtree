@@ -84,8 +84,9 @@ container are reachable unless the operator deliberately mounts more.
 `PLUMTREE_AUTO_CLAIM=true` is a separate trusted-server option on the control
 plane. It accepts every new deploy authenticated by the shared deploy token and
 removes the Shoo login, handle prompt, claim page, and dashboard step. All such
-clients share the internal `autoclaim/<app>` namespace, so leave it disabled
-when deploy-token holders should not trust one another.
+clients share the internal `autoclaim/<app>` namespace, while connecting as
+`<app>@<host>`, so leave it disabled when deploy-token holders should not trust
+one another.
 
 - **build-worker has no internet egress.** It sits on an `internal: true`
   network with the control plane. Author builds resolve the unpublished

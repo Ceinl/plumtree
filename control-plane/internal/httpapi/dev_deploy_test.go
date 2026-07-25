@@ -87,8 +87,8 @@ func TestDevDeployAutoClaimsWithoutShoo(t *testing.T) {
 	if !created.Deploy.Claimed {
 		t.Fatalf("deploy claimed = false, response = %+v", created)
 	}
-	if created.App.Handle != "autoclaim/counter" {
-		t.Fatalf("app handle = %q, want autoclaim/counter", created.App.Handle)
+	if created.App.Handle != "counter" {
+		t.Fatalf("app handle = %q, want counter", created.App.Handle)
 	}
 	if created.Deploy.ClaimToken == "" {
 		t.Fatal("auto-claimed response is missing claim token")
@@ -101,8 +101,16 @@ func TestDevDeployAutoClaimsWithoutShoo(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("inspect status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"handle":"autoclaim/counter"`) {
+	if !strings.Contains(rec.Body.String(), `"handle":"counter"`) {
 		t.Fatalf("inspect body = %s", rec.Body.String())
+	}
+
+	app, deploy, _, gotWASM, err := store.ResolveRunnable("counter")
+	if err != nil {
+		t.Fatalf("resolve bare auto-claimed app handle: %v", err)
+	}
+	if app.ID != created.App.ID || deploy.ID != created.Deploy.ID || !bytes.Equal(gotWASM, []byte("local wasm")) {
+		t.Fatalf("resolved app=%+v deploy=%+v wasm=%q", app, deploy, gotWASM)
 	}
 }
 
@@ -277,6 +285,8 @@ func TestDeployClaimExpiresAfterThirtySeconds(t *testing.T) {
 
 type devDeployHTTPResponse struct {
 	App struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
 		Handle string `json:"handle"`
 	} `json:"app"`
 	Deploy struct {

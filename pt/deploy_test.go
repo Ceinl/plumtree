@@ -97,7 +97,7 @@ func TestDeployAcceptsAutoClaimedResponseWithoutClaimURL(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"app": map[string]any{"name": "counter", "handle": "autoclaim/counter"},
+			"app": map[string]any{"name": "counter", "handle": "counter"},
 			"deploy": map[string]any{
 				"id":         "dep_000001",
 				"claimed":    true,
@@ -126,7 +126,7 @@ func TestDeployAcceptsAutoClaimedResponseWithoutClaimURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.AppHandle != "autoclaim/counter" || meta.ClaimToken != "auto-claim-token" || meta.ClaimURL != "" {
+	if meta.AppHandle != "counter" || meta.ClaimToken != "auto-claim-token" || meta.ClaimURL != "" {
 		t.Fatalf("deploy metadata = %+v", meta)
 	}
 }

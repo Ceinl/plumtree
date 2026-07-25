@@ -5,6 +5,11 @@ package control
 
 import "time"
 
+// AutoClaimOwnerHandle is the internal owner used for deployments accepted
+// without an interactive user claim. Its apps are exposed publicly by bare app
+// name even though they remain grouped under this owner for storage and policy.
+const AutoClaimOwnerHandle = "autoclaim"
+
 // Owner is an authenticated Plumtree namespace owner.
 type Owner struct {
 	ID            string
