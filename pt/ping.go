@@ -29,7 +29,7 @@ func cmdPing(args []string, out io.Writer) error {
 		return err
 	}
 	if devToken == "" {
-		return fmt.Errorf("server %s: missing deploy token; add it with `pt --add-server <addr> <token> <alias>` or set PLUMTREE_DEV_TOKEN", server)
+		return fmt.Errorf("server %s: missing deploy token; add it with `pt --add-server <addr> <alias>` or set PLUMTREE_DEV_TOKEN", server)
 	}
 	result, err := getPing(context.Background(), server, devToken)
 	if err != nil {

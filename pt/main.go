@@ -45,7 +45,7 @@ func main() {
 	case "ping":
 		err = cmdPing(os.Args[2:], os.Stdout)
 	case "--add-server", "add-server":
-		err = cmdAddServer(os.Args[2:], os.Stdout)
+		err = cmdAddServer(os.Args[2:], os.Stdin, os.Stdout)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -79,8 +79,8 @@ Usage:
   pt egress add|list|rm          manage this app's outbound HTTP allowlist (claimed apps)
   pt whoami                     show the claimed app namespace for this project
   pt ping [list]                 verify server access and optionally list deployed apps
-  pt --add-server ADDR TOKEN ALIAS
-                                save a server; the first one is the default
+  pt --add-server ADDR ALIAS    save a server and securely read its token;
+                                the first server is the default
 
 pt dev flags:
   --ssh                serve over SSH; connect with: ssh <app>@plumtree.dev

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 const maxPTConfigBytes = 64 << 10
@@ -188,7 +191,7 @@ func resolveConnectionForAlias(alias string) (serverURL, deployToken string, err
 				return server.ServerURL, server.DeployToken, nil
 			}
 		}
-		return "", "", fmt.Errorf("unknown server alias %q; add it with `pt --add-server <addr> <token> %s`", alias, alias)
+		return "", "", fmt.Errorf("unknown server alias %q; add it with `pt --add-server <addr> %s`", alias, alias)
 	}
 	savedURL, savedToken := cfg.ServerURL, cfg.DeployToken
 	if len(cfg.Servers) != 0 {
@@ -256,23 +259,23 @@ func resolveConnectionForServerURL(target string) (serverURL, deployToken string
 
 // cmdAddServer appends a named server. Config order is meaningful: the first
 // entry is the default used when -s is omitted.
-func cmdAddServer(args []string, out io.Writer) error {
-	if len(args) != 3 {
-		return errors.New("usage: pt --add-server <addr> <token> <server_alias>")
+func cmdAddServer(args []string, in io.Reader, out io.Writer) error {
+	if len(args) != 2 {
+		return errors.New("usage: pt --add-server <addr> <server_alias>")
 	}
 	serverURL, err := validateServerURL(args[0])
 	if err != nil {
 		return err
 	}
-	token, err := requireDeployToken(args[1])
-	if err != nil {
-		return err
-	}
-	alias := strings.TrimSpace(args[2])
+	alias := strings.TrimSpace(args[1])
 	if err := validateServerAlias(alias); err != nil {
 		return err
 	}
 	cfg, err := readPTConfig()
+	if err != nil {
+		return err
+	}
+	token, err := readDeployToken(in, out)
 	if err != nil {
 		return err
 	}
@@ -302,6 +305,27 @@ func cmdAddServer(args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Added server %s%s at %s\n", alias, role, serverURL)
 	fmt.Fprintf(out, "Saved pt configuration to %s\n", path)
 	return nil
+}
+
+// readDeployToken reads one token line and disables echo for interactive terminals.
+func readDeployToken(in io.Reader, out io.Writer) (string, error) {
+	if terminal, ok := in.(*os.File); ok && term.IsTerminal(int(terminal.Fd())) {
+		fmt.Fprint(out, "Deploy token: ")
+		value, err := term.ReadPassword(int(terminal.Fd()))
+		fmt.Fprintln(out)
+		if err != nil {
+			return "", fmt.Errorf("read deploy token: %w", err)
+		}
+		return requireDeployToken(string(value))
+	}
+	value, err := bufio.NewReader(io.LimitReader(in, maxPTConfigBytes+1)).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read deploy token: %w", err)
+	}
+	if len(value) > maxPTConfigBytes {
+		return "", errors.New("deploy token is too long")
+	}
+	return requireDeployToken(strings.TrimSuffix(strings.TrimSuffix(value, "\n"), "\r"))
 }
 
 func validateServerAlias(alias string) error {

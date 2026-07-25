@@ -109,7 +109,7 @@ func TestAddServerRejectsPermissiveExistingConfigBeforeWritingToken(t *testing.T
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := cmdAddServer([]string{"https://new.example", "new-secret", "new"}, &bytes.Buffer{})
+	err := cmdAddServer([]string{"https://new.example", "new"}, strings.NewReader("new-secret\n"), &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "insecure permissions") {
 		t.Fatalf("cmdAddServer error = %v", err)
 	}
@@ -176,10 +176,10 @@ func TestValidateServerURL(t *testing.T) {
 func TestAddServersMakesFirstDefaultAndResolvesAlias(t *testing.T) {
 	path := isolatePTConfig(t)
 	var out bytes.Buffer
-	if err := cmdAddServer([]string{"https://main.example/", "main-token", "primary"}, &out); err != nil {
+	if err := cmdAddServer([]string{"https://main.example/", "primary"}, strings.NewReader("main-token\n"), &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdAddServer([]string{"https://staging.example", "stage-token", "staging"}, &out); err != nil {
+	if err := cmdAddServer([]string{"https://staging.example", "staging"}, strings.NewReader("stage-token\n"), &out); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "main-token") || strings.Contains(out.String(), "stage-token") {
@@ -210,13 +210,13 @@ func TestAddServersMakesFirstDefaultAndResolvesAlias(t *testing.T) {
 
 func TestAddServerRejectsDuplicateAndInvalidAliases(t *testing.T) {
 	isolatePTConfig(t)
-	if err := cmdAddServer([]string{"https://one.example", "token", "one"}, &bytes.Buffer{}); err != nil {
+	if err := cmdAddServer([]string{"https://one.example", "one"}, strings.NewReader("token\n"), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdAddServer([]string{"https://two.example", "token", "one"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if err := cmdAddServer([]string{"https://two.example", "one"}, strings.NewReader("token\n"), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("duplicate alias error = %v", err)
 	}
-	if err := cmdAddServer([]string{"https://two.example", "token", "not valid"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "invalid server alias") {
+	if err := cmdAddServer([]string{"https://two.example", "not valid"}, strings.NewReader("token\n"), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "invalid server alias") {
 		t.Fatalf("invalid alias error = %v", err)
 	}
 }

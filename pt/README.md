@@ -96,16 +96,20 @@ For a server exposed through Tailscale Serve, add it on each remote author
 machine. The first server added is the default:
 
 ```bash
-pt --add-server https://your-node.your-tailnet.ts.net DEPLOY_TOKEN main
+pt --add-server https://your-node.your-tailnet.ts.net main
 pt deploy
 ```
 
 Add more servers under distinct aliases and choose one at deploy time:
 
 ```bash
-pt --add-server https://staging.example DEPLOY_TOKEN staging
+pt --add-server https://staging.example staging
 pt deploy -s staging
 ```
+
+`--add-server` prompts for the deploy token without echoing it. It also accepts
+one line from standard input for secret managers and CI. The token itself is
+never printed.
 
 Shoo browser sign-in requires HTTPS for remote clients. Proxy port 8080 with
 `tailscale serve --bg 8080` and start the control plane with:

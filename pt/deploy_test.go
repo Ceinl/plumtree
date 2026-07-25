@@ -152,10 +152,10 @@ func TestDeploySelectsConfiguredServerAlias(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	isolatePTConfig(t)
-	if err := cmdAddServer([]string{"https://main.example", "main-token", "main"}, &bytes.Buffer{}); err != nil {
+	if err := cmdAddServer([]string{"https://main.example", "main"}, strings.NewReader("main-token\n"), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdAddServer([]string{server.URL, "stage-token", "stage"}, &bytes.Buffer{}); err != nil {
+	if err := cmdAddServer([]string{server.URL, "stage"}, strings.NewReader("stage-token\n"), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	oldwd, err := os.Getwd()

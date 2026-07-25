@@ -260,7 +260,7 @@ func main() {
 	if *devToken != "" {
 		nextStep = "pt deploy  →  pt claim"
 		if !managedDevToken || *tailscaleMode {
-			nextStep = fmt.Sprintf("pt --add-server %s <token> main", originURL)
+			nextStep = fmt.Sprintf("pt --add-server %s main", originURL)
 		} else if *autoClaim {
 			nextStep = "pt deploy  →  auto-claimed"
 		}

@@ -28,7 +28,7 @@ func cmdDeploy(args []string) error {
 		return err
 	}
 	if devToken == "" {
-		return errors.New("missing deploy token; add a server with `pt --add-server <addr> <token> <alias>` or set PLUMTREE_DEV_TOKEN")
+		return errors.New("missing deploy token; add a server with `pt --add-server <addr> <alias>` or set PLUMTREE_DEV_TOKEN")
 	}
 
 	proj, err := findProject()
