@@ -146,12 +146,13 @@ something larger than a single-feature fixture:
 |---------|------------------|--------|
 | [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh <owner>/chat@plumtree.app` |
 | [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh <owner>/ascii-saver@plumtree.app` |
-| [`codex-ssh`](examples/codex-ssh) | owner identity + server env + gated host command execution | `ssh <owner>/codex-ssh@plumtree.app 'summarize this repo'` |
+| [`codex-ssh`](examples/codex-ssh) | owner/allowlisted SSH identity + server env + gated host command execution | `ssh <owner>/codex-ssh@plumtree.app 'summarize this repo'` |
 | [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + actions | `ssh <owner>/agentboard@plumtree.app` |
 
 The chat remembers display names only for stable SSH-key identities; anonymous
 session IDs are intentionally ephemeral. The Codex bridge is for trusted
-self-hosting and refuses callers other than the claimed app owner.
+self-hosting and refuses callers other than the claimed app owner or an SSH
+fingerprint explicitly allowlisted by the operator.
 
 ### Trusted self-hosted apps
 

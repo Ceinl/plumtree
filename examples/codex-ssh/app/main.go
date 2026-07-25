@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/Ceinl/plumtree/sdk"
 )
@@ -34,21 +35,50 @@ func codexArgs(prompt, workdir, sandbox string) ([]string, error) {
 	return append(args, prompt), nil
 }
 
+func optionalEnv(key string) (string, error) {
+	value, _, err := sdk.Env(key)
+	if errors.Is(err, sdk.ErrEnvUnavailable) {
+		return "", nil
+	}
+	return value, err
+}
+
+func callerAllowed(identity sdk.Identity, allowedFingerprints string) bool {
+	if identity.Kind != sdk.IdentitySSHKey {
+		return false
+	}
+	if identity.Authenticated && identity.OwnsApp {
+		return true
+	}
+	for _, fingerprint := range strings.FieldsFunc(allowedFingerprints, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	}) {
+		if fingerprint == identity.User {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	sdk.CLI(sdk.Meta{Name: "codex-ssh", Type: "cli"}, func(ctx sdk.Ctx, sshArgs []string) error {
 		identity, err := sdk.Whoami()
 		if err != nil {
 			return fmt.Errorf("verify caller: %w", err)
 		}
-		if !identity.Authenticated || !identity.OwnsApp {
-			return errors.New("access denied: authenticate with the claimed owner's SSH key")
+		allowedFingerprints, err := optionalEnv("CODEX_ALLOWED_SSH_KEYS")
+		if err != nil {
+			return fmt.Errorf("read CODEX_ALLOWED_SSH_KEYS: %w", err)
+		}
+		if !callerAllowed(identity, allowedFingerprints) {
+			return fmt.Errorf("access denied for %s; add this fingerprint to CODEX_ALLOWED_SSH_KEYS", identity.User)
 		}
 
-		workdir, _, err := sdk.Env("CODEX_WORKDIR")
+		workdir, err := optionalEnv("CODEX_WORKDIR")
 		if err != nil {
 			return fmt.Errorf("read CODEX_WORKDIR: %w", err)
 		}
-		sandbox, _, err := sdk.Env("CODEX_SANDBOX")
+		sandbox, err := optionalEnv("CODEX_SANDBOX")
 		if err != nil {
 			return fmt.Errorf("read CODEX_SANDBOX: %w", err)
 		}
