@@ -1,7 +1,7 @@
 GO ?= go
 GOCACHE ?= /private/tmp/plums-go-cache
 PT ?= pt
-PT_ARGS ?= configure
+PT_ARGS ?= ping
 PT_DIR ?= $(CURDIR)
 
 ADDR ?= 127.0.0.1:18080
@@ -27,7 +27,7 @@ help:
 	@printf '%s\n' \
 		'Targets:' \
 		'  make test-control-plane Run control-plane tests' \
-		'  make pt-local           Run pt against run-server (PT_ARGS=configure)' \
+		'  make pt-local           Run pt against run-server (PT_ARGS=ping)' \
 		'  make run-server         Run local control plane with persistent default state' \
 		'  make run-server-memory  Run local control plane with in-memory state only' \
 		'  make seed-server        Run local control plane with demo seed data' \
@@ -80,8 +80,8 @@ clear-server:
 
 build-pt:
 	cd pt && GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(abspath $(CURDIR))/pt-bin" .
-	@echo "built generic pt-bin; run 'pt-bin configure --addr URL --token'"
+	@echo "built generic pt-bin; run 'pt-bin --add-server URL ALIAS' and enter the token"
 
 install-pt:
 	cd pt && GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" .
-	@echo "installed generic pt; run 'pt configure --addr URL --token'"
+	@echo "installed generic pt; run 'pt --add-server URL ALIAS' and enter the token"

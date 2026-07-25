@@ -65,7 +65,7 @@ func updateCurrentDeployMetadata(meta deployMetadata) error {
 
 // defaultServerURL and defaultDevToken remain linker-injectable for private
 // builds. Public release binaries leave both empty and use runtime configuration
-// written by `pt configure` instead. A private build may inject them with:
+// written by `pt --add-server` instead. A private build may inject them with:
 //
 //	go build -ldflags "\
 //	  -X 'main.defaultServerURL=$PLUMTREE_SERVER_URL' \
@@ -99,7 +99,7 @@ func deployReadOptions(deployArg string) (*deployMetadata, string, string, strin
 	if meta == nil {
 		return nil, "", "", "", errors.New("no deploy claim metadata found; run pt deploy first")
 	}
-	server, devToken, err := resolveConnection()
+	server, devToken, err := resolveConnectionForServerURL(meta.ServerURL)
 	if err != nil {
 		return nil, "", "", "", err
 	}
