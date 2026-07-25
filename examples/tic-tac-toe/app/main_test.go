@@ -1,8 +1,11 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/Ceinl/plumtree/sdk"
 )
 
 func TestWinner(t *testing.T) {
@@ -73,5 +76,55 @@ func TestExpireSeats(t *testing.T) {
 	}
 	if state.Players[0].ID != "" || state.Players[1].ID != "live" || state.Board[0] != 0 {
 		t.Fatalf("expired state = %+v", state)
+	}
+}
+
+func TestFirstTwoConcurrentPlayersAndSpectatorPromotion(t *testing.T) {
+	_ = sdk.KVDelete(gameKey)
+	defer sdk.KVDelete(gameKey)
+
+	games := []*game{
+		{id: "alice", label: "alice"},
+		{id: "bob", label: "bob"},
+		{id: "carol", label: "carol"},
+	}
+	var wait sync.WaitGroup
+	for _, candidate := range games {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if err := candidate.refresh(true); err != nil {
+				t.Errorf("refresh: %v", err)
+			}
+		}()
+	}
+	wait.Wait()
+
+	games[0].reload()
+	state := games[0].state
+	players, spectator := 0, -1
+	for i, candidate := range games {
+		if playerRole(state, candidate.id) == 0 {
+			spectator = i
+		} else {
+			players++
+		}
+	}
+	if players != 2 || spectator < 0 {
+		t.Fatalf("players=%d spectator=%d state=%+v", players, spectator, state)
+	}
+
+	for _, candidate := range games {
+		if playerRole(state, candidate.id) != 0 {
+			candidate.state = state
+			candidate.release()
+			break
+		}
+	}
+	if err := games[spectator].refresh(true); err != nil {
+		t.Fatal(err)
+	}
+	if playerRole(games[spectator].state, games[spectator].id) == 0 {
+		t.Fatal("spectator did not acquire released seat")
 	}
 }
