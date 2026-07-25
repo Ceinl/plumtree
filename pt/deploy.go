@@ -15,18 +15,20 @@ import (
 
 func cmdDeploy(args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	serverAlias := fs.String("s", "", "server alias (defaults to the first added server)")
+	fs.StringVar(serverAlias, "server", "", "server alias (defaults to the first added server)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return errors.New("usage: pt deploy")
+		return errors.New("usage: pt deploy [-s server_alias]")
 	}
-	server, devToken, err := resolveConnection()
+	server, devToken, err := resolveConnectionForAlias(*serverAlias)
 	if err != nil {
 		return err
 	}
 	if devToken == "" {
-		return errors.New("missing deploy token; run `pt configure --token` or set PLUMTREE_DEV_TOKEN")
+		return errors.New("missing deploy token; add a server with `pt --add-server <addr> <token> <alias>` or set PLUMTREE_DEV_TOKEN")
 	}
 
 	proj, err := findProject()

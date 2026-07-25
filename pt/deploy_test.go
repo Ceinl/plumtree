@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -128,5 +129,55 @@ func TestDeployAcceptsAutoClaimedResponseWithoutClaimURL(t *testing.T) {
 	}
 	if meta.AppHandle != "autoclaim/counter" || meta.ClaimToken != "auto-claim-token" || meta.ClaimURL != "" {
 		t.Fatalf("deploy metadata = %+v", meta)
+	}
+}
+
+func TestDeploySelectsConfiguredServerAlias(t *testing.T) {
+	proj := t.TempDir()
+	if err := os.WriteFile(filepath.Join(proj, "go.mod"), []byte("module example.test/app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "plumtree.json"), []byte(`{"name":"counter","type":"tui"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var gotToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Plumtree-Dev-Token")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"app":    map[string]any{"name": "counter", "handle": "stage/counter"},
+			"deploy": map[string]any{"id": "dep_000001", "claimToken": "claim-token"},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	isolatePTConfig(t)
+	if err := cmdAddServer([]string{"https://main.example", "main-token", "main"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdAddServer([]string{server.URL, "stage-token", "stage"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(proj); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+
+	if err := cmdDeploy([]string{"-s", "stage"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotToken != "stage-token" {
+		t.Fatalf("authorization token = %q", gotToken)
+	}
+	meta, err := readDeployMetadata(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ServerURL != server.URL {
+		t.Fatalf("metadata server = %q, want %q", meta.ServerURL, server.URL)
 	}
 }

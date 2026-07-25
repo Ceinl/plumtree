@@ -61,8 +61,8 @@ go run ./cmd/control-plane \
 
 Replace the origin with the HTTPS MagicDNS URL printed by `tailscale serve`.
 Serve terminates TLS and proxies the dashboard/API to loopback; Plumtree
-detects its Tailscale IPv4 address for SSH and prints the `pt configure`
-command and token needed by another machine. Explicit `-addr`, `-origin`, and
+detects its Tailscale IPv4 address for SSH and prints the `pt --add-server`
+command needed by another machine. Explicit `-addr`, `-origin`, and
 `-ssh-addr` values take precedence over `--tailscale` defaults.
 
 Shoo's browser PKCE flow requires Web Crypto, which browsers expose only on

@@ -23,10 +23,10 @@ Plumtree {{.Kind}} app.
 
 ## Deploy
 
-Configure the control-plane URL and deploy token once:
+Add the control-plane URL and deploy token once:
 
 ```bash
-pt configure --addr http://127.0.0.1:18080 --token
+pt --add-server http://127.0.0.1:18080 DEPLOY_TOKEN main
 pt deploy
 pt claim
 ```

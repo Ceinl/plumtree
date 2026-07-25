@@ -92,19 +92,19 @@ When `pt` runs as the same user on that machine, deploy immediately:
 pt deploy
 ```
 
-For a server exposed through Tailscale Serve, run the `pt configure` command
-printed by the server on each remote author machine and paste the printed
-token:
+For a server exposed through Tailscale Serve, add it on each remote author
+machine. The first server added is the default:
 
 ```bash
-pt configure --addr https://your-node.your-tailnet.ts.net --token
+pt --add-server https://your-node.your-tailnet.ts.net DEPLOY_TOKEN main
 pt deploy
 ```
 
-The shorter git-style form is equivalent:
+Add more servers under distinct aliases and choose one at deploy time:
 
 ```bash
-pt --addr https://your-node.your-tailnet.ts.net --token
+pt --add-server https://staging.example DEPLOY_TOKEN staging
+pt deploy -s staging
 ```
 
 Shoo browser sign-in requires HTTPS for remote clients. Proxy port 8080 with
@@ -118,12 +118,8 @@ control-plane --tailscale --addr 127.0.0.1:8080 \
 A trusted server may instead use `--tailscale --auto-claim` over HTTP when it
 does not need Shoo claims or dashboard sign-in.
 
-Run `pt configure` with no flags to show the saved address and whether a token
-is configured. With an interactive terminal, `--token` prompts without echoing
-the token; it also accepts a single line from standard input for secret managers
-and CI (`--token-stdin` is an explicit alias). The token itself is never
-printed. Use `--clear-addr` or `--clear-token` to remove a saved value.
-Configuration is stored with mode `0600` under the OS user config directory
+Aliases use letters, numbers, dots, dashes, and underscores. Configuration is
+stored with mode `0600` under the OS user config directory
 (`plumtree/pt.json`). The automatic same-machine token is read from
 `plumtree/dev-token`; `PLUMTREE_DEV_TOKEN_FILE` overrides that location.
 
@@ -141,7 +137,7 @@ dashboard visit is required. These apps use the server's internal
 Public releases are generic and contain no server address or deploy token.
 `PLUMTREE_SERVER_URL` and `PLUMTREE_DEV_TOKEN` remain available as temporary
 environment overrides, which is useful for CI. Environment values take
-precedence over `pt configure`; `PLUMTREE_PT_CONFIG` selects an alternate config
+precedence over the default saved server; `PLUMTREE_PT_CONFIG` selects an alternate config
 file for isolated automation.
 
 Verify the resolved server and credentials from any directory. Add `list` to

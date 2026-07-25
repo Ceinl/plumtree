@@ -44,11 +44,8 @@ func main() {
 		err = cmdWhoami(os.Args[2:])
 	case "ping":
 		err = cmdPing(os.Args[2:], os.Stdout)
-	case "configure", "config":
-		err = cmdConfigure(os.Args[2:], os.Stdin, os.Stdout)
-	case "--addr", "--token", "--token-stdin", "--clear-addr", "--clear-token":
-		// Convenient git-style shorthand: `pt --addr URL --token`.
-		err = cmdConfigure(os.Args[1:], os.Stdin, os.Stdout)
+	case "--add-server", "add-server":
+		err = cmdAddServer(os.Args[2:], os.Stdout)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -82,8 +79,8 @@ Usage:
   pt egress add|list|rm          manage this app's outbound HTTP allowlist (claimed apps)
   pt whoami                     show the claimed app namespace for this project
   pt ping [list]                 verify server access and optionally list deployed apps
-  pt configure [flags]          save or show server address and deploy token
-  pt --addr URL --token         shorthand with hidden interactive token input
+  pt --add-server ADDR TOKEN ALIAS
+                                save a server; the first one is the default
 
 pt dev flags:
   --ssh                serve over SSH; connect with: ssh <app>@plumtree.dev
@@ -96,6 +93,9 @@ pt dev flags:
   --frame-timeout      per-frame wall-clock deadline (default 2s)
   --mem-pages          linear-memory cap in 64KiB pages (default 512)
   --max-fps            tty/ssh repaint cap (default 60)
+
+pt deploy flags:
+  -s, --server ALIAS   deploy to a saved server alias (default: first added)
 
 Environment (deploy/inspect/logs/whoami/secret/egress/ping):
   PLUMTREE_SERVER_URL  temporary control-plane URL override

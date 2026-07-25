@@ -21,85 +21,6 @@ func isolatePTConfig(t *testing.T) string {
 	return path
 }
 
-func TestConfigureWritesSecureConfig(t *testing.T) {
-	path := isolatePTConfig(t)
-	var out bytes.Buffer
-	if err := cmdConfigure([]string{
-		"--addr", "https://plumtree.example/",
-		"--token-stdin",
-	}, strings.NewReader("deploy-secret\n"), &out); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out.String(), "deploy-secret") {
-		t.Fatalf("configure output exposed token: %q", out.String())
-	}
-	if !strings.Contains(out.String(), "Address: https://plumtree.example") || !strings.Contains(out.String(), "Token:   configured") {
-		t.Fatalf("unexpected configure output: %q", out.String())
-	}
-	cfg, err := readPTConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ServerURL != "https://plumtree.example" || cfg.DeployToken != "deploy-secret" {
-		t.Fatalf("config = %+v", cfg)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("config permissions = %o, want 600", got)
-	}
-}
-
-func TestConfigureUpdatesOnlySpecifiedValue(t *testing.T) {
-	isolatePTConfig(t)
-	if _, err := writePTConfig(ptConfig{ServerURL: "https://old.example", DeployToken: "keep-me"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmdConfigure([]string{"--addr", "https://new.example"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := readPTConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ServerURL != "https://new.example" || cfg.DeployToken != "keep-me" {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestConfigureTokenAliasReadsStdin(t *testing.T) {
-	isolatePTConfig(t)
-	if err := cmdConfigure([]string{"--token"}, strings.NewReader("deploy-secret\n"), &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := readPTConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DeployToken != "deploy-secret" {
-		t.Fatalf("deploy token = %q", cfg.DeployToken)
-	}
-}
-
-func TestConfigureClearsToken(t *testing.T) {
-	isolatePTConfig(t)
-	if _, err := writePTConfig(ptConfig{ServerURL: "https://plumtree.example", DeployToken: "remove-me"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmdConfigure([]string{"--clear-token"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := readPTConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.DeployToken != "" || cfg.ServerURL != "https://plumtree.example" {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
 func TestResolveConnectionPrecedence(t *testing.T) {
 	isolatePTConfig(t)
 	if _, err := writePTConfig(ptConfig{ServerURL: "https://saved.example", DeployToken: "saved-token"}); err != nil {
@@ -151,26 +72,6 @@ func TestResolveConnectionUsesManagedTokenForLocalDefault(t *testing.T) {
 	}
 }
 
-func TestConfigureShowsManagedLocalToken(t *testing.T) {
-	isolatePTConfig(t)
-	t.Setenv("PLUMTREE_DEV_TOKEN", "seed")
-	os.Unsetenv("PLUMTREE_DEV_TOKEN")
-	path, err := localDevTokenPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("managed-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := cmdConfigure(nil, strings.NewReader(""), &out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "Token:   automatic local token") {
-		t.Fatalf("configure output = %q", out.String())
-	}
-}
-
 func TestResolveConnectionDoesNotUseManagedTokenForRemoteServer(t *testing.T) {
 	isolatePTConfig(t)
 	t.Setenv("PLUMTREE_DEV_TOKEN", "seed")
@@ -194,7 +95,7 @@ func TestResolveConnectionDoesNotUseManagedTokenForRemoteServer(t *testing.T) {
 	}
 }
 
-func TestConfigureRejectsPermissiveExistingConfigBeforeWritingToken(t *testing.T) {
+func TestAddServerRejectsPermissiveExistingConfigBeforeWritingToken(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows file modes do not model group/world permissions")
 	}
@@ -208,9 +109,9 @@ func TestConfigureRejectsPermissiveExistingConfigBeforeWritingToken(t *testing.T
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := cmdConfigure([]string{"--token-stdin"}, strings.NewReader("new-secret\n"), &bytes.Buffer{})
+	err := cmdAddServer([]string{"https://new.example", "new-secret", "new"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "insecure permissions") {
-		t.Fatalf("cmdConfigure error = %v", err)
+		t.Fatalf("cmdAddServer error = %v", err)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -269,5 +170,60 @@ func TestValidateServerURL(t *testing.T) {
 	}
 	if got, err := validateServerURL("http://127.0.0.1:18080/"); err != nil || got != "http://127.0.0.1:18080" {
 		t.Fatalf("validateServerURL(localhost) = %q, %v", got, err)
+	}
+}
+
+func TestAddServersMakesFirstDefaultAndResolvesAlias(t *testing.T) {
+	path := isolatePTConfig(t)
+	var out bytes.Buffer
+	if err := cmdAddServer([]string{"https://main.example/", "main-token", "primary"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdAddServer([]string{"https://staging.example", "stage-token", "staging"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "main-token") || strings.Contains(out.String(), "stage-token") {
+		t.Fatalf("add-server output exposed a token: %q", out.String())
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config permissions = %o, want 600", got)
+	}
+	server, token, err := resolveConnection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server != "https://main.example" || token != "main-token" {
+		t.Fatalf("default connection = %q %q", server, token)
+	}
+	server, token, err = resolveConnectionForAlias("staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server != "https://staging.example" || token != "stage-token" {
+		t.Fatalf("staging connection = %q %q", server, token)
+	}
+}
+
+func TestAddServerRejectsDuplicateAndInvalidAliases(t *testing.T) {
+	isolatePTConfig(t)
+	if err := cmdAddServer([]string{"https://one.example", "token", "one"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdAddServer([]string{"https://two.example", "token", "one"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate alias error = %v", err)
+	}
+	if err := cmdAddServer([]string{"https://two.example", "token", "not valid"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "invalid server alias") {
+		t.Fatalf("invalid alias error = %v", err)
+	}
+}
+
+func TestResolveConnectionForUnknownAlias(t *testing.T) {
+	isolatePTConfig(t)
+	if _, _, err := resolveConnectionForAlias("missing"); err == nil || !strings.Contains(err.Error(), `unknown server alias "missing"`) {
+		t.Fatalf("unknown alias error = %v", err)
 	}
 }
