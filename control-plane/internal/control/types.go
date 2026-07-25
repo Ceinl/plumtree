@@ -15,6 +15,9 @@ type Owner struct {
 	ID            string
 	Handle        string
 	HandleClaimed bool
+	// Internal distinguishes reserved platform namespaces from user-owned
+	// handles. Internal owners cannot be created or claimed through public flows.
+	Internal bool
 	// Suspended is an operator kill switch: when true, none of the owner's apps
 	// resolve to a runnable session.
 	Suspended bool

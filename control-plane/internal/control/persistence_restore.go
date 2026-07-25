@@ -27,6 +27,9 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 				return false, err
 			}
 		}
+		if owner.Internal && owner.Handle != AutoClaimOwnerHandle {
+			return false, fmt.Errorf("%w: internal owner %q has unsupported handle %q", ErrInvalid, owner.ID, owner.Handle)
+		}
 		if _, ok := s.owners[owner.ID]; ok {
 			return false, fmt.Errorf("%w: duplicate owner ID %q", ErrConflict, owner.ID)
 		}
@@ -59,6 +62,9 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 		s.identities[key] = identity
 	}
 	migrated := s.migrateGeneratedIdentityHandlesLocked()
+	if s.migrateAutoClaimOwnerLocked() {
+		migrated = true
+	}
 
 	for _, app := range snap.Apps {
 		if app.ID == "" {
@@ -311,6 +317,28 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 		s.suspendedDeploys[deployID] = struct{}{}
 	}
 	return migrated, nil
+}
+
+// migrateAutoClaimOwnerLocked marks the legacy synthetic autoclaim owner as
+// internal. A handle attached to a real authenticated identity is deliberately
+// left public so EnsureAutoClaimOwner can fail closed instead of hijacking it.
+func (s *Store) migrateAutoClaimOwnerLocked() bool {
+	ownerID, ok := s.ownerByHandle[AutoClaimOwnerHandle]
+	if !ok {
+		return false
+	}
+	owner := s.owners[ownerID]
+	if owner.Internal {
+		return false
+	}
+	for _, identity := range s.identities {
+		if identity.OwnerID == ownerID {
+			return false
+		}
+	}
+	owner.Internal = true
+	s.owners[ownerID] = owner
+	return true
 }
 
 func bumpSeq(seq map[string]int, prefix, id string) {

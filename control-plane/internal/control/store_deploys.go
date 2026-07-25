@@ -53,7 +53,9 @@ func (s *Store) ResolveRunnable(handle string) (App, Deploy, Artifact, []byte, e
 		artifact Artifact
 		err      error
 	)
-	if id, ok := previewDeployID(handle); ok && s.anonymousPreview {
+	if exactApp, exactDeploy, exactArtifact, matched, exactErr := s.resolveBareAutoClaimLocked(handle); matched {
+		app, deploy, artifact, err = exactApp, exactDeploy, exactArtifact, exactErr
+	} else if id, ok := previewDeployID(handle); ok && s.anonymousPreview {
 		app, deploy, artifact, err = s.resolvePreviewLocked(id)
 	} else {
 		app, deploy, artifact, err = s.resolveActiveLocked(handle)
@@ -219,6 +221,28 @@ func (s *Store) checkPreviewDeployLocked(deployID string) (Deploy, error) {
 	return deploy, nil
 }
 
+// resolveBareAutoClaimLocked gives an exact auto-claimed app precedence over
+// the dynamic preview-<deployID> route. Without this check, a valid app named
+// "preview-..." would be shadowed whenever anonymous previews are enabled.
+func (s *Store) resolveBareAutoClaimLocked(handle string) (App, Deploy, Artifact, bool, error) {
+	if _, _, qualified := splitHandle(handle); qualified {
+		return App{}, Deploy{}, Artifact{}, false, nil
+	}
+	ownerID, ok := s.ownerByHandle[AutoClaimOwnerHandle]
+	if !ok {
+		return App{}, Deploy{}, Artifact{}, false, nil
+	}
+	owner, ok := s.owners[ownerID]
+	if !ok || !owner.Internal {
+		return App{}, Deploy{}, Artifact{}, false, nil
+	}
+	if _, ok := s.appByOwnerName[appKey{ownerID: ownerID, name: handle}]; !ok {
+		return App{}, Deploy{}, Artifact{}, false, nil
+	}
+	app, deploy, artifact, err := s.resolveActiveLocked(handle)
+	return app, deploy, artifact, true, err
+}
+
 func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error) {
 	var app App
 	if ownerHandle, appName, ok := splitHandle(handle); ok {
@@ -234,6 +258,9 @@ func (s *Store) resolveActiveLocked(handle string) (App, Deploy, Artifact, error
 	} else {
 		ownerID, ok := s.ownerByHandle[AutoClaimOwnerHandle]
 		if !ok {
+			return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: use owner/app format, got %q", ErrNotFound, handle)
+		}
+		if owner := s.owners[ownerID]; !owner.Internal {
 			return App{}, Deploy{}, Artifact{}, fmt.Errorf("%w: use owner/app format, got %q", ErrNotFound, handle)
 		}
 		appID, ok := s.appByOwnerName[appKey{ownerID: ownerID, name: handle}]

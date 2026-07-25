@@ -75,13 +75,13 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	ownerHandle := ""
 	claimURL := ""
 	responseClaimToken := ""
 	claimed := false
 	app := control.App{Name: deploy.AppName}
+	owner := control.Owner{}
 	if s.autoClaim {
-		owner, err := s.store.EnsureOwner(control.AutoClaimOwnerHandle)
+		owner, err = s.store.EnsureAutoClaimOwner()
 		if err != nil {
 			writeControlError(w, err)
 			return
@@ -91,7 +91,6 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 			writeDeployClaimError(w, err)
 			return
 		}
-		ownerHandle = owner.Handle
 		responseClaimToken = claimToken
 		claimed = true
 	} else {
@@ -99,7 +98,7 @@ func (s *Server) handleDevDeploy(w http.ResponseWriter, r *http.Request) {
 		claimURL = s.claimURL(r, deploy.ID, claimToken)
 	}
 
-	resp := devDeployResponse(ownerHandle, app, deploy, claimed, claimURL, responseClaimToken)
+	resp := devDeployResponse(owner, app, deploy, claimed, claimURL, responseClaimToken)
 	if s.store.AnonymousPreviewEnabled() {
 		resp["previewHandle"] = "preview-" + deploy.ID
 	}
@@ -205,16 +204,15 @@ func (s *Server) handleDevDeployUpdate(w http.ResponseWriter, r *http.Request) {
 		s.scheduleDeployClaimCleanup()
 	}
 
-	ownerHandle := ""
+	owner := control.Owner{}
 	if claimed {
-		owner, err := s.store.GetOwner(app.OwnerID)
+		owner, err = s.store.GetOwner(app.OwnerID)
 		if err != nil {
 			writeControlError(w, err)
 			return
 		}
-		ownerHandle = owner.Handle
 	}
-	writeJSON(w, http.StatusOK, devDeployResponse(ownerHandle, app, deploy, claimed, "", ""))
+	writeJSON(w, http.StatusOK, devDeployResponse(owner, app, deploy, claimed, "", ""))
 }
 
 func (s *Server) handleDevDeployInspect(w http.ResponseWriter, r *http.Request) {

@@ -2,8 +2,8 @@ package httpapi
 
 import "github.com/Ceinl/plumtree/control-plane/internal/control"
 
-func devDeployResponse(ownerHandle string, app control.App, deploy control.Deploy, claimed bool, claimURL, claimToken string) map[string]any {
-	appHandle := publicAppHandle(ownerHandle, app.Name)
+func devDeployResponse(owner control.Owner, app control.App, deploy control.Deploy, claimed bool, claimURL, claimToken string) map[string]any {
+	appHandle := publicAppHandle(owner, app.Name)
 	deployJSON := map[string]any{
 		"id":      deploy.ID,
 		"claimed": claimed,
@@ -33,7 +33,7 @@ func devDeployResponse(ownerHandle string, app control.App, deploy control.Deplo
 }
 
 func inspectResponse(owner control.Owner, app control.App, deploy control.Deploy, artifact control.Artifact) map[string]any {
-	appHandle := publicAppHandle(owner.Handle, app.Name)
+	appHandle := publicAppHandle(owner, app.Name)
 	return map[string]any{
 		"app": map[string]any{
 			"id":             app.ID,
@@ -60,12 +60,12 @@ func inspectResponse(owner control.Owner, app control.App, deploy control.Deploy
 	}
 }
 
-func publicAppHandle(ownerHandle, appName string) string {
-	if ownerHandle == "" || appName == "" {
+func publicAppHandle(owner control.Owner, appName string) string {
+	if owner.Handle == "" || appName == "" {
 		return ""
 	}
-	if ownerHandle == control.AutoClaimOwnerHandle {
+	if owner.Internal && owner.Handle == control.AutoClaimOwnerHandle {
 		return appName
 	}
-	return ownerHandle + "/" + appName
+	return owner.Handle + "/" + appName
 }

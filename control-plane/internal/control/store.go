@@ -305,7 +305,7 @@ func (s *Store) EnsureOwnerForIdentity(in IdentityInput) (Owner, AuthIdentity, e
 }
 
 func (s *Store) CreateOwner(handle string) (Owner, error) {
-	if err := ValidateName(handle); err != nil {
+	if err := validatePublicOwnerHandle(handle); err != nil {
 		return Owner{}, err
 	}
 
@@ -324,7 +324,7 @@ func (s *Store) CreateOwner(handle string) (Owner, error) {
 }
 
 func (s *Store) EnsureOwner(handle string) (Owner, error) {
-	if err := ValidateName(handle); err != nil {
+	if err := validatePublicOwnerHandle(handle); err != nil {
 		return Owner{}, err
 	}
 
@@ -342,8 +342,36 @@ func (s *Store) EnsureOwner(handle string) (Owner, error) {
 	return o, nil
 }
 
+// EnsureAutoClaimOwner returns the reserved internal owner used for trusted
+// automatic claims. A pre-existing public owner with the reserved handle is
+// rejected instead of receiving deployments intended for the platform owner.
+func (s *Store) EnsureAutoClaimOwner() (Owner, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.ownerByHandle[AutoClaimOwnerHandle]; ok {
+		owner := s.owners[id]
+		if !owner.Internal {
+			return Owner{}, fmt.Errorf("%w: owner handle %q is reserved for automatic claims", ErrConflict, AutoClaimOwnerHandle)
+		}
+		return owner, nil
+	}
+	owner := Owner{
+		ID:            s.nextID("own"),
+		Handle:        AutoClaimOwnerHandle,
+		HandleClaimed: true,
+		Internal:      true,
+		CreatedAt:     s.now(),
+	}
+	s.owners[owner.ID] = owner
+	s.ownerByHandle[owner.Handle] = owner.ID
+	if err := s.persistLocked(); err != nil {
+		return Owner{}, err
+	}
+	return owner, nil
+}
+
 func (s *Store) ClaimOwnerHandle(ownerID, handle string) (Owner, error) {
-	if err := ValidateName(handle); err != nil {
+	if err := validatePublicOwnerHandle(handle); err != nil {
 		return Owner{}, err
 	}
 
@@ -352,6 +380,9 @@ func (s *Store) ClaimOwnerHandle(ownerID, handle string) (Owner, error) {
 	owner, ok := s.owners[ownerID]
 	if !ok {
 		return Owner{}, fmt.Errorf("%w: owner %q", ErrNotFound, ownerID)
+	}
+	if owner.Internal {
+		return Owner{}, fmt.Errorf("%w: internal owner %q cannot claim a public handle", ErrInvalid, owner.Handle)
 	}
 	if owner.Handle == handle {
 		if !owner.HandleClaimed {
@@ -377,6 +408,16 @@ func (s *Store) ClaimOwnerHandle(ownerID, handle string) (Owner, error) {
 		return Owner{}, err
 	}
 	return owner, nil
+}
+
+func validatePublicOwnerHandle(handle string) error {
+	if err := ValidateName(handle); err != nil {
+		return err
+	}
+	if handle == AutoClaimOwnerHandle {
+		return fmt.Errorf("%w: owner handle %q is reserved", ErrInvalid, handle)
+	}
+	return nil
 }
 
 func (s *Store) GetOwner(id string) (Owner, error) {
