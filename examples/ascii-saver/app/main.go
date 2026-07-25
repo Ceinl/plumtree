@@ -3,6 +3,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -15,10 +17,20 @@ type saver struct {
 	timer sdk.CommandID
 }
 
+type scheduleFunc func(sdk.Command) (sdk.CommandID, error)
+
+func newSaver(schedule scheduleFunc) (*saver, error) {
+	timer, err := schedule(sdk.Every(90 * time.Millisecond))
+	if err != nil {
+		return nil, err
+	}
+	return &saver{timer: timer}, nil
+}
+
 func (m *saver) Update(ev sdk.Event) {
 	switch e := ev.(type) {
 	case sdk.TimerMsg:
-		if e.ID == m.timer {
+		if m.timer != 0 && e.ID == m.timer {
 			m.frame++
 		}
 	case sdk.KeyMsg:
@@ -108,7 +120,8 @@ func (g *nightGarden) Render(screen *tui.Screen) {
 			put(screen, x, top+row, r, style)
 		}
 	}
-	drawText(screen, g.x+(g.w-31)/2, g.y+g.h-2, "ssh garden // q to disconnect", hint)
+	footer := "ssh garden // q to disconnect"
+	drawText(screen, g.x+(g.w-len([]rune(footer)))/2, g.y+g.h-2, footer, hint)
 }
 
 func starAt(x, y, frame int) bool {
@@ -136,7 +149,10 @@ func put(s *tui.Screen, x, y int, r rune, style tui.Style) {
 }
 
 func main() {
-	m := &saver{}
-	m.timer, _ = sdk.Schedule(sdk.Every(90 * time.Millisecond))
+	m, err := newSaver(sdk.Schedule)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ascii-saver:", err)
+		return
+	}
 	sdk.RunTUI(m, sdk.Meta{Name: "ascii-saver", Type: "tui"})
 }

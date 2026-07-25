@@ -30,6 +30,8 @@ const (
 	historyLimit  = 200
 )
 
+var whoami = sdk.Whoami
+
 type profile struct {
 	Name string `json:"name"`
 }
@@ -54,23 +56,25 @@ type chat struct {
 
 func newChat() *chat {
 	c := &chat{seen: make(map[uint64]bool), naming: true, height: 24}
-	id, err := sdk.Whoami()
+	id, err := whoami()
 	if err != nil {
 		c.status = "identity unavailable; this visit cannot be remembered"
+		c.loadHistory()
 		return c
 	}
 	c.identity = id
-	c.userKey = identityKey(id.User)
-	if raw, ok, err := sdk.KVGet(profilePrefix + c.userKey); err == nil && ok {
-		var saved profile
-		if json.Unmarshal(raw, &saved) == nil && validName(saved.Name) {
-			c.name = saved.Name
-			c.naming = false
-			c.status = "welcome back, " + saved.Name
-		}
-	}
 	if id.Kind == sdk.IdentityAnonymous {
 		c.status = "anonymous visits are not remembered; reconnect with an SSH key"
+	} else {
+		c.userKey = identityKey(id.User)
+		if raw, ok, err := sdk.KVGet(profilePrefix + c.userKey); err == nil && ok {
+			var saved profile
+			if json.Unmarshal(raw, &saved) == nil && validName(saved.Name) {
+				c.name = saved.Name
+				c.naming = false
+				c.status = "welcome back, " + saved.Name
+			}
+		}
 	}
 	c.loadHistory()
 	return c
@@ -100,17 +104,18 @@ func (c *chat) rememberName(name string) bool {
 		c.status = fmt.Sprintf("name must be 1-%d printable characters", maxNameRunes)
 		return false
 	}
+	if c.userKey == "" {
+		c.name, c.naming = name, false
+		c.status = "name set for this visit; use an SSH key to be remembered"
+		return true
+	}
 	raw, _ := json.Marshal(profile{Name: name})
 	if err := sdk.KVSet(profilePrefix+c.userKey, raw); err != nil {
 		c.status = "could not remember name: " + err.Error()
 		return false
 	}
 	c.name, c.naming = name, false
-	if c.identity.Kind == sdk.IdentityAnonymous {
-		c.status = "name set for this visit; use an SSH key to be remembered"
-	} else {
-		c.status = "name remembered for this SSH identity"
-	}
+	c.status = "name remembered for this SSH identity"
 	return true
 }
 

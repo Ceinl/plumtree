@@ -46,7 +46,13 @@ type game struct {
 	status    string
 }
 
+type scheduleFunc func(sdk.Command) (sdk.CommandID, error)
+
 func newGame() *game {
+	return newGameWithClaim(true)
+}
+
+func newGameWithClaim(claimSeat bool) *game {
 	g := &game{width: 80, height: 24}
 	identity, err := sdk.Whoami()
 	if err != nil {
@@ -59,9 +65,20 @@ func newGame() *game {
 	if identity.OwnsApp {
 		g.label = "owner-" + g.id[:6]
 	}
-	if err := g.refresh(true); err != nil {
+	if err := g.refresh(claimSeat); err != nil {
 		g.status = "join failed: " + err.Error()
 	}
+	return g
+}
+
+func newScheduledGame(schedule scheduleFunc) *game {
+	heartbeat, err := schedule(sdk.Every(heartbeatInterval))
+	g := newGameWithClaim(err == nil)
+	if err != nil {
+		g.status = "heartbeat unavailable; spectating only: " + err.Error()
+		return g
+	}
+	g.heartbeat = heartbeat
 	return g
 }
 
@@ -271,7 +288,7 @@ func (g *game) Update(event sdk.Event) {
 	case sdk.ResizeMsg:
 		g.width, g.height = event.W, event.H
 	case sdk.TimerMsg:
-		if event.ID == g.heartbeat {
+		if g.heartbeat != 0 && event.ID == g.heartbeat {
 			if err := g.refresh(true); err != nil {
 				g.status = "heartbeat failed: " + err.Error()
 			}
@@ -458,9 +475,8 @@ func putCell(s *tui.Screen, x, y int, r rune, style tui.Style) {
 }
 
 func main() {
-	game := newGame()
+	game := newScheduledGame(sdk.Schedule)
 	_ = sdk.Subscribe(gameTopic)
-	game.heartbeat, _ = sdk.Schedule(sdk.Every(heartbeatInterval))
 	sdk.RunTUI(game, sdk.Meta{Name: "tic-tac-toe", Type: "tui"})
 	game.release()
 }

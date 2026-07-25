@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -76,6 +77,28 @@ func TestExpireSeats(t *testing.T) {
 	}
 	if state.Players[0].ID != "" || state.Players[1].ID != "live" || state.Board[0] != 0 {
 		t.Fatalf("expired state = %+v", state)
+	}
+}
+
+func TestScheduleFailureDoesNotClaimSeat(t *testing.T) {
+	_ = sdk.KVDelete(gameKey)
+	defer sdk.KVDelete(gameKey)
+
+	g := newScheduledGame(func(sdk.Command) (sdk.CommandID, error) {
+		return 0, sdk.ErrCommandUnavailable
+	})
+	if g.heartbeat != 0 {
+		t.Fatalf("heartbeat = %d, want zero", g.heartbeat)
+	}
+	if playerRole(g.state, g.id) != 0 {
+		t.Fatalf("game claimed a seat without lease renewal: %+v", g.state.Players)
+	}
+	g.Update(sdk.TimerMsg{ID: 0})
+	if playerRole(g.state, g.id) != 0 {
+		t.Fatalf("zero timer event claimed a seat without lease renewal: %+v", g.state.Players)
+	}
+	if !strings.Contains(g.status, sdk.ErrCommandUnavailable.Error()) {
+		t.Fatalf("status = %q, want scheduling error", g.status)
 	}
 }
 
