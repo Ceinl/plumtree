@@ -137,6 +137,22 @@ guest. More trust unlocks more capability:
 | `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
 | `sdk.Exec`  | run a program as the server OS user   | **claimed** apps when operator-enabled |
 
+### Capability examples
+
+The deployable apps under `examples/` show how the capabilities compose into
+something larger than a single-feature fixture:
+
+| Example | SDK capabilities | Try it |
+|---------|------------------|--------|
+| [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh <owner>/chat@plumtree.app` |
+| [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh <owner>/ascii-saver@plumtree.app` |
+| [`codex-ssh`](examples/codex-ssh) | owner identity + server env + gated host command execution | `ssh <owner>/codex-ssh@plumtree.app 'summarize this repo'` |
+| [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + actions | `ssh <owner>/agentboard@plumtree.app` |
+
+The chat remembers display names only for stable SSH-key identities; anonymous
+session IDs are intentionally ephemeral. The Codex bridge is for trusted
+self-hosting and refuses callers other than the claimed app owner.
+
 ### Trusted self-hosted apps
 
 Private/self-hosted servers can opt into host command execution for claimed
@@ -270,3 +286,7 @@ existing terminal apps.
 - **Claim** — authenticating ownership to unlock higher-trust capabilities.
 - **Deploy** — publish an app via `pt` (the privileged author action).
 - **Run** — connect to an app with plain `ssh`; the platform executes it.
+
+## License
+
+Plumtree is licensed under the [MIT License](LICENSE).

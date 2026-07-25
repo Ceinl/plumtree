@@ -1,0 +1,4 @@
+.env.plumtree.server.local
+.plumtree/
+/dist/
+*.wasm
