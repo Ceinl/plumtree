@@ -66,7 +66,7 @@ func explainPingError(server string, err error) error {
 		detail := strings.TrimSpace(statusErr.Body)
 		switch statusErr.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return fmt.Errorf("authentication failed for %s (%s): %s; check the saved server token", server, statusErr.Status, detail)
+			return fmt.Errorf("authentication failed for %s (%s): %s; check the configured token (saved server token or PLUMTREE_DEV_TOKEN)", server, statusErr.Status, detail)
 		default:
 			if statusErr.StatusCode >= 500 {
 				return fmt.Errorf("server %s returned %s: %s; try again or check the server logs", server, statusErr.Status, detail)

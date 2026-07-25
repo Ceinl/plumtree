@@ -208,6 +208,90 @@ func TestAddServersMakesFirstDefaultAndResolvesAlias(t *testing.T) {
 	}
 }
 
+func TestAddServerMigratesLegacyConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		newAlias    string
+		legacyAlias string
+	}{
+		{name: "uses main for legacy server", newAlias: "staging", legacyAlias: "main"},
+		{name: "uses legacy when main is requested", newAlias: "main", legacyAlias: "legacy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := isolatePTConfig(t)
+			if _, err := writePTConfig(ptConfig{
+				ServerURL:   "https://old.example",
+				DeployToken: "old-token",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := cmdAddServer(
+				[]string{"https://new.example", tt.newAlias},
+				strings.NewReader("new-token\n"),
+				&bytes.Buffer{},
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := readPTConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ServerURL != "" || cfg.DeployToken != "" {
+				t.Fatalf("legacy fields were not cleared: %+v", cfg)
+			}
+			if len(cfg.Servers) != 2 {
+				t.Fatalf("servers = %+v, want two entries", cfg.Servers)
+			}
+			if got := cfg.Servers[0]; got.Alias != tt.legacyAlias || got.ServerURL != "https://old.example" || got.DeployToken != "old-token" {
+				t.Fatalf("migrated server = %+v", got)
+			}
+			if got := cfg.Servers[1]; got.Alias != tt.newAlias || got.ServerURL != "https://new.example" || got.DeployToken != "new-token" {
+				t.Fatalf("new server = %+v", got)
+			}
+
+			server, token, err := resolveConnection()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if server != "https://old.example" || token != "old-token" {
+				t.Fatalf("default connection = %q %q", server, token)
+			}
+			server, token, err = resolveConnectionForAlias(tt.legacyAlias)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if server != "https://old.example" || token != "old-token" {
+				t.Fatalf("%s connection = %q %q", tt.legacyAlias, server, token)
+			}
+			server, token, err = resolveConnectionForAlias(tt.newAlias)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if server != "https://new.example" || token != "new-token" {
+				t.Fatalf("%s connection = %q %q", tt.newAlias, server, token)
+			}
+
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(b, &raw); err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := raw["serverUrl"]; exists {
+				t.Fatalf("persisted config retained legacy serverUrl: %s", b)
+			}
+			if _, exists := raw["deployToken"]; exists {
+				t.Fatalf("persisted config retained legacy deployToken: %s", b)
+			}
+		})
+	}
+}
+
 func TestAddServerRejectsDuplicateAndInvalidAliases(t *testing.T) {
 	isolatePTConfig(t)
 	if err := cmdAddServer([]string{"https://one.example", "one"}, strings.NewReader("token\n"), &bytes.Buffer{}); err != nil {
