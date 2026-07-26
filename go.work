@@ -6,6 +6,9 @@ use (
 	./build-worker
 	./control-plane
 	./examples/agentboard
+	./examples/ascii-saver
+	./examples/chat
+	./examples/tic-tac-toe
 	./pt
 	./runner
 	./sdk
