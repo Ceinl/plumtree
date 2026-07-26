@@ -158,13 +158,16 @@ authors compile against a stale SDK.
 
 ## Releases
 
-Pull requests and pushes to `main` run `.github/workflows/ci.yml`, which checks
-formatting, vets and tests every module declared by `go.work`, runs the race
-detector, and cross-builds the public release contract.
+Development happens on short-lived branches. Pull requests and pushes to
+`main` run `.github/workflows/ci.yml`, which checks formatting, vets and tests
+every module declared by `go.work`, runs the race detector, and cross-builds
+the public release contract. Keep `main` release-ready; merging to it does not
+publish a release.
 
-Tagged pushes (`v*`) trigger `.github/workflows/release.yml`. Releases are
-generic: server URLs and deploy credentials are runtime configuration and are
-never embedded in public binaries. Each release publishes:
+Promote a tested commit to `prod`, then tag it with `v*` to trigger
+`.github/workflows/release.yml`. The workflow rejects tags whose commits are not
+on `prod`. Releases are generic: server URLs and deploy credentials are runtime
+configuration and are never embedded in public binaries. Each release publishes:
 
 ```text
 pt-{linux,darwin}-{amd64,arm64}
