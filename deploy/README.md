@@ -99,9 +99,10 @@ one another.
   route; it uses a read-only root and bounded tmpfs scratch. A disposable
   `plumtree-runner-worker` process still wraps each wazero sandbox inside it.
 - **Tokens.** Shared operator tokens are compared constant-time. Public `pt`
-  binaries are generic and contain no deploy credential; authors configure a
-  token at runtime with `pt configure --token`, which reads it without
-  exposing it in shell history and stores it in a user-only config file. Keep
+  binaries are generic and contain no deploy credential; authors configure
+  servers and tokens at runtime with `pt --add-server URL ALIAS`. The command
+  reads the token without exposing it in shell history and stores it in a
+  user-only config file. Keep
   the token narrowly scoped and rotate it if abused.
 - **State encryption.** The control-plane snapshot (including app secret
   values) uses AES-256-GCM envelope encryption. Each write has a new data key;

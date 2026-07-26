@@ -74,7 +74,7 @@ func TestCmdPingReportsAuthenticationFailure(t *testing.T) {
 	t.Setenv("PLUMTREE_DEV_TOKEN", "wrong")
 
 	err := cmdPing(nil, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "authentication failed") || !strings.Contains(err.Error(), server.URL) || !strings.Contains(err.Error(), "pt configure") {
+	if err == nil || !strings.Contains(err.Error(), "authentication failed") || !strings.Contains(err.Error(), server.URL) || !strings.Contains(err.Error(), "saved server token or PLUMTREE_DEV_TOKEN") {
 		t.Fatalf("error = %v", err)
 	}
 }

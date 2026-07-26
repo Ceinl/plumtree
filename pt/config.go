@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/url"
@@ -19,8 +18,17 @@ import (
 const maxPTConfigBytes = 64 << 10
 
 type ptConfig struct {
+	Servers []ptServer `json:"servers,omitempty"`
+	// ServerURL and DeployToken are retained so existing single-server config
+	// files can be read and migrated the next time a server is added.
 	ServerURL   string `json:"serverUrl,omitempty"`
 	DeployToken string `json:"deployToken,omitempty"`
+}
+
+type ptServer struct {
+	Alias       string `json:"alias"`
+	ServerURL   string `json:"serverUrl"`
+	DeployToken string `json:"deployToken"`
 }
 
 // ptConfigPath returns the configured override path or the OS-native default.
@@ -76,6 +84,23 @@ func readPTConfig() (ptConfig, error) {
 			return ptConfig{}, fmt.Errorf("pt config %q: %w", path, err)
 		}
 	}
+	aliases := make(map[string]struct{}, len(cfg.Servers))
+	for i := range cfg.Servers {
+		cfg.Servers[i].ServerURL, err = validateServerURL(cfg.Servers[i].ServerURL)
+		if err != nil {
+			return ptConfig{}, fmt.Errorf("pt config %q: server %q: %w", path, cfg.Servers[i].Alias, err)
+		}
+		if err := validateServerAlias(cfg.Servers[i].Alias); err != nil {
+			return ptConfig{}, fmt.Errorf("pt config %q: %w", path, err)
+		}
+		if _, exists := aliases[cfg.Servers[i].Alias]; exists {
+			return ptConfig{}, fmt.Errorf("pt config %q: duplicate server alias %q", path, cfg.Servers[i].Alias)
+		}
+		aliases[cfg.Servers[i].Alias] = struct{}{}
+		if _, err := requireDeployToken(cfg.Servers[i].DeployToken); err != nil {
+			return ptConfig{}, fmt.Errorf("pt config %q: server %q: %w", path, cfg.Servers[i].Alias, err)
+		}
+	}
 	return cfg, nil
 }
 
@@ -89,6 +114,24 @@ func writePTConfig(cfg ptConfig) (string, error) {
 		cfg.ServerURL, err = validateServerURL(cfg.ServerURL)
 		if err != nil {
 			return "", err
+		}
+	}
+	aliases := make(map[string]struct{}, len(cfg.Servers))
+	for i := range cfg.Servers {
+		if err := validateServerAlias(cfg.Servers[i].Alias); err != nil {
+			return "", err
+		}
+		if _, exists := aliases[cfg.Servers[i].Alias]; exists {
+			return "", fmt.Errorf("duplicate server alias %q", cfg.Servers[i].Alias)
+		}
+		aliases[cfg.Servers[i].Alias] = struct{}{}
+		cfg.Servers[i].ServerURL, err = validateServerURL(cfg.Servers[i].ServerURL)
+		if err != nil {
+			return "", fmt.Errorf("server %q: %w", cfg.Servers[i].Alias, err)
+		}
+		cfg.Servers[i].DeployToken, err = requireDeployToken(cfg.Servers[i].DeployToken)
+		if err != nil {
+			return "", fmt.Errorf("server %q: %w", cfg.Servers[i].Alias, err)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -132,18 +175,36 @@ func writePTConfig(cfg ptConfig) (string, error) {
 
 // resolveConnection applies environment, saved, baked, and local defaults in order.
 func resolveConnection() (serverURL, deployToken string, err error) {
+	return resolveConnectionForAlias("")
+}
+
+// resolveConnectionForAlias resolves a named saved server. An empty alias uses
+// environment overrides, then the first saved server, then legacy defaults.
+func resolveConnectionForAlias(alias string) (serverURL, deployToken string, err error) {
 	cfg, err := readPTConfig()
 	if err != nil {
 		return "", "", err
 	}
+	if alias != "" {
+		for _, server := range cfg.Servers {
+			if server.Alias == alias {
+				return server.ServerURL, server.DeployToken, nil
+			}
+		}
+		return "", "", fmt.Errorf("unknown server alias %q; add it with `pt --add-server <addr> %s`", alias, alias)
+	}
+	savedURL, savedToken := cfg.ServerURL, cfg.DeployToken
+	if len(cfg.Servers) != 0 {
+		savedURL, savedToken = cfg.Servers[0].ServerURL, cfg.Servers[0].DeployToken
+	}
 	usingLocalDefault := firstNonEmpty(
 		os.Getenv("PLUMTREE_SERVER_URL"),
-		cfg.ServerURL,
+		savedURL,
 		defaultServerURL,
 	) == ""
 	rawServerURL := firstNonEmpty(
 		os.Getenv("PLUMTREE_SERVER_URL"),
-		cfg.ServerURL,
+		savedURL,
 		defaultServerURL,
 		localServerURL,
 	)
@@ -153,7 +214,7 @@ func resolveConnection() (serverURL, deployToken string, err error) {
 	}
 	deployToken = firstNonEmpty(
 		os.Getenv("PLUMTREE_DEV_TOKEN"),
-		cfg.DeployToken,
+		savedToken,
 		defaultDevToken,
 	)
 	if deployToken == "" && usingLocalDefault {
@@ -167,72 +228,82 @@ func resolveConnection() (serverURL, deployToken string, err error) {
 	return serverURL, deployToken, nil
 }
 
-// cmdConfigure shows or updates the persistent pt connection configuration.
-func cmdConfigure(args []string, in io.Reader, out io.Writer) error {
-	fs := flag.NewFlagSet("configure", flag.ContinueOnError)
-	fs.SetOutput(out)
-	addr := fs.String("addr", "", "control-plane URL, including http:// or https://")
-	tokenPrompt := fs.Bool("token", false, "prompt for the deploy token (or read one line from stdin)")
-	tokenStdin := fs.Bool("token-stdin", false, "alias for --token")
-	clearAddr := fs.Bool("clear-addr", false, "remove the saved control-plane URL")
-	clearToken := fs.Bool("clear-token", false, "remove the saved deploy token")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
+// resolveConnectionForServerURL finds credentials for the server recorded in
+// per-project deploy metadata. This keeps follow-up commands working after a
+// deploy to a non-default server.
+func resolveConnectionForServerURL(target string) (serverURL, deployToken string, err error) {
+	if target == "" || strings.TrimSpace(os.Getenv("PLUMTREE_SERVER_URL")) != "" {
+		return resolveConnection()
+	}
+	resolvedURL, resolvedToken, err := resolveConnection()
+	if err != nil {
+		return "", "", err
+	}
+	if normalizedServerURL(resolvedURL) == normalizedServerURL(target) {
+		return resolvedURL, resolvedToken, nil
+	}
+	cfg, err := readPTConfig()
+	if err != nil {
+		return "", "", err
+	}
+	for _, server := range cfg.Servers {
+		if normalizedServerURL(server.ServerURL) == normalizedServerURL(target) {
+			return server.ServerURL, server.DeployToken, nil
 		}
+	}
+	if normalizedServerURL(cfg.ServerURL) == normalizedServerURL(target) {
+		return cfg.ServerURL, cfg.DeployToken, nil
+	}
+	return "", "", fmt.Errorf("no saved credentials for deploy server %q", target)
+}
+
+// cmdAddServer appends a named server. Config order is meaningful: the first
+// entry is the default used when -s is omitted.
+func cmdAddServer(args []string, in io.Reader, out io.Writer) error {
+	if len(args) != 2 {
+		return errors.New("usage: pt --add-server <addr> <server_alias>")
+	}
+	serverURL, err := validateServerURL(args[0])
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return errors.New("usage: pt configure [--addr URL] [--token | --token-stdin] [--clear-addr] [--clear-token]")
+	alias := strings.TrimSpace(args[1])
+	if err := validateServerAlias(alias); err != nil {
+		return err
 	}
-
-	setAddr := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "addr" {
-			setAddr = true
-		}
-	})
-	if setAddr && *clearAddr {
-		return errors.New("choose --addr or --clear-addr, not both")
-	}
-	if *tokenPrompt && *tokenStdin {
-		return errors.New("choose --token or --token-stdin, not both")
-	}
-	if (*tokenPrompt || *tokenStdin) && *clearToken {
-		return errors.New("choose --token/--token-stdin or --clear-token, not both")
-	}
-
 	cfg, err := readPTConfig()
 	if err != nil {
 		return err
 	}
-	changed := setAddr || *tokenPrompt || *tokenStdin || *clearAddr || *clearToken
-	if setAddr {
-		cfg.ServerURL, err = validateServerURL(*addr)
-		if err != nil {
-			return err
+	token, err := readDeployToken(in, out)
+	if err != nil {
+		return err
+	}
+	// Promote a legacy single-server config into the ordered list.
+	if len(cfg.Servers) == 0 && cfg.ServerURL != "" && cfg.DeployToken != "" {
+		legacyAlias := "main"
+		if alias == legacyAlias {
+			legacyAlias = "legacy"
+		}
+		cfg.Servers = append(cfg.Servers, ptServer{Alias: legacyAlias, ServerURL: cfg.ServerURL, DeployToken: cfg.DeployToken})
+	}
+	for _, server := range cfg.Servers {
+		if server.Alias == alias {
+			return fmt.Errorf("server alias %q already exists", alias)
 		}
 	}
-	if *tokenPrompt || *tokenStdin {
-		cfg.DeployToken, err = readDeployToken(in, out)
-		if err != nil {
-			return err
-		}
+	cfg.Servers = append(cfg.Servers, ptServer{Alias: alias, ServerURL: serverURL, DeployToken: token})
+	cfg.ServerURL, cfg.DeployToken = "", ""
+	path, err := writePTConfig(cfg)
+	if err != nil {
+		return err
 	}
-	if *clearAddr {
-		cfg.ServerURL = ""
+	role := ""
+	if len(cfg.Servers) == 1 {
+		role = " (main)"
 	}
-	if *clearToken {
-		cfg.DeployToken = ""
-	}
-	if changed {
-		path, err := writePTConfig(cfg)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "Saved pt configuration to %s\n", path)
-	}
-	printPTConfig(out, cfg)
+	fmt.Fprintf(out, "Added server %s%s at %s\n", alias, role, serverURL)
+	fmt.Fprintf(out, "Saved pt configuration to %s\n", path)
 	return nil
 }
 
@@ -257,6 +328,19 @@ func readDeployToken(in io.Reader, out io.Writer) (string, error) {
 	return requireDeployToken(strings.TrimSuffix(strings.TrimSuffix(value, "\n"), "\r"))
 }
 
+func validateServerAlias(alias string) error {
+	if alias == "" {
+		return errors.New("server alias cannot be empty")
+	}
+	for i, r := range alias {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || (i > 0 && (r == '-' || r == '_' || r == '.')) {
+			continue
+		}
+		return fmt.Errorf("invalid server alias %q: use a letter or number followed by letters, numbers, '.', '-', or '_'", alias)
+	}
+	return nil
+}
+
 // requireDeployToken trims and rejects an empty token value.
 func requireDeployToken(value string) (string, error) {
 	value = strings.TrimSpace(value)
@@ -264,29 +348,6 @@ func requireDeployToken(value string) (string, error) {
 		return "", errors.New("deploy token cannot be empty")
 	}
 	return value, nil
-}
-
-// printPTConfig reports configuration state without disclosing the token.
-func printPTConfig(out io.Writer, cfg ptConfig) {
-	addr := cfg.ServerURL
-	if addr == "" {
-		addr = "(default: " + localServerURL + ")"
-	}
-	token := "not configured"
-	if cfg.DeployToken != "" {
-		token = "configured"
-	} else if cfg.ServerURL == "" && os.Getenv("PLUMTREE_SERVER_URL") == "" && defaultServerURL == "" {
-		if _, explicitlySet := os.LookupEnv("PLUMTREE_DEV_TOKEN"); !explicitlySet {
-			if localToken, err := readLocalDevToken(); err == nil && localToken != "" {
-				token = "automatic local token"
-			}
-		}
-	}
-	fmt.Fprintf(out, "Address: %s\n", addr)
-	fmt.Fprintf(out, "Token:   %s\n", token)
-	if os.Getenv("PLUMTREE_SERVER_URL") != "" || os.Getenv("PLUMTREE_DEV_TOKEN") != "" {
-		fmt.Fprintln(out, "Environment variables currently override saved values.")
-	}
 }
 
 // validateServerURL accepts a path-free absolute HTTP or HTTPS server URL.

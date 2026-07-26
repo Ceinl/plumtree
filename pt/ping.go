@@ -29,7 +29,7 @@ func cmdPing(args []string, out io.Writer) error {
 		return err
 	}
 	if devToken == "" {
-		return fmt.Errorf("server %s: missing deploy token; run `pt configure --token` or set PLUMTREE_DEV_TOKEN", server)
+		return fmt.Errorf("server %s: missing deploy token; add it with `pt --add-server <addr> <alias>` or set PLUMTREE_DEV_TOKEN", server)
 	}
 	result, err := getPing(context.Background(), server, devToken)
 	if err != nil {
@@ -66,7 +66,7 @@ func explainPingError(server string, err error) error {
 		detail := strings.TrimSpace(statusErr.Body)
 		switch statusErr.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return fmt.Errorf("authentication failed for %s (%s): %s; check the token with `pt configure`", server, statusErr.Status, detail)
+			return fmt.Errorf("authentication failed for %s (%s): %s; check the configured token (saved server token or PLUMTREE_DEV_TOKEN)", server, statusErr.Status, detail)
 		default:
 			if statusErr.StatusCode >= 500 {
 				return fmt.Errorf("server %s returned %s: %s; try again or check the server logs", server, statusErr.Status, detail)
