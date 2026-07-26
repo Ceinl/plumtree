@@ -168,3 +168,46 @@ func TestResolveRunnableReturnsArtifactBytes(t *testing.T) {
 		t.Fatalf("wasm bytes leaked through return: %q", again)
 	}
 }
+
+func TestBareAutoClaimAppTakesPrecedenceOverPreviewPrefix(t *testing.T) {
+	store := NewStore(WithAnonymousPreview(true))
+	owner, err := store.EnsureAutoClaimOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.EnsureApp(AppInput{OwnerID: owner.ID, Name: "preview-demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wasm := []byte("auto-claimed wasm")
+	artifact, err := store.CreateArtifact(ArtifactInput{
+		Digest:    digestBytes(wasm),
+		SizeBytes: int64(len(wasm)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutArtifactBytes(artifact.ID, wasm); err != nil {
+		t.Fatal(err)
+	}
+	deploy, err := store.CreateDeploy(DeployInput{
+		AppID:            app.ID,
+		ArtifactID:       artifact.ID,
+		SourceDigest:     sourceDigest,
+		CreatedByOwnerID: owner.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivateDeploy(app.ID, deploy.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	gotApp, gotDeploy, _, gotWASM, err := store.ResolveRunnable("preview-demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotApp.ID != app.ID || gotDeploy.ID != deploy.ID || string(gotWASM) != string(wasm) {
+		t.Fatalf("resolved app=%+v deploy=%+v wasm=%q", gotApp, gotDeploy, gotWASM)
+	}
+}

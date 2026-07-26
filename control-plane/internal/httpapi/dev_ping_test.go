@@ -96,6 +96,29 @@ func TestDevPingListsOnlyActiveDeployedApps(t *testing.T) {
 	}
 }
 
+func TestDevPingListsAutoClaimedAppsWithoutOwner(t *testing.T) {
+	store := control.NewStore()
+	server := NewWithConfig(Config{Store: store, DevToken: "secret", AutoClaim: true})
+	created := createDevDeploy(t, server, []byte("local wasm"))
+
+	rec := serveDevPing(t, server, "secret")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Apps []struct {
+			Handle         string `json:"handle"`
+			ActiveDeployID string `json:"activeDeployId"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Apps) != 1 || body.Apps[0].Handle != "counter" || body.Apps[0].ActiveDeployID != created.Deploy.ID {
+		t.Fatalf("apps = %+v", body.Apps)
+	}
+}
+
 func TestDevPingLogsLifecycleWithoutCredentials(t *testing.T) {
 	var logs []string
 	server := NewWithConfig(Config{

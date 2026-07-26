@@ -196,8 +196,9 @@ token (in `.plumtree/deploy.json`) authorizes later updates, secrets, and egress
 
 For a trusted server, `control-plane -auto-claim` combines deploy and claim
 without Shoo, a handle prompt, or dashboard interaction. Every deploy-token
-holder shares the internal `autoclaim/<app>` namespace, so leave this mode
-disabled when those clients should not trust one another.
+holder shares the internal `autoclaim/<app>` namespace, while the public SSH
+handle is simply `<app>@<host>`. Leave this mode disabled when those clients
+should not trust one another.
 
 ## Security model
 

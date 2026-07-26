@@ -27,6 +27,9 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 				return false, err
 			}
 		}
+		if owner.Internal && owner.Handle != AutoClaimOwnerHandle {
+			return false, fmt.Errorf("%w: internal owner %q has unsupported handle %q", ErrInvalid, owner.ID, owner.Handle)
+		}
 		if _, ok := s.owners[owner.ID]; ok {
 			return false, fmt.Errorf("%w: duplicate owner ID %q", ErrConflict, owner.ID)
 		}
@@ -174,6 +177,9 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 	if s.deleteExpiredDeployClaimsLocked(s.now()) > 0 {
 		migrated = true
 	}
+	if s.migrateAutoClaimOwnerLocked() {
+		migrated = true
+	}
 
 	for _, app := range s.apps {
 		if app.ActiveDeployID == "" {
@@ -311,6 +317,39 @@ func (s *Store) restoreSnapshot(snap storeSnapshot) (bool, error) {
 		s.suspendedDeploys[deployID] = struct{}{}
 	}
 	return migrated, nil
+}
+
+// migrateAutoClaimOwnerLocked marks an unused legacy synthetic autoclaim owner
+// as internal. Identity bindings or persisted workload state make the owner
+// ambiguous, so it is deliberately left public and EnsureAutoClaimOwner fails
+// closed instead of hijacking it.
+func (s *Store) migrateAutoClaimOwnerLocked() bool {
+	ownerID, ok := s.ownerByHandle[AutoClaimOwnerHandle]
+	if !ok {
+		return false
+	}
+	owner := s.owners[ownerID]
+	if owner.Internal {
+		return false
+	}
+	for _, identity := range s.identities {
+		if identity.OwnerID == ownerID {
+			return false
+		}
+	}
+	for _, app := range s.apps {
+		if app.OwnerID == ownerID {
+			return false
+		}
+	}
+	for _, deploy := range s.deploys {
+		if deploy.CreatedByOwnerID == ownerID {
+			return false
+		}
+	}
+	owner.Internal = true
+	s.owners[ownerID] = owner
+	return true
 }
 
 func bumpSeq(seq map[string]int, prefix, id string) {

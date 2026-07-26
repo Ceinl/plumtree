@@ -5,11 +5,19 @@ package control
 
 import "time"
 
+// AutoClaimOwnerHandle is the internal owner used for deployments accepted
+// without an interactive user claim. Its apps are exposed publicly by bare app
+// name even though they remain grouped under this owner for storage and policy.
+const AutoClaimOwnerHandle = "autoclaim"
+
 // Owner is an authenticated Plumtree namespace owner.
 type Owner struct {
 	ID            string
 	Handle        string
 	HandleClaimed bool
+	// Internal distinguishes reserved platform namespaces from user-owned
+	// handles. Internal owners cannot be created or claimed through public flows.
+	Internal bool
 	// Suspended is an operator kill switch: when true, none of the owner's apps
 	// resolve to a runnable session.
 	Suspended bool

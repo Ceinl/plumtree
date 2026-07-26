@@ -186,6 +186,122 @@ func TestOpenStoreMigratesLegacyIdentityHandle(t *testing.T) {
 	}
 }
 
+func TestOpenStoreMigratesLegacyAutoClaimOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-plane-state.json")
+	if err := writeSnapshotFile(path, storeSnapshot{
+		Version: storeSnapshotVersion,
+		Seq:     map[string]int{"own": 1},
+		Owners: []Owner{{
+			ID:            "own_000001",
+			Handle:        AutoClaimOwnerHandle,
+			HandleClaimed: true,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.EnsureAutoClaimOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.ID != "own_000001" || !owner.Internal {
+		t.Fatalf("migrated owner = %+v", owner)
+	}
+	reloaded, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err = reloaded.EnsureAutoClaimOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.ID != "own_000001" || !owner.Internal {
+		t.Fatalf("reloaded owner = %+v", owner)
+	}
+}
+
+func TestOpenStoreDoesNotMigratePublicAutoClaimCollision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-plane-state.json")
+	if err := writeSnapshotFile(path, storeSnapshot{
+		Version: storeSnapshotVersion,
+		Seq:     map[string]int{"own": 1},
+		Owners: []Owner{{
+			ID:            "own_000001",
+			Handle:        AutoClaimOwnerHandle,
+			HandleClaimed: true,
+		}},
+		Identities: []AuthIdentity{{
+			Provider: ProviderShoo,
+			Subject:  "ps_collision",
+			OwnerID:  "own_000001",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EnsureAutoClaimOwner(); !errors.Is(err, ErrConflict) {
+		t.Fatalf("EnsureAutoClaimOwner error = %v, want ErrConflict", err)
+	}
+}
+
+func TestOpenStoreDoesNotMigrateIdentitylessAutoClaimOwnerWithApp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-plane-state.json")
+	if err := writeSnapshotFile(path, storeSnapshot{
+		Version: storeSnapshotVersion,
+		Seq:     map[string]int{"own": 1, "app": 1},
+		Owners: []Owner{{
+			ID:            "own_000001",
+			Handle:        AutoClaimOwnerHandle,
+			HandleClaimed: true,
+		}},
+		Apps: []App{{
+			ID:      "app_000001",
+			OwnerID: "own_000001",
+			Name:    "public-app",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.GetOwner("own_000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.Internal {
+		t.Fatalf("public owner was migrated to internal: %+v", owner)
+	}
+	if _, err := store.EnsureAutoClaimOwner(); !errors.Is(err, ErrConflict) {
+		t.Fatalf("EnsureAutoClaimOwner error = %v, want ErrConflict", err)
+	}
+	if _, _, _, _, err := store.ResolveRunnable("public-app"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("bare public app resolution error = %v, want ErrNotFound", err)
+	}
+
+	reloaded, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err = reloaded.GetOwner("own_000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.Internal {
+		t.Fatalf("public owner was persisted as internal: %+v", owner)
+	}
+}
+
 func TestSSHKeyRegistrationAndRevocationPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store, err := OpenStore(path)

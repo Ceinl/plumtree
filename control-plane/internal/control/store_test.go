@@ -205,6 +205,44 @@ func TestClaimOwnerHandle(t *testing.T) {
 	}
 }
 
+func TestAutoClaimOwnerHandleIsReservedForInternalOwner(t *testing.T) {
+	store := NewStore()
+	if _, err := store.CreateOwner(AutoClaimOwnerHandle); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("CreateOwner(%q) error = %v, want ErrInvalid", AutoClaimOwnerHandle, err)
+	}
+	if _, err := store.EnsureOwner(AutoClaimOwnerHandle); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("EnsureOwner(%q) error = %v, want ErrInvalid", AutoClaimOwnerHandle, err)
+	}
+	publicOwner, _, err := store.EnsureOwnerForIdentity(IdentityInput{
+		Provider: ProviderShoo,
+		Subject:  "ps_reserved",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimOwnerHandle(publicOwner.ID, AutoClaimOwnerHandle); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ClaimOwnerHandle(%q) error = %v, want ErrInvalid", AutoClaimOwnerHandle, err)
+	}
+
+	internal, err := store.EnsureAutoClaimOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if internal.Handle != AutoClaimOwnerHandle || !internal.Internal {
+		t.Fatalf("auto-claim owner = %+v", internal)
+	}
+	again, err := store.EnsureAutoClaimOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != internal.ID {
+		t.Fatalf("EnsureAutoClaimOwner returned different owner: %q != %q", again.ID, internal.ID)
+	}
+	if _, err := store.ClaimOwnerHandle(internal.ID, "renamed"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("renaming internal owner error = %v, want ErrInvalid", err)
+	}
+}
+
 func TestEnsureOwnerAndAppAreIdempotent(t *testing.T) {
 	store := NewStore()
 	owner, err := store.EnsureOwner("alice")
