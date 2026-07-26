@@ -34,6 +34,9 @@ workspace_modules=(
   _devtest/goodbye-cli
   _devtest/goodbye-tui
   examples/agentboard
+  examples/ascii-saver
+  examples/chat
+  examples/tic-tac-toe
 )
 
 for module_dir in "${workspace_modules[@]}"; do

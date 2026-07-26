@@ -65,8 +65,12 @@ func newGameWithClaim(claimSeat bool) *game {
 	if identity.OwnsApp {
 		g.label = "owner-" + g.id[:6]
 	}
-	if err := g.refresh(claimSeat); err != nil {
-		g.status = "join failed: " + err.Error()
+	if claimSeat {
+		if err := g.refresh(true); err != nil {
+			g.status = "join failed: " + err.Error()
+		}
+	} else {
+		g.reload()
 	}
 	return g
 }
@@ -75,6 +79,9 @@ func newScheduledGame(schedule scheduleFunc) *game {
 	heartbeat, err := schedule(sdk.Every(heartbeatInterval))
 	g := newGameWithClaim(err == nil)
 	if err != nil {
+		// Keep the shared board visible, but do not retain a role whose lease
+		// this session cannot renew.
+		g.id = ""
 		g.status = "heartbeat unavailable; spectating only: " + err.Error()
 		return g
 	}

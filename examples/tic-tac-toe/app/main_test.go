@@ -102,6 +102,43 @@ func TestScheduleFailureDoesNotClaimSeat(t *testing.T) {
 	}
 }
 
+func TestScheduleFailureDoesNotRetainExistingSeat(t *testing.T) {
+	_ = sdk.KVDelete(gameKey)
+	defer sdk.KVDelete(gameKey)
+
+	seed := newGameWithClaim(false)
+	seen := time.Now().Add(-time.Second).UnixMilli()
+	if err := seed.mutate(func(state *gameState) bool {
+		state.Players[0] = player{ID: seed.id, Label: seed.label, SeenUnix: seen}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	g := newScheduledGame(func(sdk.Command) (sdk.CommandID, error) {
+		return 0, sdk.ErrCommandUnavailable
+	})
+	if playerRole(g.state, g.id) != 0 {
+		t.Fatalf("game retained an existing seat without lease renewal: %+v", g.state.Players)
+	}
+	if g.state.Players[0].ID != seed.id || g.state.Players[0].SeenUnix != seen {
+		t.Fatalf("existing seat was changed after scheduling failed: %+v", g.state.Players[0])
+	}
+
+	g.click(0)
+	raw, found, err := sdk.KVGet(gameKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := decodeState(raw, found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Board[0] != 0 {
+		t.Fatalf("spectator moved after scheduling failed: %+v", state.Board)
+	}
+}
+
 func TestFirstTwoConcurrentPlayersAndSpectatorPromotion(t *testing.T) {
 	_ = sdk.KVDelete(gameKey)
 	defer sdk.KVDelete(gameKey)
