@@ -6,14 +6,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/Ceinl/plumtree/tui-runtime/app"
-	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
-	"github.com/Ceinl/plumtree/tui-runtime/layout"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/app"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/keyboard"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/layout"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
 
 // RunTUI runs a TUI model against the local terminal. This native build drives
-// the plumtree-tui runtime loop directly (raw mode, live input, resize), so
+// the SDK's private TUI runtime loop directly (raw mode, live input, resize), so
 // authors can `go run .` their app. The hosted build (GOOS=wasip1) replaces
 // this with the WASM-guest ABI loop; app code is unchanged.
 func RunTUI(m Model, _ Meta) {

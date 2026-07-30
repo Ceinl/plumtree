@@ -5,8 +5,7 @@ import (
 	"testing"
 
 	"github.com/Ceinl/plumtree/sdk"
-	"github.com/Ceinl/plumtree/tui-runtime/layout"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/tui"
 )
 
 func TestBoardViewUsesCompactReadableLayout(t *testing.T) {
@@ -99,16 +98,16 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 
 	component := model.View()
 	component.Layout(0, 0, 140, 30)
-	handler, ok := component.(layout.MouseHandler)
+	handler, ok := component.(tui.MouseHandler)
 	if !ok {
 		t.Fatal("board root does not route mouse input")
 	}
 	// The second pending card occupies the first lane below the first card and
 	// its spacer. Clicking selects and advances this identity's personal task.
-	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 7, Action: layout.MouseDown}) {
+	if !handler.HandleMouse(tui.MouseEvent{X: 10, Y: 7, Action: tui.MouseDown}) {
 		t.Fatal("task card did not consume mouse down")
 	}
-	if !handler.HandleMouse(layout.MouseEvent{X: 10, Y: 7, Action: layout.MouseUp}) {
+	if !handler.HandleMouse(tui.MouseEvent{X: 10, Y: 7, Action: tui.MouseUp}) {
 		t.Fatal("task card did not consume mouse up")
 	}
 	if model.taskIndex != 1 {
@@ -119,9 +118,9 @@ func TestTaskCardsAcceptMouseClicks(t *testing.T) {
 	}
 	component = model.View()
 	component.Layout(0, 0, 140, 30)
-	handler = component.(layout.MouseHandler)
-	if !handler.HandleMouse(layout.MouseEvent{X: 31, Y: 3, Action: layout.MouseDown}) ||
-		!handler.HandleMouse(layout.MouseEvent{X: 31, Y: 3, Action: layout.MouseUp}) {
+	handler = component.(tui.MouseHandler)
+	if !handler.HandleMouse(tui.MouseEvent{X: 31, Y: 3, Action: tui.MouseDown}) ||
+		!handler.HandleMouse(tui.MouseEvent{X: 31, Y: 3, Action: tui.MouseUp}) {
 		t.Fatal("task back edge did not consume click")
 	}
 	if model.tasks[1].Status != "pending" {
@@ -162,7 +161,7 @@ func TestRoleCorrectTUITransitions(t *testing.T) {
 func renderBoardFrame(model *boardModel, width, height int) string {
 	component := model.View()
 	component.Layout(0, 0, width, height)
-	buffer := screen.NewScreen(width, height)
+	buffer := tui.NewScreen(width, height)
 	component.Render(buffer)
 
 	var frame strings.Builder

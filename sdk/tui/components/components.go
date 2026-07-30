@@ -1,10 +1,10 @@
-// Package components is the Plumtree default widget toolkit, re-exported from
-// the plumtree-tui runtime: Div (flex container), Text (wrapping label), and
-// Button (focusable/clickable). Each implements tui.Component, so they compose
+// Package components is the Plumtree default widget toolkit: Div (flex
+// container), Text (wrapping label), and Button (focusable/clickable). Each
+// implements tui.Component, so they compose
 // with each other and with custom widgets.
 package components
 
-import rt "github.com/Ceinl/plumtree/tui-runtime/components"
+import rt "github.com/Ceinl/plumtree/sdk/internal/tui/components"
 
 // Widget types.
 type (

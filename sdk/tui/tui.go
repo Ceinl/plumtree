@@ -1,14 +1,14 @@
-// Package tui exposes the Plumtree TUI runtime's layout primitives to app
-// authors. It re-exports the underlying plumtree-tui runtime so apps depend
-// only on the stable github.com/Ceinl/plumtree/sdk surface, not on the runtime's location.
+// Package tui exposes the Plumtree SDK's layout primitives to app authors.
+// The implementation remains private so apps depend only on this stable public
+// surface, not on the runtime's location.
 //
 // The model is: build a Component tree from state each frame; the runtime lays
 // it out and diff-renders it. See github.com/Ceinl/plumtree/sdk/tui/components for widgets.
 package tui
 
 import (
-	"github.com/Ceinl/plumtree/tui-runtime/layout"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/layout"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
 
 // Component is anything the runtime can lay out and render. Every widget
@@ -25,6 +25,9 @@ type (
 	Padding        = layout.Padding
 	Style          = layout.Style
 	TextDecoration = layout.TextDecoration
+	MouseAction    = layout.MouseAction
+	MouseEvent     = layout.MouseEvent
+	MouseHandler   = layout.MouseHandler
 )
 
 // Screen is the cell buffer a Component renders into (needed only when
@@ -66,6 +69,15 @@ const (
 	Italic    = layout.Italic
 	Underline = layout.Underline
 )
+
+// Mouse actions.
+const (
+	MouseDown = layout.MouseDown
+	MouseUp   = layout.MouseUp
+)
+
+// NewScreen returns a cell buffer for rendering a component tree.
+func NewScreen(w, h int) *Screen { return screen.NewScreen(w, h) }
 
 // Grow is a unit that expands to fill available space along the layout axis.
 var Grow = layout.Unit{Type: layout.UnitGrow}
