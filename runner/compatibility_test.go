@@ -75,11 +75,30 @@ func assertBaselineABIV4Counter(t *testing.T, wasm []byte, run compatRunFunc) {
 		t.Fatalf("got %d frames, want %d", len(sink.frames), len(wantCounts))
 	}
 	for i, want := range wantCounts {
-		if got := frameText(sink.frames[i]); !strings.Contains(got, want) {
-			t.Errorf("frame %d missing %q:\n%s", i, want, got)
+		got := frameText(sink.frames[i])
+		if !hasTrimmedLine(got, want) {
+			t.Errorf("frame %d missing exact line %q:\n%s", i, want, got)
 		}
 	}
 	if !sink.frames[len(sink.frames)-1].Quit {
 		t.Error("final frame should carry the quit flag")
+	}
+}
+
+func hasTrimmedLine(text, want string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestHasTrimmedLineRequiresExactValue(t *testing.T) {
+	if !hasTrimmedLine("  Count: 1  \n", "Count: 1") {
+		t.Error("exact padded line was not found")
+	}
+	if hasTrimmedLine("Count: 10\n", "Count: 1") {
+		t.Error("Count: 10 matched Count: 1")
 	}
 }
