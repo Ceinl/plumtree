@@ -56,6 +56,22 @@ jobs:
       - name: Test workspace modules with race detector
         run: ./scripts/workspace-check.sh race
 
+  consolidation-guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Check consolidation guardrails
+        run: ./scripts/check-consolidation-guardrails.sh
+      - name: Test frozen ABI with workspace disabled
+        working-directory: runner
+        run: GOWORK=off go test -run '^TestBaselineABIV4CounterArtifact$' .
+
   release-contract:
     runs-on: ubuntu-latest
     steps:
