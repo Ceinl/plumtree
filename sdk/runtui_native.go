@@ -29,17 +29,18 @@ func RunTUI(m Model, _ Meta) {
 		}
 		return quitRequested
 	}
+	a.ShouldQuit = func() bool { return quitRequested }
 	a.OnResize = func(w, h int) { m.Update(ResizeMsg{W: w, H: h}) }
 	// Drain process-local bus messages on a tick so a native publish reaches
 	// Model.Update and triggers a repaint, mirroring the hosted push delivery.
 	a.TickInterval = 50 * time.Millisecond
 	a.OnTick = func() (render bool) {
 		render = drainBus(m)
-		return render || quitRequested
+		return render
 	}
 	a.Wake = nativeCommands.wake
 	a.OnWake = func() bool {
-		return drainCommands(m) || quitRequested
+		return drainCommands(m)
 	}
 	_ = a.Run(context.Background())
 }

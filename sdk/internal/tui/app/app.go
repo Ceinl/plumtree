@@ -41,6 +41,10 @@ type App struct {
 	// frame; return false to skip the repaint for that tick.
 	TickInterval time.Duration
 	OnTick       func() (render bool)
+	// ShouldQuit, if set, is checked after tick and wake handlers. It lets
+	// external event sources request loop termination even when no repaint is
+	// needed for the event that set the flag.
+	ShouldQuit func() bool
 
 	// Wake lets an external event source wake an otherwise idle loop. OnWake
 	// runs on the loop goroutine before rendering, keeping model mutation
@@ -85,19 +89,34 @@ func (a *App) Run(ctx context.Context) error {
 	// so the deferred calls above remain safe.
 	fatalCh := make(chan os.Signal, 1)
 	signal.Notify(fatalCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(fatalCh)
+	fatalDone := make(chan struct{})
+	defer func() {
+		signal.Stop(fatalCh)
+		close(fatalDone)
+	}()
 	go func() {
-		sig, ok := <-fatalCh
-		if !ok {
+		var sig os.Signal
+		select {
+		case <-fatalDone:
 			return
+		case sig = <-fatalCh:
+			// A signal may already be buffered while Run is unwinding. Give the
+			// ordinary-return path priority over re-raising it.
+			select {
+			case <-fatalDone:
+				return
+			default:
+			}
 		}
 		_ = term.Exit()
 		tmux.Restore()
 		signal.Stop(fatalCh)
 		// Re-raise with the default disposition so we exit as if uncaught.
-		if p, err := os.FindProcess(os.Getpid()); err == nil {
-			signal.Reset(sig.(syscall.Signal))
-			_ = p.Signal(sig)
+		if s, ok := sig.(syscall.Signal); ok {
+			if p, err := os.FindProcess(os.Getpid()); err == nil {
+				signal.Reset(s)
+				_ = p.Signal(s)
+			}
 		}
 	}()
 
@@ -131,12 +150,26 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			a.render(scr)
 		case <-tick:
-			if a.OnTick != nil && !a.OnTick() {
+			render := true
+			if a.OnTick != nil {
+				render = a.OnTick()
+			}
+			if a.ShouldQuit != nil && a.ShouldQuit() {
+				return nil
+			}
+			if !render {
 				continue
 			}
 			a.render(scr)
 		case <-a.Wake:
-			if a.OnWake != nil && !a.OnWake() {
+			render := true
+			if a.OnWake != nil {
+				render = a.OnWake()
+			}
+			if a.ShouldQuit != nil && a.ShouldQuit() {
+				return nil
+			}
+			if !render {
 				continue
 			}
 			a.render(scr)

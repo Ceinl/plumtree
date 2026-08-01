@@ -3,6 +3,8 @@ package components
 import (
 	"reflect"
 	"testing"
+
+	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
 
 func TestWrapLines(t *testing.T) {
@@ -43,3 +45,22 @@ func TestTextSetContentDirty(t *testing.T) {
 		t.Errorf("Content() = %q, want b", tx.Content())
 	}
 }
+
+func TestTextRenderClearsStaleContent(t *testing.T) {
+	tx := NewText("abcd")
+	tx.Layout(0, 0, 4, 1)
+	s := screen.NewScreenWithOutput(4, 1, &discardWriter{})
+	tx.Render(s)
+
+	tx.SetContent("a")
+	tx.Render(s)
+	for x, want := range []rune{'a', ' ', ' ', ' '} {
+		if got := s.CellAt(x, 0).Ch; got != want {
+			t.Errorf("cell %d = %q, want %q", x, got, want)
+		}
+	}
+}
+
+type discardWriter struct{}
+
+func (*discardWriter) Write(p []byte) (int, error) { return len(p), nil }

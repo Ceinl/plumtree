@@ -2,43 +2,49 @@ package keyboard
 
 import "time"
 
+const (
+	maxEscapeDepth       = 16
+	maxCSIParameterBytes = 256
+)
+
 func readEscapeSequence(reader *byteReader) Event {
-	next, ok := reader.readByteTimeout(50 * time.Millisecond)
-	if !ok {
-		return Event{Type: KeyEscape}
-	}
+	alt := false
+	for depth := 0; depth < maxEscapeDepth; depth++ {
+		next, ok := reader.readByteTimeout(50 * time.Millisecond)
+		if !ok {
+			return Event{Type: KeyEscape, Alt: alt}
+		}
 
-	if next == byteBracket {
-		return readCSI(reader)
-	}
-
-	if next == byteEscape {
-		ev := readEscapeSequence(reader)
-		ev.Alt = true
-		return ev
-	}
-
-	if next == byteO {
-		next2, ok2 := reader.readByteTimeout(50 * time.Millisecond)
-		if !ok2 {
+		switch {
+		case next == byteBracket:
+			ev := readCSI(reader)
+			ev.Alt = ev.Alt || alt
+			return ev
+		case next == byteEscape:
+			alt = true
+			continue
+		case next == byteO:
+			next2, ok2 := reader.readByteTimeout(50 * time.Millisecond)
+			if !ok2 {
+				return Event{Type: KeyUnknown}
+			}
+			ev := parseSS3(next2)
+			ev.Alt = ev.Alt || alt
+			return ev
+		case next < 0x80:
+			if next == byteEnter {
+				return Event{Type: KeyEnter, Alt: true}
+			}
+			ev := parseSingleByte(next)
+			ev.Alt = true
+			return ev
+		case next&0x80 != 0:
+			ev := readUTF8Sequence(reader, next)
+			ev.Alt = true
+			return ev
+		default:
 			return Event{Type: KeyUnknown}
 		}
-		return parseSS3(next2)
-	}
-
-	if next < 0x80 {
-		if next == byteEnter {
-			return Event{Type: KeyEnter, Alt: true}
-		}
-		ev := parseSingleByte(next)
-		ev.Alt = true
-		return ev
-	}
-
-	if next&0x80 != 0 {
-		ev := readUTF8Sequence(reader, next)
-		ev.Alt = true
-		return ev
 	}
 
 	return Event{Type: KeyUnknown}
@@ -56,6 +62,9 @@ func readCSI(reader *byteReader) Event {
 		if b >= 0x40 && b <= 0x7E {
 			final = b
 			break
+		}
+		if len(params) >= maxCSIParameterBytes {
+			return Event{Type: KeyUnknown}
 		}
 		params = append(params, b)
 	}

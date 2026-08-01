@@ -3,6 +3,7 @@ package terminal
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"golang.org/x/term"
 )
@@ -30,6 +31,7 @@ const (
 var ErrNotTerminal = errors.New("stdin is not a terminal")
 
 type Terminal struct {
+	mu       sync.Mutex
 	oldstate *term.State
 	fd       int
 	W, H     int
@@ -50,10 +52,14 @@ func (t *Terminal) Enter() error {
 		return err
 	}
 	if err := t.RefreshSize(); err != nil {
-		_ = term.Restore(t.fd, oldstate)
+		if restoreErr := term.Restore(t.fd, oldstate); restoreErr != nil {
+			return errors.Join(err, restoreErr)
+		}
 		return err
 	}
+	t.mu.Lock()
 	t.oldstate = oldstate
+	t.mu.Unlock()
 	fmt.Print(HIDE_CURSOR, OPEN_ALT, ENABLE_MOUSE, ENABLE_BRACKETED_PASTE, ENABLE_KITTY_KEYBOARD, ENABLE_MODIFY_OTHER_KEYS, MOVE_CURSOR, CLEAR_SCREEN)
 	return nil
 }
@@ -63,6 +69,8 @@ func (t *Terminal) Enter() error {
 // idempotent — calling it more than once (e.g. once from a signal handler and
 // again via a deferred call) is a no-op after the first successful restore.
 func (t *Terminal) Exit() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.oldstate == nil {
 		return nil
 	}

@@ -120,8 +120,19 @@ func ListenReader(ctx context.Context, r io.Reader) <-chan Event {
 
 func readInputBytes(ctx context.Context, input io.Reader) <-chan byte {
 	out := make(chan byte, 64)
+	done := make(chan struct{})
+	if closer, ok := input.(io.Closer); ok {
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = closer.Close()
+			case <-done:
+			}
+		}()
+	}
 	go func() {
 		defer close(out)
+		defer close(done)
 		buf := make([]byte, 1)
 		for {
 			n, err := input.Read(buf)

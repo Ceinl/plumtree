@@ -85,6 +85,11 @@ func (t *Text) Render(s *screen.Screen) {
 	}
 	st := t.effectiveStyle()
 	bg, fg, decor := st.GetBackground(), st.GetForeground(), st.GetDecor()
+	for y := t.y; y < t.y+t.h; y++ {
+		for x := t.x; x < t.x+t.w; x++ {
+			s.Set(x, y, ' ', fg, bg, decor)
+		}
+	}
 
 	for i, line := range wrapLines(t.content, t.w) {
 		if i >= t.h {

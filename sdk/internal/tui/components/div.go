@@ -95,14 +95,22 @@ func (d *Div) Layout(x, y, w, h int) {
 func (d *Div) measureChildren(row bool, innerW, innerH int) ([]childSize, int, int) {
 	sizes := make([]childSize, 0, len(d.children))
 	growCount, fixedMain := 0, 0
+	remaining := mainSize(row, innerW, innerH)
 	for _, child := range d.children {
 		cw, ch, grow := measureChild(child, row, innerW, innerH)
+		size := childSize{child: child, cw: cw, ch: ch, grow: grow}
 		if grow {
 			growCount++
 		} else {
-			fixedMain += mainSize(row, cw, ch)
+			main := mainSize(row, cw, ch)
+			if main > remaining {
+				setMainSize(&size, row, remaining)
+				main = remaining
+			}
+			fixedMain += main
+			remaining -= main
 		}
-		sizes = append(sizes, childSize{child: child, cw: cw, ch: ch, grow: grow})
+		sizes = append(sizes, size)
 	}
 	return sizes, growCount, fixedMain
 }

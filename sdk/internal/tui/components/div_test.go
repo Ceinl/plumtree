@@ -72,6 +72,28 @@ func TestDivLayoutRowClamp(t *testing.T) {
 	}
 }
 
+func TestDivLayoutClampsFixedChildrenToRemainingSpace(t *testing.T) {
+	parent := NewDiv()
+	parent.SetDirection(layout.Row)
+
+	child1 := NewDiv()
+	child1.SetSize(layout.Unit{Type: layout.UnitPx, Value: 8}, layout.Unit{Type: layout.UnitPx, Value: 1})
+	parent.AppendChild(child1)
+
+	child2 := NewDiv()
+	child2.SetSize(layout.Unit{Type: layout.UnitPx, Value: 8}, layout.Unit{Type: layout.UnitPx, Value: 1})
+	parent.AppendChild(child2)
+
+	parent.Layout(0, 0, 10, 1)
+
+	if child1.cw != 8 {
+		t.Errorf("child1 width = %d, want 8", child1.cw)
+	}
+	if child2.cw != 2 {
+		t.Errorf("child2 width = %d, want remaining width 2", child2.cw)
+	}
+}
+
 func TestDivLayoutColumnGrowAllocation(t *testing.T) {
 	parent := NewDiv()
 	parent.SetDirection(layout.Column)
