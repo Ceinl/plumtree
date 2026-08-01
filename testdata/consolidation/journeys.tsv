@@ -1,0 +1,17 @@
+# id	fixture	proof_file	proof_symbol
+interactive-counter	sdk/examples/counter	runner/compatibility_test.go	TestBaselineABIV4CounterArtifact
+finite-cli	_devtest/goodbye-cli	runner/integration_test.go	TestGoodbyeCapabilityInProcess
+structured-tui	_devtest/goodbye-tui	testdata/consolidation/external-consumers.txt	_devtest/goodbye-tui
+scoped-kv	sdk/examples/kvcounter	runner/integration_test.go	TestKVPersistsAcrossSessions
+live-bus	sdk/examples/buschat	runner/integration_test.go	TestBusDeliversPublishedMessage
+mouse-input	sdk/examples/mousebutton	runner/procrunner_test.go	TestProcessRunnerHostedSDKButtonMouseClick
+timers	sdk/examples/timer	runner/procrunner_test.go	TestProcessRunnerTimersWakeAndRedraw
+actions-and-capabilities	examples/agentboard	runner/procrunner_test.go	TestProcessRunnerActionCapabilityParity
+author-deploy	pt	pt/deploy_test.go	TestDeploySelectsConfiguredServerAlias
+ssh-leaf-session	ssh-gateway/gateway	ssh-gateway/gateway/session_test.go	TestRunSessionProductionCLIUsesWorker
+secret-management	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_secrets_test.go	TestDevSecretsLifecycle
+egress-management	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_egress_test.go	TestDevEgressLifecycle
+terminal-safe-frames	runner	runner/devhost_test.go	TestTextSinkRendersGrid
+terminal-safe-cli	pt	pt/terminal_safe_test.go	TestTerminalSafeTextStripsTerminalControls
+worker-authentication	runner	runner/procrunner_test.go	TestRemoteProcessRunnerRejectsWrongToken
+credential-redaction	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_ping_test.go	TestDevPingLogsLifecycleWithoutCredentials
