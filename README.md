@@ -233,6 +233,9 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 |------------------|-------------------------------------------|---------------------------------------------------------------|
 | `./`             | `github.com/Ceinl/plumtree`               | Root product module and staged internal ownership boundaries.  |
 | `sdk/`           | `github.com/Ceinl/plumtree/sdk`           | Author-facing Go SDK and the versioned WASM ABI wrapper.       |
+| `sdk/app/`       | `github.com/Ceinl/plumtree/sdk/app`       | Additive clean interactive lifecycle, commands, and subscriptions. |
+| `sdk/ui/`        | `github.com/Ceinl/plumtree/sdk/ui`        | Additive declarative UI nodes, themes, focus, and canvas.      |
+| `sdk/plumtest/`  | `github.com/Ceinl/plumtree/sdk/plumtest`  | Deterministic in-process interactive model test harness.      |
 | `cmd/pt/`         | `github.com/Ceinl/plumtree/cmd/pt`        | Root author CLI staging entrypoint.                            |
 | `cmd/plumtree/`   | `github.com/Ceinl/plumtree/cmd/plumtree`  | Root server-role staging entrypoint.                          |
 | `internal/cli/`   | `github.com/Ceinl/plumtree/internal/cli`  | Root-owned author CLI, scaffold, local dev, deploy, and management. |
