@@ -1,4 +1,4 @@
-package gatewayapi
+package execprotocol
 
 import (
 	"reflect"

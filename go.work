@@ -12,5 +12,4 @@ use (
 	./examples/tic-tac-toe
 	./pt
 	./sdk
-	./ssh-gateway
 )

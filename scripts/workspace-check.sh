@@ -29,7 +29,6 @@ workspace_modules=(
   control-plane
   pt
   sdk
-  ssh-gateway
   _devtest/goodbye-cli
   _devtest/goodbye-tui
   examples/agentboard

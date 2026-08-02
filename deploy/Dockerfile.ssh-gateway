@@ -4,7 +4,7 @@
 FROM golang:1.26.5-alpine3.24 AS build
 WORKDIR /src
 COPY . .
-RUN cd ssh-gateway && CGO_ENABLED=0 go build -trimpath -o /out/ssh-gateway ./cmd/ssh-gateway
+RUN CGO_ENABLED=0 go build -trimpath -o /out/ssh-gateway ./ssh-gateway/cmd/ssh-gateway
 
 FROM alpine:3.24.1
 RUN adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data

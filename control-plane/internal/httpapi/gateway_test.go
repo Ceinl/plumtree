@@ -12,15 +12,15 @@ import (
 	"time"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/gateway"
+	"github.com/Ceinl/plumtree/internal/gateway/controlclient"
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
-	"github.com/Ceinl/plumtree/ssh-gateway/httpbackend"
 )
 
 const gwToken = "gw-secret"
 
 // newGatewayBackend stands up a control-plane HTTP server with the gateway API
-// enabled and returns an httpbackend.Client pointed at it, plus the store so
+// enabled and returns a controlclient.Client pointed at it, plus the store so
 // tests can mutate platform state.
 func newGatewayBackend(t *testing.T) (gateway.Backend, *control.Store) {
 	t.Helper()
@@ -33,7 +33,7 @@ func newGatewayBackend(t *testing.T) (gateway.Backend, *control.Store) {
 	}).Handler()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return httpbackend.New(srv.URL, gwToken), store
+	return controlclient.New(srv.URL, gwToken), store
 }
 
 func TestSuspensionFansOutAndWaitsForEveryGateway(t *testing.T) {
@@ -45,9 +45,9 @@ func TestSuspensionFansOutAndWaitsForEveryGateway(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	clients := []*httpbackend.Client{
-		httpbackend.New(srv.URL, gwToken),
-		httpbackend.New(srv.URL, gwToken),
+	clients := []*controlclient.Client{
+		controlclient.New(srv.URL, gwToken),
+		controlclient.New(srv.URL, gwToken),
 	}
 	received := []chan gateway.Suspension{make(chan gateway.Suspension, 1), make(chan gateway.Suspension, 1)}
 	release := []chan struct{}{make(chan struct{}), make(chan struct{})}
@@ -114,7 +114,7 @@ func TestSuspensionFanoutIncludesOwnerAppAndDeploy(t *testing.T) {
 	received := []chan gateway.Suspension{make(chan gateway.Suspension, 3), make(chan gateway.Suspension, 3)}
 	for i := range received {
 		i := i
-		if err := httpbackend.New(srv.URL, gwToken).StartSuspensionWatcher(ctx, func(_ context.Context, event gateway.Suspension) error {
+		if err := controlclient.New(srv.URL, gwToken).StartSuspensionWatcher(ctx, func(_ context.Context, event gateway.Suspension) error {
 			received[i] <- event
 			return nil
 		}); err != nil {
@@ -337,7 +337,7 @@ func TestGatewayAPIDisabledWithoutToken(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	backend := httpbackend.New(srv.URL, "anything")
+	backend := controlclient.New(srv.URL, "anything")
 	if _, err := backend.ResolveRunnable("alice/counter"); err == nil {
 		t.Fatal("expected error when gateway API is disabled")
 	}

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
-	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
+	"github.com/Ceinl/plumtree/internal/protocol/gateway"
 )
 
 // The gateway API lets a standalone SSH gateway use the control plane as its
