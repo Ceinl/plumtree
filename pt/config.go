@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"golang.org/x/term"
@@ -59,8 +58,8 @@ func readPTConfig() (ptConfig, error) {
 	if !info.Mode().IsRegular() {
 		return ptConfig{}, fmt.Errorf("pt config %q must be a regular file", path)
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return ptConfig{}, fmt.Errorf("pt config %q has insecure permissions %04o; run chmod 600 %q", path, info.Mode().Perm(), path)
+	if err := validatePTConfigSecurity(path, info); err != nil {
+		return ptConfig{}, err
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -154,7 +153,7 @@ func writePTConfig(cfg ptConfig) (string, error) {
 			_ = os.Remove(tmpPath)
 		}
 	}()
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := securePTConfigFile(tmpPath); err != nil {
 		return "", fmt.Errorf("secure temporary pt config: %w", err)
 	}
 	if _, err := tmp.Write(b); err != nil {
@@ -168,6 +167,9 @@ func writePTConfig(cfg ptConfig) (string, error) {
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return "", fmt.Errorf("replace pt config %q: %w", path, err)
+	}
+	if err := securePTConfigFile(path); err != nil {
+		return "", fmt.Errorf("secure pt config %q: %w", path, err)
 	}
 	removeTemp = false
 	return path, nil

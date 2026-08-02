@@ -122,10 +122,15 @@ control-plane --tailscale --addr 127.0.0.1:8080 \
 A trusted server may instead use `--tailscale --auto-claim` over HTTP when it
 does not need Shoo claims or dashboard sign-in.
 
-Aliases use letters, numbers, dots, dashes, and underscores. Configuration is
-stored with mode `0600` under the OS user config directory
-(`plumtree/pt.json`). The automatic same-machine token is read from
-`plumtree/dev-token`; `PLUMTREE_DEV_TOKEN_FILE` overrides that location.
+Aliases use letters, numbers, dots, dashes, and underscores. On Unix,
+configuration is stored with mode `0600` under the OS user config directory
+(`plumtree/pt.json`). On Windows, `pt` applies a protected ACL granting access
+only to the current Windows user. This applies to the default path and to
+`PLUMTREE_PT_CONFIG` overrides. Existing Windows config files are repaired
+before they are read; a file owned by another user or one whose ACL cannot be
+secured is rejected before its deploy token is accepted. The automatic
+same-machine token is read from `plumtree/dev-token`;
+`PLUMTREE_DEV_TOKEN_FILE` overrides that location.
 
 The first deploy prints `Claim: pt claim` and writes `.plumtree/deploy.json`.
 Run `pt claim` within 5 minutes, sign in with Shoo in the browser, and choose a
