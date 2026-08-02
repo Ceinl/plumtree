@@ -8,12 +8,12 @@ require (
 	github.com/Ceinl/plumtree/sdk v0.0.0
 	github.com/Ceinl/plumtree/ssh-gateway v0.0.0
 	golang.org/x/crypto v0.54.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 )
 
 require (
 	github.com/tetratelabs/wazero v1.12.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 )
 
 // Sibling modules resolved locally within this workspace.
