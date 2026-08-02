@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ceinl/plumtree/sdk/cli"
 	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
@@ -70,6 +71,9 @@ func Noop() Command { return Command{} }
 // through NewRuntime in tests or a host integration.
 func Run(model Model, options ...Option) {
 	runtime := NewRuntime(model, options...)
+	if runCLIIfRequested(runtime) {
+		return
+	}
 	if err := runtime.Init(context.Background()); err != nil {
 		return
 	}
@@ -80,8 +84,20 @@ func Run(model Model, options ...Option) {
 type Option func(*runtimeOptions)
 
 type runtimeOptions struct {
-	width  int
-	height int
+	width       int
+	height      int
+	commandTree cli.Command
+	commandSet  bool
+}
+
+// WithCommands attaches a finite command tree to an interactive leaf. The
+// native runtime dispatches an exec invocation before model initialization;
+// the interactive path continues through the normal app lifecycle.
+func WithCommands(commands cli.Command) Option {
+	return func(options *runtimeOptions) {
+		options.commandTree = commands
+		options.commandSet = true
+	}
 }
 
 // Viewport supplies the initial render dimensions. Zero uses 80 by 24.
@@ -118,6 +134,8 @@ type Runtime struct {
 	quit        bool
 	goodbye     Goodbye
 	lastErr     error
+	commandTree cli.Command
+	commandSet  bool
 
 	queue     []Event
 	commands  []Command
@@ -147,10 +165,15 @@ func NewRuntime(model Model, options ...Option) *Runtime {
 	return &Runtime{
 		model: model, ctx: ctx, cancel: cancel,
 		width: settings.width, height: settings.height,
+		commandTree: settings.commandTree, commandSet: settings.commandSet,
 		focus: ui.NewFocus(), subs: make(map[SubscriptionKey]SubscriptionSpec), subCancel: make(map[SubscriptionKey]context.CancelFunc),
 		done: make(chan struct{}),
 	}
 }
+
+// Commands returns the attached finite tree, if any. Host integrations use
+// this during exec dispatch; an ordinary interactive session does not need it.
+func (r *Runtime) Commands() (cli.Command, bool) { return r.commandTree, r.commandSet }
 
 // Init runs optional initialization, reconciles subscriptions, and renders.
 func (r *Runtime) Init(ctx context.Context) error {

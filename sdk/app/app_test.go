@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Ceinl/plumtree/sdk/cli"
 	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
@@ -72,6 +73,18 @@ func TestRuntimeSerializesInitInputAndVirtualSubscriptions(t *testing.T) {
 	}
 	if got := runtime.FocusKey(); got != "increment" {
 		t.Fatalf("focus = %q", got)
+	}
+}
+
+func TestWithCommandsAttachesWithoutInitializingRuntime(t *testing.T) {
+	command := cli.Root("attached")
+	runtime := NewRuntime(&testModel{}, WithCommands(command))
+	got, attached := runtime.Commands()
+	if !attached || got.Summary != "attached" {
+		t.Fatalf("attached command = %#v, attached=%t", got, attached)
+	}
+	if runtime.Err() != nil {
+		t.Fatal(runtime.Err())
 	}
 }
 
