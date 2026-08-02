@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/auth/shoo"
+	"github.com/Ceinl/plumtree/internal/control"
 )
 
 func firstNonEmpty[T ~string](values ...T) string {

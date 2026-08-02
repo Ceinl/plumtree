@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/control"
 )
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {

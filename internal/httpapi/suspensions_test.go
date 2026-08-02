@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/control"
 )
 
 func TestSuspensionHubDrainsBusyGatewayBeforeCancellationAcknowledgement(t *testing.T) {

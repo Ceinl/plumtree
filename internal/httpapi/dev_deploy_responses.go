@@ -1,6 +1,6 @@
 package httpapi
 
-import "github.com/Ceinl/plumtree/control-plane/internal/control"
+import "github.com/Ceinl/plumtree/internal/control"
 
 func devDeployResponse(owner control.Owner, app control.App, deploy control.Deploy, claimed bool, claimURL, claimToken string) map[string]any {
 	appHandle := publicAppHandle(owner, app.Name)

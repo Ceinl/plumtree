@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	buildworker "github.com/Ceinl/plumtree/build-worker"
-	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/auth/shoo"
+	"github.com/Ceinl/plumtree/internal/control"
+	buildprotocol "github.com/Ceinl/plumtree/internal/protocol/build"
 	"github.com/Ceinl/plumtree/internal/protocol/gateway"
 )
 
@@ -16,10 +16,10 @@ type TokenVerifier interface {
 }
 
 // BuildBackend compiles uploaded app source to a WASM artifact in a sandbox.
-// It is satisfied by both the in-process *buildworker.Builder and the remote
-// *buildworker.Client, so the control plane never hosts the toolchain itself.
+// The legacy build-worker command is adapted to this root-owned protocol, so
+// the control plane never hosts the toolchain itself in this package.
 type BuildBackend interface {
-	Build(ctx context.Context, req buildworker.Request) (buildworker.Result, error)
+	Build(ctx context.Context, req buildprotocol.Request) (buildprotocol.Result, error)
 }
 
 type Server struct {

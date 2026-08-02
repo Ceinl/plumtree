@@ -55,6 +55,6 @@ run_tests internal/gateway . \
   TestOptionalAuthHandshakeDoesNotTrustInvalidKeyProof \
   TestRunSessionProductionCLIUsesWorker
 
-run_tests control-plane ./internal/httpapi \
+run_tests internal/httpapi . \
   TestDevPingLogsLifecycleWithoutCredentials \
   TestDevSecretsRequireClaimToken
