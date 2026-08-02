@@ -10,6 +10,11 @@ owns declarative nodes and structured drawing, and `sdk/plumtest` drives models
 without sleeps, subprocesses, global argv/stdio, or external services. Existing
 root SDK APIs remain selected until the later consumer cutover.
 
+The typed capability surface is also additive at this step. Each capability
+owns its operation builder, result, bounds, stable errors, and native/hosted
+adapter boundary. `Run(ctx)` executes once for finite code; `Map(...)` converts
+the same inert operation into one `app.Command` for interactive models.
+
 ```go
 package main
 
@@ -84,13 +89,36 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 | `github.com/Ceinl/plumtree/sdk/app` | Clean interactive model lifecycle, input events, finite commands, quit/goodbye, and declarative subscriptions. |
 | `github.com/Ceinl/plumtree/sdk/ui` | Chained declarative nodes, semantic themes, focus/input routing, structured frames, and clipped canvas drawing. |
 | `github.com/Ceinl/plumtree/sdk/plumtest` | Deterministic in-process model/runtime harness with virtual time, viewport, input, view, and fixture assertions. |
-| `github.com/Ceinl/plumtree/sdk` (capabilities) | `KVGet`/`KVSet`/`KVDelete`/`KVList`/`KVCompareAndSwap` (durable state); `Subscribe`/`Publish` + `MessageMsg` (live pub/sub); `Whoami` (SSH-key identity); `Env` (claimed-only secrets); `Fetch`/`Get` (claimed-only gated egress). The same calls work natively and hosted. |
+| `github.com/Ceinl/plumtree/sdk/kv` | Typed durable `Get`, `Set`, `Delete`, `List`, and `CompareAndSwap` operations. |
+| `github.com/Ceinl/plumtree/sdk/bus` | Typed best-effort `Publish` and declarative `Messages` subscriptions. |
+| `github.com/Ceinl/plumtree/sdk/identity` | Typed connected-session `Whoami` operation. |
+| `github.com/Ceinl/plumtree/sdk/secrets` | Typed owner-enabled secret `Get` operation. |
+| `github.com/Ceinl/plumtree/sdk/fetch` | Typed bounded gated HTTP `Request` and `Get` operations. |
+| `github.com/Ceinl/plumtree/sdk/hostexec` | Typed bounded opt-in `Run` operation for trusted host commands. |
+| `github.com/Ceinl/plumtree/sdk/timer` | Typed finite `After` and declarative recurring `Every` timers. |
+| `github.com/Ceinl/plumtree/sdk` (compatibility surface) | Existing root capability functions remain selected until the later consumer cutover; Env (claimed-only secrets) and Fetch (claimed-only egress) retain their existing behavior. |
 | `github.com/Ceinl/plumtree/sdk/tui` | Layout primitives (`Component`, `Unit`, `Direction`, `Style`, …) re-exported from the runtime. |
 | `github.com/Ceinl/plumtree/sdk/tui/components` | Default widgets: `Div`, `Text`, `Button`. |
 | `github.com/Ceinl/plumtree/sdk/abi` | The versioned WASM wire format (events in, structured frames out). Canonical home of the ABI. |
 
 The SDK module is self-contained. Its TUI implementation is private under
 `internal/tui`; app code should use only the public packages listed above.
+
+## Capability contract inventory
+
+| Package | Authority and lifetime | Native / hosted isolation | Stable result errors |
+| --- | --- | --- | --- |
+| `kv` | Private app namespace; copied value/result per operation | In-process store / selected isolated host capability | `ErrInvalid`, `ErrTooLarge`, `ErrQuota`, `ErrConflict`, `ErrUnavailable` |
+| `bus` | App-scoped topic; notification lives until delivery | Process-local fan-out / clean hosted event selection pending | `ErrInvalid`, `ErrTooLarge`, `ErrUnavailable` |
+| `identity` | Connected session; immutable lookup result | Local development identity / verified isolated session | `ErrUnavailable` |
+| `secrets` | Owner-enabled app secret store; value lives in result | Process environment / isolated server secret capability | `ErrInvalid`, `ErrTooLarge`, `ErrUnavailable` |
+| `fetch` | Owner-enabled app egress allowlist; response lives in result | Local network / isolated gated host fetch | `ErrInvalid`, `ErrTooLarge`, `ErrDenied`, `ErrFailed`, `ErrUnavailable` |
+| `hostexec` | Explicit operator authority; output lives in result | Local process / isolated opt-in host command | `ErrInvalid`, `ErrTooLarge`, `ErrFailed`, `ErrUnavailable` |
+| `timer` | No external authority; event lives until completion | Native clock / app-managed isolated runtime clock | `ErrInvalid` plus context cancellation |
+
+No package exposes a generic capability registry, string dispatch, or generic
+RPC payload. The compatibility root remains in place solely for the ordered
+consumer cutover that follows this issue.
 
 ## Clean interactive example
 
