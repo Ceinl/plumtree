@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 func TestWriteGoodbyeSanitizesTerminalControls(t *testing.T) {

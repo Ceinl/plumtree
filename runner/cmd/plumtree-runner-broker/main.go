@@ -17,7 +17,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 func main() {

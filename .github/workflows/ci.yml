@@ -71,7 +71,7 @@ jobs:
       - name: Check consolidation guardrails
         run: ./scripts/check-consolidation-guardrails.sh
       - name: Test frozen ABI with workspace disabled
-        working-directory: runner
+        working-directory: internal/runner
         run: GOWORK=off go test -run '^TestBaselineABIV4CounterArtifact$' .
 
   release-contract:

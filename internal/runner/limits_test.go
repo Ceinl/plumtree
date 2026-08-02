@@ -53,7 +53,7 @@ func TestRunSessionDeadline(t *testing.T) {
 // With a tight output budget, frames presented in a burst are dropped: the sink
 // sees far fewer frames than the guest produced.
 func TestRunDropsFramesOverOutputBudget(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/counter")
+	wasm := buildGuest(t, "../../sdk/examples/counter")
 
 	lim := DefaultLimits
 	lim.MaxFramesPerSec = 1 // burst 1: only the first present in a burst passes

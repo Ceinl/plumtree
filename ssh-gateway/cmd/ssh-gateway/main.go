@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
 	"github.com/Ceinl/plumtree/ssh-gateway/httpbackend"
 )

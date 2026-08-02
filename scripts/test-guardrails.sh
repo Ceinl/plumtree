@@ -17,7 +17,7 @@ expect_failure() {
 }
 
 # Mutating the uncompressed guest must invalidate the pinned artifact digest.
-gzip -cd "$workspace_root/runner/testdata/compat/abi-v4-counter.wasm.gz" > "$tmpdir/guest.wasm"
+gzip -cd "$workspace_root/internal/runner/testdata/compat/abi-v4-counter.wasm.gz" > "$tmpdir/guest.wasm"
 printf 'mutation' >> "$tmpdir/guest.wasm"
 gzip -n -9 < "$tmpdir/guest.wasm" > "$tmpdir/mutated.wasm.gz"
 expect_failure abi env ABI_FIXTURE="$tmpdir/mutated.wasm.gz" \

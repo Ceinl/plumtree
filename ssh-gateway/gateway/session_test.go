@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/tui"
 	"github.com/Ceinl/plumtree/sdk/tui/terminal"
@@ -60,8 +60,8 @@ func TestParseTerminalDimensions(t *testing.T) {
 // TUI apps. The wrapper marker proves that the configured executable spawned;
 // the guest output proves the CLI protocol completed end-to-end.
 func TestRunSessionProductionCLIUsesWorker(t *testing.T) {
-	worker := buildTestBinary(t, "../../runner", "./cmd/plumtree-runner-worker", nil)
-	wasmPath := buildTestBinary(t, "../../runner/testdata/kvguest", ".", []string{"GOOS=wasip1", "GOARCH=wasm", "GOWORK=off"})
+	worker := buildTestBinary(t, "../..", "./runner/cmd/plumtree-runner-worker", nil)
+	wasmPath := buildTestBinary(t, "../../internal/runner/testdata/kvguest", ".", []string{"GOOS=wasip1", "GOARCH=wasm", "GOWORK=off"})
 	wasm, err := os.ReadFile(wasmPath)
 	if err != nil {
 		t.Fatal(err)

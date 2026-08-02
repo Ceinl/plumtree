@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 // Backend is the gateway's port to the control plane. The gateway owns SSH

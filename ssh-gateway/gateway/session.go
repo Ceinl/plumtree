@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/tui"
 	"github.com/Ceinl/plumtree/sdk/tui/keyboard"

@@ -3,8 +3,8 @@
 FROM golang:1.26.5-alpine3.24 AS build
 WORKDIR /src
 COPY . .
-RUN cd runner && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-broker ./cmd/plumtree-runner-broker \
-    && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-worker ./cmd/plumtree-runner-worker
+RUN CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-broker ./runner/cmd/plumtree-runner-broker \
+    && CGO_ENABLED=0 go build -trimpath -o /out/plumtree-runner-worker ./runner/cmd/plumtree-runner-worker
 
 FROM alpine:3.24.1
 # Per-session workers drop to unique UIDs before chdir/exec. The scratch parent

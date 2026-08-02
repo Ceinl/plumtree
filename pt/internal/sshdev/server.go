@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
 	"github.com/Ceinl/plumtree/sdk/tui/terminal"
