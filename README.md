@@ -233,8 +233,13 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 |------------------|-------------------------------------------|---------------------------------------------------------------|
 | `./`             | `github.com/Ceinl/plumtree`               | Root product module and staged internal ownership boundaries.  |
 | `sdk/`           | `github.com/Ceinl/plumtree/sdk`           | Author-facing Go SDK and the versioned WASM ABI wrapper.       |
-| `pt/`            | `github.com/Ceinl/plumtree/pt`            | Author CLI: scaffold, dev, deploy, claim, logs, secrets.      |
-| `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Temporary server caller and embedded build assets.             |
+| `cmd/pt/`         | `github.com/Ceinl/plumtree/cmd/pt`        | Root author CLI staging entrypoint.                            |
+| `cmd/plumtree/`   | `github.com/Ceinl/plumtree/cmd/plumtree`  | Root server-role staging entrypoint.                          |
+| `internal/cli/`   | `github.com/Ceinl/plumtree/internal/cli`  | Root-owned author CLI, scaffold, local dev, deploy, and management. |
+| `internal/build/` | `github.com/Ceinl/plumtree/internal/build`| Root-owned local WASM build and source packaging.              |
+| `internal/server/controlrole/` | `github.com/Ceinl/plumtree/internal/server/controlrole` | Root-owned control/server assembly. |
+| `pt/`             | —                                         | Temporary legacy caller for the root author CLI.               |
+| `control-plane/`  | —                                         | Temporary legacy caller/config location for the root server role. |
 | `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
 | `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
 | `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | SSH gateway, admission, sessions, rendering, and capabilities. |
@@ -252,7 +257,7 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 The end-to-end author loop works against a local control plane:
 
 ```
-server: go run ./control-plane/cmd/control-plane
+server: go run ./cmd/plumtree
 author: pt new → pt dev → pt deploy → pt claim → ssh -p 2222 <app>@127.0.0.1
 ```
 

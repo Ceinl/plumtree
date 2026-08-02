@@ -36,14 +36,14 @@ help:
 		'  make install-pt         Install generic pt; configure it at runtime'
 
 test-control-plane:
-	cd control-plane && GOCACHE=$(GOCACHE) $(GO) test ./...
+	GOCACHE=$(GOCACHE) $(GO) test ./internal/server/controlrole
 
 pt-local:
 	@printf 'pt local endpoint: %s\n' "$(ORIGIN)"
 	@cd "$(PT_DIR)" && PLUMTREE_SERVER_URL="$(ORIGIN)" PLUMTREE_DEV_TOKEN="$(DEV_TOKEN)" "$(PT)" $(PT_ARGS)
 
 run-server:
-	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
+	PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/plumtree \
 		-addr $(ADDR) \
 		-origin $(ORIGIN) \
 		-dev-token $(DEV_TOKEN) \
@@ -53,7 +53,7 @@ run-server:
 		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT)
 
 run-server-memory:
-	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
+	PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/plumtree \
 		-addr $(ADDR) \
 		-origin $(ORIGIN) \
 		-dev-token $(DEV_TOKEN) \
@@ -64,7 +64,7 @@ run-server-memory:
 		-state-file ""
 
 seed-server:
-	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
+	PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/plumtree \
 		-addr $(ADDR) \
 		-origin $(ORIGIN) \
 		-dev-token $(DEV_TOKEN) \
@@ -79,9 +79,9 @@ clear-server:
 	rm -rf "$(KV_DIR)"
 
 build-pt:
-	cd pt && GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(abspath $(CURDIR))/pt-bin" .
+	GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(abspath $(CURDIR))/pt-bin" ./cmd/pt
 	@echo "built generic pt-bin; run 'pt-bin --add-server URL ALIAS' and enter the token"
 
 install-pt:
-	cd pt && GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" .
+	GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" ./cmd/pt
 	@echo "installed generic pt; run 'pt --add-server URL ALIAS' and enter the token"

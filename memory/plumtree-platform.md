@@ -7,10 +7,11 @@ metadata:
 
 `/Users/c/code/plumtree` is a multi-module Go workspace (go.work) for a platform
 that hosts Go TUI/CLI apps compiled to WASM and streamed over SSH — "Lakebed for
-the terminal." Modules: `sdk`, `pt` (author CLI), root `internal/runner`,
-root `internal/control`, `internal/httpapi`, `internal/auth`,
-`internal/gatewaybackend`, and `internal/gateway` (SSH front end and control
-client), plus the temporary `control-plane` and `build-worker` modules.
+the terminal." The root module now owns `internal/cli`, `internal/build`,
+`internal/server/controlrole`, `internal/runner`, `internal/control`,
+`internal/httpapi`, `internal/auth`, `internal/gatewaybackend`, and
+`internal/gateway` (SSH front end and control client). Temporary legacy callers
+remain under `pt` and `control-plane`; `build-worker` remains an isolated module.
 Architecture, subrepo map, and status are all now
 consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
 `REPOS.md` were folded into it and deleted 2026-06-27). Now a single top-level git

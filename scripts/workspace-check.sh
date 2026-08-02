@@ -26,8 +26,6 @@ esac
 workspace_modules=(
   .
   build-worker
-  control-plane
-  pt
   sdk
   _devtest/goodbye-cli
   _devtest/goodbye-tui
