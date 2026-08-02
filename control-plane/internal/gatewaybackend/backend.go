@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
 )
 

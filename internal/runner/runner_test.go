@@ -11,7 +11,7 @@ import (
 // A Runner runs the same module across many sessions, reusing compiled code via
 // its shared cache. Each session must still produce correct, independent output.
 func TestRunnerReusesAcrossSessions(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/counter")
+	wasm := buildGuest(t, "../../sdk/examples/counter")
 
 	rn := New()
 	defer rn.Close(context.Background())
@@ -37,7 +37,7 @@ func TestRunnerReusesAcrossSessions(t *testing.T) {
 // Concurrent sessions on one Runner share only immutable compiled code, never
 // guest state: each session's counter must reflect only its own input.
 func TestRunnerConcurrentSessionsIsolated(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/counter")
+	wasm := buildGuest(t, "../../sdk/examples/counter")
 
 	rn := New()
 	defer rn.Close(context.Background())

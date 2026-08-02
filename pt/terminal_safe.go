@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 // terminalSafeText neutralizes untrusted server/compiler/app-log text before

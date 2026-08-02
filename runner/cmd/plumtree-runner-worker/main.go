@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 func main() {

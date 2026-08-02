@@ -2,13 +2,13 @@
 path	standalone-build-worker	73	16	^build-worker/
 path	standalone-control-plane	73	79	^control-plane/
 path	standalone-pt	73	46	^pt/
-path	standalone-runner	73	52	^runner/
+path	standalone-runner	73	5	^runner/
 path	standalone-ssh-gateway	73	30	^ssh-gateway/
 path	standalone-tui-runtime	53	0	^tui-runtime/
 path	legacy-devtest	62	12	^_devtest/
 text	tui-runtime-import	53	0	github.com/Ceinl/plumtree/tui-runtime
-text	legacy-product-module-imports	54-57	108	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
-text	local-module-replaces	53	12	=>[[:space:]]+(\./|\.\./|/)
+text	legacy-product-module-imports	54-57	80	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
+text	local-module-replaces	53	8	=>[[:space:]]+(\./|\.\./|/)
 text	build-worker-surface	73	52	build-worker
 text	shoo-surface	73	193	[Ss][Hh][Oo][Oo]
 text	browser-dashboard-surface	73	109	[Bb]rowser|[Dd]ashboard

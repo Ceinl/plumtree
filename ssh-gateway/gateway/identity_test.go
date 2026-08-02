@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 func TestAppRelativeIdentity(t *testing.T) {

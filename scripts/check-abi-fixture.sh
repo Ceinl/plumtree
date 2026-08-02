@@ -2,7 +2,7 @@
 set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-fixture=${ABI_FIXTURE:-$workspace_root/runner/testdata/compat/abi-v4-counter.wasm.gz}
+fixture=${ABI_FIXTURE:-$workspace_root/internal/runner/testdata/compat/abi-v4-counter.wasm.gz}
 want_size=3350824
 want_sha256=b6c898405cc3526b2b6f0395ada7af5d2ea7344987c822778360938acdd3b482
 

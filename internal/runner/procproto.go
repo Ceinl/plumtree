@@ -2,9 +2,10 @@ package runner
 
 import (
 	"encoding/binary"
-	"errors"
 	"io"
 	"time"
+
+	"github.com/Ceinl/plumtree/internal/protocol"
 )
 
 // Cross-process runner protocol. The gateway (parent) spawns a worker process
@@ -22,78 +23,43 @@ import (
 //
 // All multi-byte integers are little-endian.
 
-type op byte
+type op = protocol.Op
 
 const (
-	opStart       op = 1 // parent -> worker: limits + appType + wasm
-	opResp        op = 2 // parent -> worker: reply to the previous request
-	opRecv        op = 3 // worker -> parent: next input event
-	opPresent     op = 4 // worker -> parent: a rendered frame
-	opKVGet       op = 5
-	opKVSet       op = 6
-	opKVDel       op = 7
-	opBusSub      op = 8
-	opBusPub      op = 9
-	opAuth        op = 10
-	opEnv         op = 11
-	opFetch       op = 12
-	opDone        op = 13 // worker -> parent: session finished (err + logs)
-	opOutput      op = 14 // worker -> parent: filtered CLI stdout/stderr bytes
-	opKVList      op = 15
-	opKVCAS       op = 16
-	opExec        op = 17
-	opTimerStart  op = 18
-	opTimerCancel op = 19
+	opStart       = protocol.OpStart
+	opResp        = protocol.OpResp
+	opRecv        = protocol.OpRecv
+	opPresent     = protocol.OpPresent
+	opKVGet       = protocol.OpKVGet
+	opKVSet       = protocol.OpKVSet
+	opKVDel       = protocol.OpKVDel
+	opBusSub      = protocol.OpBusSub
+	opBusPub      = protocol.OpBusPub
+	opAuth        = protocol.OpAuth
+	opEnv         = protocol.OpEnv
+	opFetch       = protocol.OpFetch
+	opDone        = protocol.OpDone
+	opOutput      = protocol.OpOutput
+	opKVList      = protocol.OpKVList
+	opKVCAS       = protocol.OpKVCAS
+	opExec        = protocol.OpExec
+	opTimerStart  = protocol.OpTimerStart
+	opTimerCancel = protocol.OpTimerCancel
+	maxFrame      = protocol.MaxFrame
 )
 
-// maxFrame bounds a single protocol message, guarding against a corrupt length.
-const maxFrame = 64 << 20 // 64 MiB (a WASM module fits; frames are far smaller)
+var errProtocol = protocol.ErrProtocol
 
-var errProtocol = errors.New("runner: protocol error")
-
-// writeMsg writes one framed message: [op][u32 len][payload].
 func writeMsg(w io.Writer, o op, payload []byte) error {
-	if len(payload) > maxFrame {
-		return errProtocol
-	}
-	var hdr [5]byte
-	hdr[0] = byte(o)
-	binary.LittleEndian.PutUint32(hdr[1:], uint32(len(payload)))
-	if _, err := w.Write(hdr[:]); err != nil {
-		return err
-	}
-	if len(payload) > 0 {
-		if _, err := w.Write(payload); err != nil {
-			return err
-		}
-	}
-	return nil
+	return protocol.Write(w, o, payload)
 }
 
-// readMsg reads one framed message.
 func readMsg(r io.Reader) (op, []byte, error) {
-	return readMsgBounded(r, func(op) uint32 { return maxFrame })
+	return protocol.Read(r)
 }
 
-// readMsgBounded rejects an operation-specific oversized message before
-// allocating its payload. The gateway uses this for worker-originated traffic:
-// a compromised worker is untrusted even though a normal guest can only emit
-// protocol messages through size-checked host functions.
 func readMsgBounded(r io.Reader, maxFor func(op) uint32) (op, []byte, error) {
-	var hdr [5]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return 0, nil, err
-	}
-	o := op(hdr[0])
-	n := binary.LittleEndian.Uint32(hdr[1:])
-	if n > maxFrame || n > maxFor(o) {
-		return 0, nil, errProtocol
-	}
-	payload := make([]byte, n)
-	if _, err := io.ReadFull(r, payload); err != nil {
-		return 0, nil, err
-	}
-	return o, payload, nil
+	return protocol.ReadBounded(r, maxFor)
 }
 
 // Capability-presence bits in the start payload. The parent sets a bit for each

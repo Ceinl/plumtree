@@ -1,4 +1,9 @@
-# Plumtree Runner
+# Plumtree Runner Entry Points
+
+The runner implementation now lives under `internal/runner` in the root
+product module. This directory retains the existing broker and worker command
+paths as temporary workspace entrypoints while the remaining product modules
+move under the root module.
 
 Isolated service that runs deployed WASM apps per session.
 

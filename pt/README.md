@@ -72,7 +72,7 @@ Resource limits apply in all modes: a linear-memory page cap (`--mem-pages`) and
 a per-frame wall-clock deadline (`--frame-timeout`) that terminates a runaway
 guest.
 
-The local sandbox lives in `github.com/Ceinl/plumtree/runner` (the wazero host + renderer)
+The local sandbox lives in `github.com/Ceinl/plumtree/internal/runner` (the wazero host + renderer)
 and `internal/sshdev` (the local single-app SSH server); `internal/scaffold`
 generates apps.
 

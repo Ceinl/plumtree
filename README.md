@@ -227,15 +227,18 @@ tenants, or from the operator.
 
 ## Repository layout
 
-A multi-module Go workspace (`go.work`), split by product boundary:
+A multi-module Go workspace (`go.work`) with the staged root product module:
 
 | Path             | Module                                    | Purpose                                                        |
 |------------------|-------------------------------------------|---------------------------------------------------------------|
+| `./`             | `github.com/Ceinl/plumtree`               | Root product module and staged internal ownership boundaries.  |
 | `sdk/`           | `github.com/Ceinl/plumtree/sdk`           | Author-facing Go SDK and the versioned WASM ABI wrapper.       |
 | `pt/`            | `github.com/Ceinl/plumtree/pt`            | Author CLI: scaffold, dev, deploy, claim, logs, secrets.      |
 | `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Platform API: app/deploy metadata, auth, tokens, quotas.      |
 | `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
-| `runner/`        | `github.com/Ceinl/plumtree/runner`        | Isolated WASM session runner + host capability implementation. |
+| `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
+| `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded neutral worker framing. |
+| `runner/cmd/`    | `github.com/Ceinl/plumtree/runner/cmd/...` | Temporary broker/worker command entrypoints.                  |
 | `ssh-gateway/`   | `github.com/Ceinl/plumtree/ssh-gateway`   | SSH front end mapping connections to deployed app sessions.    |
 
 ## Status
