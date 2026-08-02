@@ -3,11 +3,25 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"github.com/Ceinl/plumtree/sdk/cli"
 	"github.com/Ceinl/plumtree/sdk/internal/tui/keyboard"
 )
+
+func runCLIIfRequested(runtime *Runtime) bool {
+	command, attached := runtime.Commands()
+	if !attached || len(os.Args) <= 1 {
+		return false
+	}
+	execution := cli.Execute(context.Background(), command, os.Args[1:], cli.Streams{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+	if execution.ExitCode != 0 {
+		os.Exit(execution.ExitCode)
+	}
+	return true
+}
 
 func runPlatform(runtime *Runtime) {
 	if runtime.stopped {
