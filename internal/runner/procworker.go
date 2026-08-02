@@ -63,7 +63,10 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	logs := &boundedBuffer{max: maxSessionLog}
 	var runErr error
 	if cli {
-		runErr = RunCLI(context.Background(), wasm, lim, caps, args, proxyOutput{rpc})
+		runErr = RunCLIWithStreams(context.Background(), wasm, lim, caps, args, CLIStreams{
+			Stdout: proxyOutput{rpc: rpc, stderr: false},
+			Stderr: proxyOutput{rpc: rpc, stderr: true},
+		})
 	} else {
 		runErr = Run(context.Background(), wasm, lim, caps, &proxySource{rpc}, &proxySink{rpc}, logs)
 	}
@@ -141,13 +144,20 @@ func (t proxyTimers) Cancel(id uint32) bool {
 func (proxyTimers) Events() <-chan abi.Event { return nil }
 func (proxyTimers) Close()                   {}
 
-type proxyOutput struct{ rpc *workerRPC }
+type proxyOutput struct {
+	rpc    *workerRPC
+	stderr bool
+}
 
 func (w proxyOutput) Write(p []byte) (int, error) {
 	written := 0
 	for len(p) > 0 {
 		n := min(len(p), maxWorkerOutput)
-		if _, err := w.rpc.call(opOutput, p[:n]); err != nil {
+		opcode := opOutput
+		if w.stderr {
+			opcode = opOutputStderr
+		}
+		if _, err := w.rpc.call(opcode, p[:n]); err != nil {
 			return written, err
 		}
 		written += n
