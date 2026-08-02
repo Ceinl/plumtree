@@ -1,4 +1,8 @@
-# Plumtree SSH Gateway
+# Plumtree SSH Gateway Entry Point
+
+The gateway implementation now lives under `internal/gateway` in the root
+product module. This directory retains the temporary `cmd/ssh-gateway` caller
+while the remaining product modules move under root ownership.
 
 SSH server that lets users run deployed apps with plain `ssh`. It runs either
 embedded in the control plane (all-in-one) or as its own process/container
@@ -29,13 +33,10 @@ whitespace-separated guest arguments.
 
 ## Packages
 
-- `gateway` — the server, decoupled from the control plane behind the
-  `Backend` port. Embed it by setting `Server.Backend`.
-- `gatewayapi` — the HTTP wire contract (DTOs, route prefix, auth header,
-  error codes) shared by the control plane and the standalone client.
-- `httpbackend` — a `gateway.Backend` that calls the control plane's
-  operator-internal gateway API over HTTP.
-- `cmd/ssh-gateway` — the standalone binary.
+The root-owned packages are `internal/gateway`,
+`internal/gateway/controlclient`, `internal/protocol/gateway`, and
+`internal/protocol/exec`. The retained `cmd/ssh-gateway` path is only a
+temporary command caller.
 
 ## Running standalone
 

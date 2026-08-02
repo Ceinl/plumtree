@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
+	execprotocol "github.com/Ceinl/plumtree/internal/protocol/exec"
 	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/tui"
 	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
 	"github.com/Ceinl/plumtree/sdk/tui/terminal"
-	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -83,7 +83,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 					continue
 				}
 				var err error
-				args, err = gatewayapi.ParseExecCommand(payload.Command)
+				args, err = execprotocol.ParseExecCommand(payload.Command)
 				if err != nil {
 					req.Reply(true, nil)
 					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})

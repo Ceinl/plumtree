@@ -2,13 +2,14 @@
 .	github.com/Ceinl/plumtree
 .	github.com/Ceinl/plumtree/sdk
 .	github.com/tetratelabs/wazero
+.	golang.org/x/crypto
 .	golang.org/x/sys
+.	golang.org/x/term
 build-worker	github.com/Ceinl/plumtree/build-worker
 control-plane	github.com/Ceinl/plumtree/build-worker
 control-plane	github.com/Ceinl/plumtree/control-plane
 control-plane	github.com/Ceinl/plumtree
 control-plane	github.com/Ceinl/plumtree/sdk
-control-plane	github.com/Ceinl/plumtree/ssh-gateway
 control-plane	github.com/tetratelabs/wazero
 control-plane	golang.org/x/crypto
 control-plane	golang.org/x/sys
@@ -17,7 +18,6 @@ pt	github.com/Ceinl/plumtree/build-worker
 pt	github.com/Ceinl/plumtree/pt
 pt	github.com/Ceinl/plumtree
 pt	github.com/Ceinl/plumtree/sdk
-pt	github.com/Ceinl/plumtree/ssh-gateway
 pt	github.com/tetratelabs/wazero
 pt	golang.org/x/crypto
 pt	golang.org/x/sys
@@ -25,13 +25,6 @@ pt	golang.org/x/term
 sdk	github.com/Ceinl/plumtree/sdk
 sdk	golang.org/x/sys
 sdk	golang.org/x/term
-ssh-gateway	github.com/Ceinl/plumtree
-ssh-gateway	github.com/Ceinl/plumtree/sdk
-ssh-gateway	github.com/Ceinl/plumtree/ssh-gateway
-ssh-gateway	github.com/tetratelabs/wazero
-ssh-gateway	golang.org/x/crypto
-ssh-gateway	golang.org/x/sys
-ssh-gateway	golang.org/x/term
 _devtest/goodbye-cli	github.com/Ceinl/plumtree/sdk
 _devtest/goodbye-cli	golang.org/x/sys
 _devtest/goodbye-cli	golang.org/x/term

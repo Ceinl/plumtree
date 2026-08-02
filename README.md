@@ -237,9 +237,11 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 | `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Platform API: app/deploy metadata, auth, tokens, quotas.      |
 | `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
 | `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
-| `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded neutral worker framing. |
+| `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | SSH gateway, admission, sessions, rendering, and capabilities. |
+| `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, gateway, and exec contracts. |
+| `internal/server/gatewayrole/` | `github.com/Ceinl/plumtree/internal/server/gatewayrole` | Standalone gateway role assembly. |
 | `runner/cmd/`    | `github.com/Ceinl/plumtree/runner/cmd/...` | Temporary broker/worker command entrypoints.                  |
-| `ssh-gateway/`   | `github.com/Ceinl/plumtree/ssh-gateway`   | SSH front end mapping connections to deployed app sessions.    |
+| `ssh-gateway/cmd/` | `github.com/Ceinl/plumtree/ssh-gateway/cmd/...` | Temporary legacy gateway command caller. |
 
 ## Status
 

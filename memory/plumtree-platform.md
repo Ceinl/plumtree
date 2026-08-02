@@ -9,7 +9,7 @@ metadata:
 that hosts Go TUI/CLI apps compiled to WASM and streamed over SSH — "Lakebed for
 the terminal." Modules: `sdk`, `pt` (author CLI), root `internal/runner`
 (wazero session runner + host ABI), `control-plane`, `build-worker`,
-`ssh-gateway` (skeleton). Architecture, subrepo map, and status are all now
+root `internal/gateway` (SSH front end and control client). Architecture, subrepo map, and status are all now
 consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
 `REPOS.md` were folded into it and deleted 2026-06-27). Now a single top-level git
 repo (monorepo) at `/Users/c/code/plumtree`; `_devtest/` and `sdk/plums` are
