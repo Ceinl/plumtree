@@ -1,6 +1,6 @@
 package layout
 
-import "github.com/Ceinl/plumtree/tui-runtime/screen"
+import "github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 
 type Styler interface {
 	GetStyle() Style

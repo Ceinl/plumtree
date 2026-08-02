@@ -1,9 +1,13 @@
 package keyboard
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func parseEvents(input []byte) []Event {
@@ -205,4 +209,63 @@ func TestReadInputBytesClosesOnEOF(t *testing.T) {
 	if b, ok := <-bytes; ok {
 		t.Fatalf("expected closed input channel, got byte %q", b)
 	}
+}
+
+func TestReadInputBytesCancellationClosesReader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := &blockingReader{closed: make(chan struct{})}
+	bytes := readInputBytes(ctx, r)
+	cancel()
+
+	select {
+	case _, ok := <-bytes:
+		if ok {
+			t.Fatal("input channel produced a byte after cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("input channel did not close after cancellation")
+	}
+}
+
+func TestParseOversizedCSIIsBounded(t *testing.T) {
+	input := append([]byte{byteEscape, byteBracket}, bytes.Repeat([]byte{'0'}, maxCSIParameterBytes+1)...)
+	events := parseEvents(input)
+	if len(events) == 0 || events[0].Type != KeyUnknown {
+		t.Fatalf("oversized CSI events = %#v, want first event KeyUnknown", events)
+	}
+}
+
+func TestParseRepeatedEscapeIsBounded(t *testing.T) {
+	input := append(bytes.Repeat([]byte{byteEscape}, maxEscapeDepth+1), 'a')
+	events := parseEvents(input)
+	if len(events) == 0 || events[0].Type != KeyUnknown {
+		t.Fatalf("repeated escape events = %#v, want first event KeyUnknown", events)
+	}
+}
+
+func TestBracketedPasteIsBounded(t *testing.T) {
+	input := append([]byte("\x1b[200~"), bytes.Repeat([]byte{'x'}, maxBracketedPasteBytes+1)...)
+	events := parseEvents(input)
+	if len(events) == 0 {
+		t.Fatal("expected bounded paste event")
+	}
+	if events[0].Type != KeyPaste || len(events[0].Text) != maxBracketedPasteBytes {
+		t.Fatalf("bounded paste = type %v, length %d; want KeyPaste length %d", events[0].Type, len(events[0].Text), maxBracketedPasteBytes)
+	}
+}
+
+type blockingReader struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (r *blockingReader) Read([]byte) (int, error) {
+	<-r.closed
+	return 0, io.EOF
+}
+
+func (r *blockingReader) Close() error {
+	r.once.Do(func() { close(r.closed) })
+	return nil
 }

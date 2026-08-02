@@ -30,7 +30,6 @@ workspace_modules=(
   runner
   sdk
   ssh-gateway
-  tui-runtime
   _devtest/goodbye-cli
   _devtest/goodbye-tui
   examples/agentboard
@@ -43,6 +42,11 @@ for module_dir in "${workspace_modules[@]}"; do
   echo "==> $check $module_dir"
   (
     cd "$workspace_root/$module_dir"
+    if [[ "$module_dir" == sdk ]]; then
+      # The public SDK is an independent release domain. Do not let go.work
+      # conceal a dependency on another repository module.
+      export GOWORK=off
+    fi
     if [[ "$check" == race && "$module_dir" == runner ]]; then
       # The runner's normal suite contains deliberate 150 ms wall-clock
       # cancellation budgets around Wazero. Race instrumentation slows those

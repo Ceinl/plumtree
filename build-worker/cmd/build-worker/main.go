@@ -33,7 +33,7 @@ func main() {
 	goBin := flag.String("go", env("PLUMTREE_BUILD_GO", "go"), "go toolchain binary")
 	goProxy := flag.String("goproxy", env("GOPROXY_BUILD", "off"), "GOPROXY for builds; 'off' means no network")
 	workRoot := flag.String("work-root", env("PLUMTREE_BUILD_WORK_ROOT", ""), "parent dir for build sandboxes; empty uses the OS temp dir")
-	workspace := flag.String("workspace-modules", env("PLUMTREE_BUILD_WORKSPACE", ""), "comma-separated local module dirs (e.g. a baked-in sdk and tui-runtime) tied into each build workspace so the unpublished SDK resolves without a registry")
+	workspace := flag.String("workspace-modules", env("PLUMTREE_BUILD_WORKSPACE", ""), "comma-separated local module dirs (e.g. a baked-in sdk) tied into each build workspace so the unpublished SDK resolves without a registry")
 	timeout := flag.Duration("timeout", durEnv("PLUMTREE_BUILD_TIMEOUT", 90*time.Second), "per-build wall-clock limit")
 	maxSource := flag.Int64("max-source-bytes", int64Env("PLUMTREE_MAX_SOURCE_BYTES", 8<<20), "max uploaded source archive size")
 	maxMemory := flag.Int64("max-memory-bytes", int64Env("PLUMTREE_MAX_MEMORY_BYTES", 2<<30), "address-space limit for the build process (Linux); negative disables")

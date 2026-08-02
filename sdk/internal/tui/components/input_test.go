@@ -3,8 +3,8 @@ package components
 import (
 	"testing"
 
-	"github.com/Ceinl/plumtree/tui-runtime/layout"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/layout"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
 
 func TestDivRoutesNestedButtonClick(t *testing.T) {

@@ -22,7 +22,7 @@ Design decisions (see `dmux/SPEC.md`, `dmux/PLAN.md`):
   (`PublicKeyCallback`). SSH **channels** multiplex control + per-session data.
 - Live presence/status: reuse `runner.Bus`/`MemBus` pub/sub (no polling); the
   client `Source` selects on input + bus, like plumtree's `runner.TTYSource`.
-- Client TUI (herdr UI reference): `tui-runtime` (flexbox `layout`, `components`
+- Client TUI (herdr UI reference): `sdk/tui` (flexbox `layout`, `components`
   Div/Text/Button, diff `screen`, `keyboard` incl. **mouse**). Layout = sidebar
   list of devices/sessions with live status + main attached-terminal pane +
   workspaces/tabs.

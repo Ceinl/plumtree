@@ -32,8 +32,8 @@ Decisions and changes made:
 
 Update (2026-07-01): all shared operator tokens (dev deploy, gateway API, build
 worker) now use `crypto/subtle.ConstantTimeCompare`. Production packaging landed
-in `deploy/`: the build-worker container runs with **zero network** — SDK +
-tui-runtime baked in as workspace modules (`-workspace-modules` flag on
+in `deploy/`: the build-worker container runs with **zero network** — the SDK
+baked in as a workspace module (`-workspace-modules` flag on
 cmd/build-worker), transitive deps from a baked-in `file://` module proxy,
 internal-only compose network, read-only rootfs, tmpfs sandboxes. Verified by
 building a scaffolded app inside the no-network container.

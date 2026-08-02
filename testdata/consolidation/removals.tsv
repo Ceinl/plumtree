@@ -4,11 +4,11 @@ path	standalone-control-plane	73	79	^control-plane/
 path	standalone-pt	73	46	^pt/
 path	standalone-runner	73	52	^runner/
 path	standalone-ssh-gateway	73	30	^ssh-gateway/
-path	standalone-tui-runtime	53	29	^tui-runtime/
+path	standalone-tui-runtime	53	0	^tui-runtime/
 path	legacy-devtest	62	12	^_devtest/
-text	tui-runtime-import	53	62	github.com/Ceinl/plumtree/tui-runtime
-text	legacy-product-module-imports	54-57	106	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
-text	local-module-replaces	54	16	=>[[:space:]]+(\./|\.\./|/)
+text	tui-runtime-import	53	0	github.com/Ceinl/plumtree/tui-runtime
+text	legacy-product-module-imports	54-57	108	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
+text	local-module-replaces	53	12	=>[[:space:]]+(\./|\.\./|/)
 text	build-worker-surface	73	52	build-worker
 text	shoo-surface	73	193	[Ss][Hh][Oo][Oo]
 text	browser-dashboard-surface	73	109	[Bb]rowser|[Dd]ashboard
@@ -16,6 +16,6 @@ text	claim-flow	73	516	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/
 text	source-build-flow	73	134	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
 text	legacy-state-store	73	234	[Ss]napshot|[Ee]nvelope
 text	shared-and-ci-tokens	73	155	CIToken|CI token|dev token|PLUMTREE_DEV_TOKEN|X-Plumtree-Dev-Token
-text	legacy-server-binaries	73	274	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
+text	legacy-server-binaries	73	277	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
 text	legacy-action-protocol	62	17	ActionArgPrefix|PLUMTREE_ACTION|action protocol
 text	legacy-devtest-references	62	7	_devtest/

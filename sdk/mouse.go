@@ -1,6 +1,6 @@
 package sdk
 
-import "github.com/Ceinl/plumtree/tui-runtime/layout"
+import "github.com/Ceinl/plumtree/sdk/internal/tui/layout"
 
 type mouseDispatcher struct {
 	captured layout.MouseHandler

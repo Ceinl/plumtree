@@ -152,7 +152,7 @@ externally held KEK must be treated as unrecoverable by design.
 
 ## Updating the SDK
 
-The build-worker image bakes `sdk/` and `tui-runtime/` at build time — rebuild
+The build-worker image bakes `sdk/` at build time — rebuild
 it (`docker compose build build-worker`) whenever they change, or deployed
 authors compile against a stale SDK.
 

@@ -6,14 +6,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/Ceinl/plumtree/tui-runtime/app"
-	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
-	"github.com/Ceinl/plumtree/tui-runtime/layout"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/app"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/keyboard"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/layout"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
 
 // RunTUI runs a TUI model against the local terminal. This native build drives
-// the plumtree-tui runtime loop directly (raw mode, live input, resize), so
+// the SDK's private TUI runtime loop directly (raw mode, live input, resize), so
 // authors can `go run .` their app. The hosted build (GOOS=wasip1) replaces
 // this with the WASM-guest ABI loop; app code is unchanged.
 func RunTUI(m Model, _ Meta) {
@@ -29,17 +29,18 @@ func RunTUI(m Model, _ Meta) {
 		}
 		return quitRequested
 	}
+	a.ShouldQuit = func() bool { return quitRequested }
 	a.OnResize = func(w, h int) { m.Update(ResizeMsg{W: w, H: h}) }
 	// Drain process-local bus messages on a tick so a native publish reaches
 	// Model.Update and triggers a repaint, mirroring the hosted push delivery.
 	a.TickInterval = 50 * time.Millisecond
 	a.OnTick = func() (render bool) {
 		render = drainBus(m)
-		return render || quitRequested
+		return render
 	}
 	a.Wake = nativeCommands.wake
 	a.OnWake = func() bool {
-		return drainCommands(m) || quitRequested
+		return drainCommands(m)
 	}
 	_ = a.Run(context.Background())
 }

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
+	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
 )
 
 func TestMapMouseInput(t *testing.T) {

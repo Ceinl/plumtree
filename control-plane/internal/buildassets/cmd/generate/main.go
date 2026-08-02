@@ -43,7 +43,7 @@ func generate(repo, output string) error {
 	defer os.RemoveAll(tmp)
 
 	moduleCache := filepath.Join(tmp, "modcache")
-	for _, module := range []string{"sdk", "tui-runtime"} {
+	for _, module := range []string{"sdk"} {
 		cmd := exec.Command("go", "mod", "download", "all")
 		cmd.Dir = filepath.Join(repo, module)
 		cmd.Env = append(os.Environ(), "GOWORK=off", "GOMODCACHE="+moduleCache)
@@ -54,7 +54,7 @@ func generate(repo, output string) error {
 
 	type source struct{ disk, archive string }
 	var sources []source
-	for _, module := range []string{"sdk", "tui-runtime"} {
+	for _, module := range []string{"sdk"} {
 		moduleRoot := filepath.Join(repo, module)
 		err := filepath.WalkDir(moduleRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {

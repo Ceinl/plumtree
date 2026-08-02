@@ -28,7 +28,11 @@ func buildCounter(t *testing.T) []byte {
 	out := filepath.Join(t.TempDir(), "counter.wasm")
 	cmd := exec.Command("go", "build", "-o", out, ".")
 	cmd.Dir = "../../../sdk/examples/counter"
-	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm", "GOWORK="+filepath.Join(root, "go.work"))
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("wasm build failed (%v):\n%s", err, b)
 	}
@@ -44,7 +48,11 @@ func buildAgentboard(t *testing.T) []byte {
 	out := filepath.Join(t.TempDir(), "agentboard.wasm")
 	cmd := exec.Command("go", "build", "-o", out, ".")
 	cmd.Dir = "../../../examples/agentboard/app"
-	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm", "GOWORK="+filepath.Join(root, "go.work"))
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("wasm build failed (%v):\n%s", err, b)
 	}

@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/tui"
 )
 
 // sanitizeRune enforces the connection-path defense: the guest returns runes,
@@ -55,7 +55,7 @@ func (s TextSink) Present(f abi.Frame) {
 // never passed through from the guest. A frame-rate cap coalesces repaints.
 type TTYSink struct {
 	mu    sync.Mutex
-	scr   *screen.Screen
+	scr   *tui.Screen
 	w, h  int
 	thr   throttle
 	dirty bool
@@ -71,9 +71,9 @@ func NewTTYSink(w, h, maxFPS int) *TTYSink {
 // NewTTYSinkWriter is like NewTTYSink but flushes to out (e.g. an SSH channel).
 // A nil out renders to stdout.
 func NewTTYSinkWriter(w, h, maxFPS int, out io.Writer) *TTYSink {
-	scr := screen.NewScreen(w, h)
+	scr := tui.NewScreen(w, h)
 	if out != nil {
-		scr = screen.NewScreenWithOutput(w, h, out)
+		scr = tui.NewScreenWithOutput(w, h, out)
 	}
 	return &TTYSink{scr: scr, w: w, h: h, thr: newThrottle(maxFPS)}
 }
@@ -121,14 +121,14 @@ func (s *TTYSink) Present(f abi.Frame) {
 
 func fgSGR(c abi.RGB) string {
 	if c == (abi.RGB{}) {
-		return screen.DefaultFg
+		return tui.DefaultFg
 	}
 	return abi.FgSGR(c)
 }
 
 func bgSGR(c abi.RGB) string {
 	if c == (abi.RGB{}) {
-		return screen.DefaultBg
+		return tui.DefaultBg
 	}
 	return abi.BgSGR(c)
 }

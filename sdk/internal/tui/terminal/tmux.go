@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,7 @@ import (
 // restore. The tradeoff is purely the scope of the toggle; session scope is
 // sufficient because the panes this app runs in belong to the current session.
 type TmuxKeys struct {
+	mu       sync.Mutex
 	active   bool
 	previous string
 }
@@ -60,7 +62,12 @@ func EnableTmuxExtendedKeys() *TmuxKeys {
 // Restore reverts the extended-keys option to its prior value if this handle
 // changed it.
 func (k *TmuxKeys) Restore() {
-	if k == nil || !k.active {
+	if k == nil {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if !k.active {
 		return
 	}
 	// Idempotent: only restore once even if called from both a signal handler

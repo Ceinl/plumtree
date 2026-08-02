@@ -52,6 +52,9 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 | `github.com/Ceinl/plumtree/sdk/tui/components` | Default widgets: `Div`, `Text`, `Button`. |
 | `github.com/Ceinl/plumtree/sdk/abi` | The versioned WASM wire format (events in, structured frames out). Canonical home of the ABI. |
 
+The SDK module is self-contained. Its TUI implementation is private under
+`internal/tui`; app code should use only the public packages listed above.
+
 ## How it runs
 
 - **Native** (`!wasip1`): `RunTUI` drives the runtime's terminal loop directly.

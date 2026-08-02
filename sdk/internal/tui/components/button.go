@@ -1,8 +1,8 @@
 package components
 
 import (
-	"github.com/Ceinl/plumtree/tui-runtime/layout"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/layout"
+	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
 
 // Button is a focusable, clickable widget that fills its box and draws a

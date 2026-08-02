@@ -7,7 +7,7 @@ metadata:
 
 `/Users/c/code/plumtree` is a multi-module Go workspace (go.work) for a platform
 that hosts Go TUI/CLI apps compiled to WASM and streamed over SSH — "Lakebed for
-the terminal." Subrepos: `tui-runtime`, `sdk`, `pt` (author CLI), `runner`
+the terminal." Modules: `sdk`, `pt` (author CLI), `runner`
 (wazero session runner + host ABI), `control-plane`, `build-worker`,
 `ssh-gateway` (skeleton). Architecture, subrepo map, and status are all now
 consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
@@ -37,8 +37,8 @@ ownerless tightest sandbox). Module paths were renamed to
 SSH gateway into its own process (still a skeleton; control plane embeds it),
 moderation at scale, `ctx.DB`. See [[plumtree-next-capabilities]].
 
-Note: `sdk/plums` is an independent checkout (github.com/Ceinl/plums, the repo
-tui-runtime was extracted from), with its own .git, untracked/gitignored in sdk
+Note: `sdk/plums` is an independent checkout (github.com/Ceinl/plums, the
+original TUI source repository), with its own .git, untracked/gitignored in sdk
 — not part of sdk's build. As of 2026-06-25 its AI-agent app (cmd/api/app/core/
 debuglog/keyboard) was deleted; only the TUI component library under
 `internal/ui` (~5.3k LOC) remains as a reusable TUI base.
