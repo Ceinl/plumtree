@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/control"
 )
 
 // handleDevSecrets serves /api/dev/deploy/{deployID}/secrets[/{key}]. It is the

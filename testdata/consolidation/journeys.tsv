@@ -9,9 +9,9 @@ timers	sdk/examples/timer	internal/runner/procrunner_test.go	TestProcessRunnerTi
 actions-and-capabilities	examples/agentboard	internal/runner/procrunner_test.go	TestProcessRunnerActionCapabilityParity
 author-deploy	pt	pt/deploy_test.go	TestDeploySelectsConfiguredServerAlias
 ssh-leaf-session	internal/gateway	internal/gateway/session_test.go	TestRunSessionProductionCLIUsesWorker
-secret-management	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_secrets_test.go	TestDevSecretsLifecycle
-egress-management	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_egress_test.go	TestDevEgressLifecycle
+secret-management	internal/httpapi	internal/httpapi/dev_secrets_test.go	TestDevSecretsLifecycle
+egress-management	internal/httpapi	internal/httpapi/dev_egress_test.go	TestDevEgressLifecycle
 terminal-safe-frames	internal/runner	internal/runner/devhost_test.go	TestTextSinkRendersGrid
 terminal-safe-cli	pt	pt/terminal_safe_test.go	TestTerminalSafeTextStripsTerminalControls
 worker-authentication	internal/runner	internal/runner/procrunner_test.go	TestRemoteProcessRunnerRejectsWrongToken
-credential-redaction	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_ping_test.go	TestDevPingLogsLifecycleWithoutCredentials
+credential-redaction	internal/httpapi	internal/httpapi/dev_ping_test.go	TestDevPingLogsLifecycleWithoutCredentials

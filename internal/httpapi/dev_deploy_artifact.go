@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
-	buildworker "github.com/Ceinl/plumtree/build-worker"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/control"
+	buildprotocol "github.com/Ceinl/plumtree/internal/protocol/build"
 )
 
 var errBuildQueueFull = errors.New("build queue is full")
@@ -17,7 +17,7 @@ var errBuildQueueFull = errors.New("build queue is full")
 // request carries source and a build backend is configured, it compiles the
 // source in the sandbox and derives the artifact from the build output, never
 // trusting client-supplied WASM.
-func (s *Server) buildDeployArtifact(ctx context.Context, req devDeployRequest) (control.ArtifactInput, []byte, *buildworker.Failure, error) {
+func (s *Server) buildDeployArtifact(ctx context.Context, req devDeployRequest) (control.ArtifactInput, []byte, *buildprotocol.Failure, error) {
 	metadata := cloneMetadata(req.BuildMetadata)
 	if req.AppType != "" {
 		metadata["app_type"] = req.AppType
@@ -35,7 +35,7 @@ func (s *Server) buildDeployArtifact(ctx context.Context, req devDeployRequest) 
 		if err := s.acquireBuildSlot(ctx); err != nil {
 			return control.ArtifactInput{}, nil, nil, err
 		}
-		res, err := s.build.Build(ctx, buildworker.Request{Source: req.Source, ABIVersion: req.ABIVersion})
+		res, err := s.build.Build(ctx, buildprotocol.Request{Source: req.Source, ABIVersion: req.ABIVersion})
 		s.releaseBuildSlot()
 		if err != nil {
 			return control.ArtifactInput{}, nil, nil, err
@@ -126,21 +126,21 @@ func (s *Server) validateDevDeployRequest(req devDeployRequest) error {
 		return fmt.Errorf("%w: artifact size cannot be negative", control.ErrInvalid)
 	}
 	if len(req.WASM) > 0 {
-		if int64(len(req.WASM)) != req.ArtifactSizeBytes || buildworker.SourceDigest(req.WASM) != req.ArtifactDigest {
+		if int64(len(req.WASM)) != req.ArtifactSizeBytes || buildprotocol.SourceDigest(req.WASM) != req.ArtifactDigest {
 			return fmt.Errorf("%w: wasm bytes do not match artifact size/digest", control.ErrInvalid)
 		}
 	}
 	return nil
 }
 
-func buildFailure(failure *buildworker.Failure) *buildworker.Failure {
+func buildFailure(failure *buildprotocol.Failure) *buildprotocol.Failure {
 	if failure != nil {
 		return failure
 	}
-	return &buildworker.Failure{Stage: buildworker.StageWorker, Message: "build failed"}
+	return &buildprotocol.Failure{Stage: buildprotocol.StageWorker, Message: "build failed"}
 }
 
-func writeBuildFailure(w http.ResponseWriter, f *buildworker.Failure) {
+func writeBuildFailure(w http.ResponseWriter, f *buildprotocol.Failure) {
 	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 		"error":   "build failed",
 		"stage":   f.Stage,

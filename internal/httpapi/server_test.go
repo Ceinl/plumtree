@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/auth/shoo"
+	"github.com/Ceinl/plumtree/internal/control"
 )
 
 type fakeVerifier struct {
