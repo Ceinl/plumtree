@@ -73,8 +73,9 @@ a per-frame wall-clock deadline (`--frame-timeout`) that terminates a runaway
 guest.
 
 The local sandbox lives in `github.com/Ceinl/plumtree/internal/runner` (the wazero host + renderer)
-and `internal/sshdev` (the local single-app SSH server); `internal/scaffold`
-generates apps.
+and `internal/cli/sshdev` (the local single-app SSH server); `internal/cli/scaffold`
+generates apps. The implementation is root-owned; this directory is a temporary
+legacy caller kept for compatibility.
 
 ## Local dashboard deploy
 
@@ -82,8 +83,8 @@ Start the control plane. It listens on loopback and creates a persistent local
 development token automatically:
 
 ```bash
-cd /Users/c/code/plumtree/control-plane
-go run ./cmd/control-plane
+cd /Users/c/code/plumtree
+go run ./cmd/plumtree
 ```
 
 When `pt` runs as the same user on that machine, deploy immediately:

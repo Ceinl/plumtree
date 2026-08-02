@@ -1,5 +1,4 @@
-// Command control-plane is the temporary legacy caller for the root-owned
-// control server role.
+// Command plumtree is the staged root server entrypoint.
 package main
 
 import (
