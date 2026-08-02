@@ -15,25 +15,26 @@ import (
 type Op byte
 
 const (
-	OpStart       Op = 1 // parent -> worker: limits + appType + wasm
-	OpResp        Op = 2 // parent -> worker: reply to the previous request
-	OpRecv        Op = 3 // worker -> parent: next input event
-	OpPresent     Op = 4 // worker -> parent: a rendered frame
-	OpKVGet       Op = 5
-	OpKVSet       Op = 6
-	OpKVDel       Op = 7
-	OpBusSub      Op = 8
-	OpBusPub      Op = 9
-	OpAuth        Op = 10
-	OpEnv         Op = 11
-	OpFetch       Op = 12
-	OpDone        Op = 13 // worker -> parent: session finished (err + logs)
-	OpOutput      Op = 14
-	OpKVList      Op = 15
-	OpKVCAS       Op = 16
-	OpExec        Op = 17
-	OpTimerStart  Op = 18
-	OpTimerCancel Op = 19
+	OpStart        Op = 1 // parent -> worker: limits + appType + wasm
+	OpResp         Op = 2 // parent -> worker: reply to the previous request
+	OpRecv         Op = 3 // worker -> parent: next input event
+	OpPresent      Op = 4 // worker -> parent: a rendered frame
+	OpKVGet        Op = 5
+	OpKVSet        Op = 6
+	OpKVDel        Op = 7
+	OpBusSub       Op = 8
+	OpBusPub       Op = 9
+	OpAuth         Op = 10
+	OpEnv          Op = 11
+	OpFetch        Op = 12
+	OpDone         Op = 13 // worker -> parent: session finished (err + logs)
+	OpOutput       Op = 14
+	OpKVList       Op = 15
+	OpKVCAS        Op = 16
+	OpExec         Op = 17
+	OpTimerStart   Op = 18
+	OpTimerCancel  Op = 19
+	OpOutputStderr Op = 20 // worker -> parent: stderr output
 )
 
 // MaxFrame bounds a single protocol message before any payload allocation.
