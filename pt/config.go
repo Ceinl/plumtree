@@ -59,7 +59,7 @@ func readPTConfig() (ptConfig, error) {
 		return ptConfig{}, fmt.Errorf("pt config %q must be a regular file", path)
 	}
 	if err := validatePTConfigSecurity(path, info); err != nil {
-		return ptConfig{}, err
+		return ptConfig{}, fmt.Errorf("pt config %q: %w", path, err)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -169,6 +169,9 @@ func writePTConfig(cfg ptConfig) (string, error) {
 		return "", fmt.Errorf("replace pt config %q: %w", path, err)
 	}
 	if err := securePTConfigFile(path); err != nil {
+		if removeErr := os.Remove(path); removeErr != nil {
+			return "", fmt.Errorf("secure pt config %q: %w (remove failed: %v)", path, err, removeErr)
+		}
 		return "", fmt.Errorf("secure pt config %q: %w", path, err)
 	}
 	removeTemp = false

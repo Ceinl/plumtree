@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -36,8 +37,12 @@ func securePTConfigFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("inspect Windows ACL owner: %w", err)
 	}
-	if owner == nil || !owner.Equals(userSID) {
-		return fmt.Errorf("file is not owned by the current Windows user")
+	ownerAllowed, err := isWindowsPTConfigOwnerAllowed(owner, userSID)
+	if err != nil {
+		return fmt.Errorf("check Windows config owner %q: %w", path, err)
+	}
+	if !ownerAllowed {
+		return fmt.Errorf("Windows config %q is not owned by the current Windows user or an enabled group", path)
 	}
 
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
@@ -95,10 +100,14 @@ func verifyWindowsPTConfigSecurity(path string, userSID *windows.SID) error {
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil {
-		return fmt.Errorf("verify Windows ACL owner: %w", err)
+		return fmt.Errorf("verify Windows ACL owner %q: %w", path, err)
 	}
-	if owner == nil || !owner.Equals(userSID) {
-		return fmt.Errorf("verify Windows ACL: file is not owned by the current Windows user")
+	ownerAllowed, err := isWindowsPTConfigOwnerAllowed(owner, userSID)
+	if err != nil {
+		return fmt.Errorf("verify Windows ACL owner %q: %w", path, err)
+	}
+	if !ownerAllowed {
+		return fmt.Errorf("verify Windows ACL %q: file is not owned by the current Windows user or an enabled group", path)
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
@@ -118,12 +127,28 @@ func verifyWindowsPTConfigSecurity(path string, userSID *windows.SID) error {
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
 		return fmt.Errorf("verify Windows ACL entry: %w", err)
 	}
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Header.AceFlags != 0 || ace.Mask != windowsPTConfigAccess {
+	aceType := ace.Header.AceType
+	aceFlags := ace.Header.AceFlags
+	aceMask := ace.Mask
+	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+	aceSIDValid := aceSID.IsValid()
+	aceSIDMatches := aceSID.Equals(userSID)
+	runtime.KeepAlive(descriptor)
+	if aceType != windows.ACCESS_ALLOWED_ACE_TYPE || aceFlags != 0 || aceMask != windowsPTConfigAccess {
 		return fmt.Errorf("verify Windows ACL: access entry is not owner-only")
 	}
-	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if !aceSID.IsValid() || !aceSID.Equals(userSID) {
+	if !aceSIDValid || !aceSIDMatches {
 		return fmt.Errorf("verify Windows ACL: access entry is not for the current Windows user")
 	}
 	return nil
+}
+
+func isWindowsPTConfigOwnerAllowed(owner, userSID *windows.SID) (bool, error) {
+	if owner == nil {
+		return false, nil
+	}
+	if owner.Equals(userSID) {
+		return true, nil
+	}
+	return windows.GetCurrentProcessToken().IsMember(owner)
 }

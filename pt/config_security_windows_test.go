@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -58,6 +59,23 @@ func TestWindowsExistingConfigIsRepairedBeforeTokenUse(t *testing.T) {
 	assertWindowsPTConfigOwnerOnly(t, path)
 }
 
+func TestWindowsVerifyRejectsPermissiveACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pt.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeWindowsPTConfigWorldReadable(path); err != nil {
+		t.Fatal(err)
+	}
+	userSID, err := currentWindowsUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWindowsPTConfigSecurity(path, userSID); err == nil {
+		t.Fatal("verifyWindowsPTConfigSecurity accepted a world-readable config")
+	}
+}
+
 func assertWindowsPTConfigOwnerOnly(t *testing.T, path string) {
 	t.Helper()
 	userSID, err := currentWindowsUserSID()
@@ -72,8 +90,12 @@ func assertWindowsPTConfigOwnerOnly(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner == nil || !owner.Equals(userSID) {
-		t.Fatalf("config owner = %v, want current user %s", owner, userSID.String())
+	ownerAllowed, err := isWindowsPTConfigOwnerAllowed(owner, userSID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownerAllowed {
+		t.Fatalf("config owner = %v, want current user or an enabled group", owner)
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
@@ -96,16 +118,15 @@ func assertWindowsPTConfigOwnerOnly(t *testing.T, path string) {
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
 		t.Fatal(err)
 	}
+	aceType := ace.Header.AceType
+	aceFlags := ace.Header.AceFlags
+	aceMask := ace.Mask
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Header.AceFlags != 0 || ace.Mask != windowsPTConfigAccess || !aceSID.Equals(userSID) {
+	aceSIDValid := aceSID.IsValid()
+	aceSIDMatches := aceSID.Equals(userSID)
+	runtime.KeepAlive(descriptor)
+	if aceType != windows.ACCESS_ALLOWED_ACE_TYPE || aceFlags != 0 || aceMask != windowsPTConfigAccess || !aceSIDValid || !aceSIDMatches {
 		t.Fatalf("config ACL grants unexpected access: %s", descriptor.String())
-	}
-	worldSID, err := windows.CreateWellKnownSid(windows.WinWorldSid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if aceSID.Equals(worldSID) {
-		t.Fatalf("config ACL grants world access: %s", descriptor.String())
 	}
 }
 
