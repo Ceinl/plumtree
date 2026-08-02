@@ -52,17 +52,21 @@ func NewRemoteProcessRunner(endpoint, token string) *ProcessRunner {
 // the guest exits. It returns the same errors as the in-process Run (a guest
 // failure, ErrFrameDeadline surfaced by the worker, or ctx.Err()).
 func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, src Source, sink Sink, logs io.Writer) error {
-	return pr.run(ctx, wasm, lim, caps, false, nil, src, sink, nil, logs)
+	return pr.run(ctx, wasm, lim, caps, false, nil, src, sink, CLIStreams{}, logs)
 }
 
 // RunCLI spawns a worker for one non-interactive CLI invocation. Guest output
 // is filtered inside the worker and streamed back to out over the process
 // protocol; args become the guest's command-line arguments.
 func (pr *ProcessRunner) RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
-	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, out, nil)
+	return pr.RunCLIWithStreams(ctx, wasm, lim, caps, args, CLIStreams{Stdout: out, Stderr: out})
 }
 
-func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, out, logs io.Writer) error {
+func (pr *ProcessRunner) RunCLIWithStreams(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, streams CLIStreams) error {
+	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, streams, nil)
+}
+
+func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, streams CLIStreams, logs io.Writer) error {
 	if err := validateLimits(lim); err != nil {
 		return err
 	}
@@ -142,7 +146,7 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			}
 			return nil
 		}
-		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, out); err != nil {
+		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, streams); err != nil {
 			if callerCtx.Err() != nil {
 				return callerCtx.Err()
 			}
@@ -192,7 +196,7 @@ func maxWorkerPayload(o op) uint32 {
 		return 4
 	case opDone:
 		return 8 + maxWorkerError + abi.GoodbyeMaxLen + maxSessionLog
-	case opOutput:
+	case opOutput, opOutputStderr:
 		return maxWorkerOutput
 	default:
 		return 0
@@ -286,7 +290,7 @@ func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, erro
 }
 
 // serve handles one worker request and writes the opResp reply.
-func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber, out io.Writer) error {
+func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber, streams CLIStreams) error {
 	switch o {
 	case opRecv:
 		if src == nil {
@@ -459,7 +463,11 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		}
 		return writeMsg(w, opResp, []byte{result})
 
-	case opOutput:
+	case opOutput, opOutputStderr:
+		out := streams.Stdout
+		if o == opOutputStderr {
+			out = streams.Stderr
+		}
 		if out == nil || len(payload) > maxWorkerOutput {
 			return errProtocol
 		}
