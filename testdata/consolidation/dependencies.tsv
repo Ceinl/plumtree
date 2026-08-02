@@ -5,7 +5,6 @@ control-plane	github.com/Ceinl/plumtree/control-plane
 control-plane	github.com/Ceinl/plumtree/runner
 control-plane	github.com/Ceinl/plumtree/sdk
 control-plane	github.com/Ceinl/plumtree/ssh-gateway
-control-plane	github.com/Ceinl/plumtree/tui-runtime
 control-plane	github.com/tetratelabs/wazero
 control-plane	golang.org/x/crypto
 control-plane	golang.org/x/sys
@@ -15,14 +14,12 @@ pt	github.com/Ceinl/plumtree/pt
 pt	github.com/Ceinl/plumtree/runner
 pt	github.com/Ceinl/plumtree/sdk
 pt	github.com/Ceinl/plumtree/ssh-gateway
-pt	github.com/Ceinl/plumtree/tui-runtime
 pt	github.com/tetratelabs/wazero
 pt	golang.org/x/crypto
 pt	golang.org/x/sys
 pt	golang.org/x/term
 runner	github.com/Ceinl/plumtree/runner
 runner	github.com/Ceinl/plumtree/sdk
-runner	github.com/Ceinl/plumtree/tui-runtime
 runner	github.com/tetratelabs/wazero
 runner	golang.org/x/sys
 sdk	github.com/Ceinl/plumtree/sdk
@@ -31,14 +28,10 @@ sdk	golang.org/x/term
 ssh-gateway	github.com/Ceinl/plumtree/runner
 ssh-gateway	github.com/Ceinl/plumtree/sdk
 ssh-gateway	github.com/Ceinl/plumtree/ssh-gateway
-ssh-gateway	github.com/Ceinl/plumtree/tui-runtime
 ssh-gateway	github.com/tetratelabs/wazero
 ssh-gateway	golang.org/x/crypto
 ssh-gateway	golang.org/x/sys
 ssh-gateway	golang.org/x/term
-tui-runtime	github.com/Ceinl/plumtree/tui-runtime
-tui-runtime	golang.org/x/sys
-tui-runtime	golang.org/x/term
 _devtest/goodbye-cli	github.com/Ceinl/plumtree/sdk
 _devtest/goodbye-cli	golang.org/x/sys
 _devtest/goodbye-cli	golang.org/x/term

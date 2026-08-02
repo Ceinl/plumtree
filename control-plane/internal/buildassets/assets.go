@@ -1,5 +1,5 @@
-// Package buildassets provides the SDK and TUI runtime bundled into the
-// standalone control-plane binary for hermetic in-process builds.
+// Package buildassets provides the SDK bundled into the standalone
+// control-plane binary for hermetic in-process builds.
 package buildassets
 
 import (
@@ -48,7 +48,6 @@ func Extract() (*Bundle, error) {
 
 	modules := []string{
 		filepath.Join(root, "sdk"),
-		filepath.Join(root, "tui-runtime"),
 	}
 	for _, module := range modules {
 		if info, err := os.Stat(filepath.Join(module, "go.mod")); err != nil || info.IsDir() {

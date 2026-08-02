@@ -15,7 +15,7 @@ recreated from the baseline in the ordered issue series.
 
 | Current ownership | Retained use case | Planned change |
 | --- | --- | --- |
-| `sdk` and `tui-runtime` | Native and hosted interactive/finite Go leaves, capabilities, ABI v4 | Make the SDK self-contained in #53; select the redesigned SDK in #62 |
+| `sdk` | Native and hosted interactive/finite Go leaves, capabilities, ABI v4 | Select the redesigned SDK in #62 |
 | `runner` | In-process and isolated WASI execution with bounded explicit capabilities | Move neutral runner ownership in #54; implement the clean ABI in #61 |
 | `ssh-gateway` | Authenticated SSH leaf sessions and host-owned terminal rendering | Move gateway ownership in #55; replace transport and identity in #69 |
 | `control-plane` | App, artifact, session, secret, egress, identity, and persistence behavior | Move ownership in #56; select the replacement state/API at #73 |
@@ -43,9 +43,9 @@ are excluded from textual debt counts so describing a removal does not recreate
 that product surface.
 
 Known staging debt is deliberately recorded rather than fixed here. This
-includes the standalone `tui-runtime`, sibling-module replacements, old product
-module paths, source-build flow, Shoo/dashboard/claim surfaces, old state and
-token concepts, legacy server binaries, and the old action protocol.
+includes sibling-module replacements, old product module paths, source-build
+flow, Shoo/dashboard/claim surfaces, old state and token concepts, legacy server
+binaries, and the old action protocol.
 
 ## Frozen behavior and security floor
 

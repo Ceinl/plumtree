@@ -56,8 +56,8 @@ func buildBackend(url, token, devRoot string) (httpapi.BuildBackend, func() erro
 			return nil, nil, err
 		}
 		cfg.WorkspaceModules = mods
-		// The workspace provides the unpublished SDK/runtime; their transitive
-		// dependencies still resolve through the operator's proxy.
+		// The workspace provides the unpublished SDK; its transitive dependencies
+		// still resolve through the operator's proxy.
 		cfg.GoProxy = env("GOPROXY", "https://proxy.golang.org,direct")
 		return buildworker.NewBuilder(cfg), func() error { return nil }, nil
 	}
@@ -74,7 +74,7 @@ func buildBackend(url, token, devRoot string) (httpapi.BuildBackend, func() erro
 // workspaceModules validates the local development modules under devRoot.
 func workspaceModules(devRoot string) ([]string, error) {
 	var mods []string
-	for _, name := range []string{"sdk", "tui-runtime"} {
+	for _, name := range []string{"sdk"} {
 		dir := filepath.Join(devRoot, name)
 		fi, err := os.Stat(filepath.Join(dir, "go.mod"))
 		if err != nil || fi.IsDir() {
@@ -132,7 +132,7 @@ func main() {
 	seedDemo := flag.Bool("seed-demo", false, "seed a demo owner/app for local UI development")
 	buildURL := flag.String("build-url", env("PLUMTREE_BUILD_URL", ""), "remote build-worker URL; empty uses an in-process sandboxed builder")
 	buildToken := flag.String("build-token", env("PLUMTREE_BUILD_TOKEN", ""), "shared token sent to the remote build-worker")
-	buildDevRoot := flag.String("build-dev-root", env("PLUMTREE_DEV_ROOT", ""), "override the embedded sdk/ and tui-runtime/ with modules from a local repository root (development only)")
+	buildDevRoot := flag.String("build-dev-root", env("PLUMTREE_DEV_ROOT", ""), "override the embedded sdk/ with a module from a local repository root (development only)")
 	maxConcurrentBuilds := flag.Int("max-concurrent-builds", envInt("PLUMTREE_MAX_CONCURRENT_BUILDS", 2), "max simultaneous source builds; 0 = unlimited")
 	maxQueuedBuilds := flag.Int("max-queued-builds", envInt("PLUMTREE_MAX_QUEUED_BUILDS", 8), "max source builds waiting for capacity; 0 rejects when busy")
 	production := flag.Bool("production", envBool("PLUMTREE_PRODUCTION", false), "enable production safety checks")

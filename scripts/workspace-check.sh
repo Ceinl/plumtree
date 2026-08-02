@@ -30,7 +30,6 @@ workspace_modules=(
   runner
   sdk
   ssh-gateway
-  tui-runtime
   _devtest/goodbye-cli
   _devtest/goodbye-tui
   examples/agentboard

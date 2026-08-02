@@ -7,6 +7,8 @@
 package tui
 
 import (
+	"io"
+
 	"github.com/Ceinl/plumtree/sdk/internal/tui/layout"
 	"github.com/Ceinl/plumtree/sdk/internal/tui/screen"
 )
@@ -39,6 +41,17 @@ const (
 	UnitPx      = layout.UnitPx
 	UnitPercent = layout.UnitPercent
 	UnitGrow    = layout.UnitGrow
+)
+
+// Screen bounds used by host-side terminal integrations.
+const (
+	DefaultBg = screen.DefaultBg
+	DefaultFg = screen.DefaultFg
+	MinWidth  = screen.MinWidth
+	MaxWidth  = screen.MaxWidth
+	MinHeight = screen.MinHeight
+	MaxHeight = screen.MaxHeight
+	MaxCells  = screen.MaxCells
 )
 
 // Layout direction.
@@ -78,6 +91,12 @@ const (
 
 // NewScreen returns a cell buffer for rendering a component tree.
 func NewScreen(w, h int) *Screen { return screen.NewScreen(w, h) }
+
+// NewScreenWithOutput returns a cell buffer that flushes to out instead of
+// stdout. Host integrations use it for SSH and other network-backed sessions.
+func NewScreenWithOutput(w, h int, out io.Writer) *Screen {
+	return screen.NewScreenWithOutput(w, h, out)
+}
 
 // Grow is a unit that expands to fill available space along the layout axis.
 var Grow = layout.Unit{Type: layout.UnitGrow}

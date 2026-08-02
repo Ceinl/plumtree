@@ -9,11 +9,10 @@ import (
 )
 
 // DefaultAllowedModules is the v1 module allowlist: the standard library
-// (implicit, never in go.mod), the Plumtree SDK, and the extracted TUI runtime.
+// (implicit, never in go.mod), and the Plumtree SDK.
 // Apps may only require modules whose path is, or sits beneath, one of these.
 var DefaultAllowedModules = []string{
 	"github.com/Ceinl/plumtree/sdk",
-	"github.com/Ceinl/plumtree/tui-runtime",
 	"golang.org/x/sys",
 	"golang.org/x/text",
 }

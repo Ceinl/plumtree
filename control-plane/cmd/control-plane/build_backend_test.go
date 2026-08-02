@@ -86,15 +86,15 @@ func TestWorkspaceModulesRequiresCompleteDevelopmentRoot(t *testing.T) {
 	if _, err := workspaceModules(root); err == nil {
 		t.Fatal("workspaceModules accepted an empty development root")
 	}
-	for _, module := range []string{"sdk", "tui-runtime"} {
+	for _, module := range []string{"sdk"} {
 		writeTestFile(t, root, filepath.Join(module, "go.mod"), "module example.com/"+module+"\n")
 	}
 	modules, err := workspaceModules(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 2 {
-		t.Fatalf("workspace modules = %q, want sdk and tui-runtime", modules)
+	if len(modules) != 1 {
+		t.Fatalf("workspace modules = %q, want sdk", modules)
 	}
 }
 

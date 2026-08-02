@@ -55,15 +55,14 @@ func devWorkspace(proj string) (path string, cleanup func(), ok bool) {
 		return "", nil, false
 	}
 	sdk := filepath.Join(root, "sdk")
-	runtime := filepath.Join(root, "tui-runtime")
-	if !isDir(sdk) || !isDir(runtime) {
+	if !isDir(sdk) {
 		return "", nil, false
 	}
 	f, err := os.CreateTemp("", "pt-dev-*.work")
 	if err != nil {
 		return "", nil, false
 	}
-	content := fmt.Sprintf("go 1.26.5\n\nuse (\n\t%s\n\t%s\n\t%s\n)\n", proj, sdk, runtime)
+	content := fmt.Sprintf("go 1.26.5\n\nuse (\n\t%s\n\t%s\n)\n", proj, sdk)
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
 		os.Remove(f.Name())

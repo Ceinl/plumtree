@@ -13,5 +13,4 @@ use (
 	./runner
 	./sdk
 	./ssh-gateway
-	./tui-runtime
 )

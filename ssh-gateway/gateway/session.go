@@ -12,10 +12,10 @@ import (
 
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/sdk/tui"
+	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
+	"github.com/Ceinl/plumtree/sdk/tui/terminal"
 	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
-	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
-	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -132,9 +132,9 @@ func parseWindowChange(payload []byte) (windowChange, error) {
 func validateRequestDimensions(columns, rows uint32) error {
 	// Compare as uint32 before converting to int so this remains safe on 32-bit
 	// builds as well as the current 64-bit gateway targets.
-	if columns < screen.MinWidth || columns > screen.MaxWidth ||
-		rows < screen.MinHeight || rows > screen.MaxHeight ||
-		uint64(columns)*uint64(rows) > screen.MaxCells {
+	if columns < tui.MinWidth || columns > tui.MaxWidth ||
+		rows < tui.MinHeight || rows > tui.MaxHeight ||
+		uint64(columns)*uint64(rows) > tui.MaxCells {
 		return fmt.Errorf("terminal dimensions %dx%d outside allowed range", columns, rows)
 	}
 	return nil

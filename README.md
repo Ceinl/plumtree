@@ -231,7 +231,6 @@ A multi-module Go workspace (`go.work`), split by product boundary:
 
 | Path             | Module                                    | Purpose                                                        |
 |------------------|-------------------------------------------|---------------------------------------------------------------|
-| `tui-runtime/`   | `github.com/Ceinl/plumtree/tui-runtime`   | Standalone TUI runtime: layout, components, screen/diff.       |
 | `sdk/`           | `github.com/Ceinl/plumtree/sdk`           | Author-facing Go SDK and the versioned WASM ABI wrapper.       |
 | `pt/`            | `github.com/Ceinl/plumtree/pt`            | Author CLI: scaffold, dev, deploy, claim, logs, secrets.      |
 | `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Platform API: app/deploy metadata, auth, tokens, quotas.      |

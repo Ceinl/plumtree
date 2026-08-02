@@ -92,7 +92,7 @@
       <p class="resolved"><strong>Revalidated:</strong> PTY and resize requests are rejected outside 1–500 × 1–300 with a 150,000-cell cap; the screen allocation site independently enforces the same bounds.</p>
       <p>PTY and window dimensions are accepted as <code>uint32</code> with no bounds. Before the isolated worker starts, the gateway constructs a screen with <code>h × w</code> cells in its own process.</p>
       <div class="detail"><div><span class="label">Impact</span>An anonymous SSH client can request extreme dimensions and trigger excessive allocation or process OOM, taking down all tenants on the gateway.</div><div><span class="label">Fix</span>Clamp dimensions at request parsing (for example 1–500 columns and 1–300 rows), reject invalid requests, and cap total cells before every screen resize.</div></div>
-      <p class="meta">Evidence: <a href="ssh-gateway/gateway/session.go#L44">gateway/session.go:44–57</a>, <a href="ssh-gateway/gateway/session.go#L134">gateway/session.go:134–147</a>, <a href="tui-runtime/screen/screen.go#L30">screen.go:30–51</a></p>
+      <p class="meta">Evidence: <a href="ssh-gateway/gateway/session.go#L44">gateway/session.go:44–57</a>, <a href="ssh-gateway/gateway/session.go#L134">gateway/session.go:134–147</a>, <a href="sdk/internal/tui/screen/screen.go#L30">screen.go:30–51</a></p>
     </article>
 
     <article class="finding">

@@ -27,9 +27,9 @@ import (
 
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
+	"github.com/Ceinl/plumtree/sdk/tui/terminal"
 	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
-	"github.com/Ceinl/plumtree/tui-runtime/keyboard"
-	"github.com/Ceinl/plumtree/tui-runtime/terminal"
 	"golang.org/x/crypto/ssh"
 )
 

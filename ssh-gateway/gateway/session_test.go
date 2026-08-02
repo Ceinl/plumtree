@@ -14,8 +14,8 @@ import (
 
 	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/tui-runtime/screen"
-	"github.com/Ceinl/plumtree/tui-runtime/terminal"
+	"github.com/Ceinl/plumtree/sdk/tui"
+	"github.com/Ceinl/plumtree/sdk/tui/terminal"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -26,12 +26,12 @@ func TestParseTerminalDimensions(t *testing.T) {
 		rows    uint32
 		valid   bool
 	}{
-		{"minimum", screen.MinWidth, screen.MinHeight, true},
-		{"maximum", screen.MaxWidth, screen.MaxHeight, true},
+		{"minimum", tui.MinWidth, tui.MinHeight, true},
+		{"maximum", tui.MaxWidth, tui.MaxHeight, true},
 		{"zero columns", 0, 24, false},
 		{"zero rows", 80, 0, false},
-		{"too wide", screen.MaxWidth + 1, 24, false},
-		{"too tall", 80, screen.MaxHeight + 1, false},
+		{"too wide", tui.MaxWidth + 1, 24, false},
+		{"too tall", 80, tui.MaxHeight + 1, false},
 		{"uint32 maximum", ^uint32(0), ^uint32(0), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,10 +131,27 @@ func buildTestBinary(t *testing.T, dir, pkg string, extraEnv []string) string {
 	cmd := exec.Command("go", "build", "-o", out, pkg)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), extraEnv...)
+	if !hasEnv(extraEnv, "GOWORK") {
+		root, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.Env = append(cmd.Env, "GOWORK="+filepath.Join(root, "go.work"))
+	}
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build %s failed (%v):\n%s", pkg, err, b)
 	}
 	return out
+}
+
+func hasEnv(env []string, key string) bool {
+	prefix := key + "="
+	for _, value := range env {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 type testChannel struct {
