@@ -13,7 +13,7 @@ import (
 const (
 	ProtocolName         = "plumtree-control-v1"
 	APIPrefix            = "/api/v1"
-	VersionHeader        = "X-Plumtree-Product-Version"
+	VersionHeader        = "Plumtree-Version"
 	MaxHeaderBytes       = 64 << 10
 	MaxBodyBytes   int64 = 32 << 20
 )
