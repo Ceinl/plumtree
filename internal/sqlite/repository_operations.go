@@ -590,6 +590,48 @@ func (r *Repository) Secret(ctx context.Context, appID, key string) (SecretMetad
 	return s, value, nil
 }
 
+func (r *Repository) ListSecrets(ctx context.Context, appID string) ([]SecretMetadata, error) {
+	if err := validateID(appID); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT key,version,created_at_ns,updated_at_ns FROM secrets WHERE app_id=? ORDER BY key`, appID)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	defer rows.Close()
+	var result []SecretMetadata
+	for rows.Next() {
+		var item SecretMetadata
+		var created, updated int64
+		if err := rows.Scan(&item.Key, &item.Version, &created, &updated); err != nil {
+			return nil, storageError(err)
+		}
+		item.AppID, item.CreatedAt, item.UpdatedAt = appID, time.Unix(0, created), time.Unix(0, updated)
+		result = append(result, item)
+	}
+	return result, storageError(rows.Err())
+}
+
+func (r *Repository) SetSecretDelete(ctx context.Context, appID, key string) error {
+	if err := validateID(appID); err != nil {
+		return err
+	}
+	if err := validateID(key); err != nil {
+		return err
+	}
+	return r.mutate(ctx, "secret-delete", CommitEvent{Operation: "secret-delete", Kind: "secret", ID: appID}, func(m *MutationTx) error {
+		result, err := m.ExecContext(ctx, `DELETE FROM secrets WHERE app_id=? AND key=?`, appID, key)
+		if err != nil {
+			return err
+		}
+		count, _ := result.RowsAffected()
+		if count == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (r *Repository) SetEgressHost(ctx context.Context, appID, host string, allowed bool) error {
 	if err := validateID(appID); err != nil {
 		return err
@@ -608,6 +650,26 @@ func (r *Repository) SetEgressHost(ctx context.Context, appID, host string, allo
 		_, err := m.ExecContext(ctx, `DELETE FROM app_egress_allow WHERE app_id=? AND host=?`, appID, host)
 		return err
 	})
+}
+
+func (r *Repository) ListEgressHosts(ctx context.Context, appID string) ([]string, error) {
+	if err := validateID(appID); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT host FROM app_egress_allow WHERE app_id=? ORDER BY host`, appID)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, storageError(err)
+		}
+		result = append(result, host)
+	}
+	return result, storageError(rows.Err())
 }
 
 func (r *Repository) SetQuota(ctx context.Context, q Quota) error {
