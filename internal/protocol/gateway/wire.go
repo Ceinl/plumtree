@@ -1,10 +1,10 @@
 // Package gatewayapi is the wire contract between a standalone SSH gateway and
-// the control plane: the request/response DTOs, route prefix, auth header, and
-// error codes shared by the control-plane HTTP handlers and the gateway's HTTP
+// the root server: the request/response DTOs, route prefix, auth header, and
+// error codes shared by the root-server HTTP handlers and the gateway's HTTP
 // backend client.
 package gatewayapi
 
-// BasePath prefixes every gateway-facing control-plane endpoint. These routes
+// BasePath prefixes every gateway-facing root-server endpoint. These routes
 // are operator-internal (gateway <-> control plane) and guarded by a shared
 // token, not by user auth.
 const BasePath = "/internal/gateway"

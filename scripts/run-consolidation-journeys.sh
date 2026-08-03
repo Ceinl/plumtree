@@ -46,15 +46,12 @@ run_tests internal/runner . \
   TestProcessRunnerProxiesAllCapabilities
 
 run_tests internal/cli . \
-  TestTerminalSafeTextStripsTerminalControls \
-  TestWriteGoodbyeSanitizesTerminalControls \
-  TestDeploySelectsConfiguredServerAlias
+  TestTerminalSafeTextStripsTerminalControls
 
 run_tests internal/gateway . \
   TestOptionalAuthRequiresProofBeforeRecordingFingerprint \
   TestOptionalAuthHandshakeDoesNotTrustInvalidKeyProof \
   TestRunSessionProductionCLIUsesWorker
 
-run_tests internal/httpapi . \
-  TestDevPingLogsLifecycleWithoutCredentials \
-  TestDevSecretsRequireClaimToken
+run_tests internal/httpapi/v1 . \
+  TestSecretAndEgressRoutesDoNotExposeSecretValues

@@ -5,13 +5,11 @@ capabilities with humans and external software agents. It is not automatically
 hosted or claimed by the repository. It has five columns: `pending`, `todo`,
 `in-progress`, `in-review`, and `done`.
 
-Deploy and claim it with `pt`; the resulting SSH handle is determined by the
-owner account used during the claim. Set `OWNER` to that handle for the examples
-below:
+Deploy it through a paired server record provisioned by the host integration.
+Set `OWNER` only when a live qualification fixture provides a hosted SSH handle:
 
 ```sh
 pt deploy
-pt claim
 export OWNER=your-handle
 ssh "${OWNER}/agentboard@plumtree.dev"
 ```
@@ -42,7 +40,7 @@ Build and test:
 go test ./...
 GOOS=wasip1 GOARCH=wasm go build -o agentboard.wasm ./app
 pt dev --headless --script 'right,left,q'
-pt dev --ssh
+pt dev
 ```
 
 Issue #9 (self-service SSH-key enrollment) is deferred because a proved,

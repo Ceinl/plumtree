@@ -1,6 +1,6 @@
-// Package controlclient implements gateway.Backend over the control plane's
+// Package controlclient implements gateway.Backend over the root server's
 // operator-internal gateway API, so the SSH gateway can run as its own process
-// or container, talking to a remote control plane over HTTP.
+// or container, talking to a remote root server over HTTP.
 package controlclient
 
 import (
@@ -23,7 +23,7 @@ import (
 
 // Client calls the control plane's gateway API. It satisfies gateway.Backend.
 type Client struct {
-	base                string // control-plane base URL, no trailing slash
+	base                string // root-server base URL, no trailing slash
 	token               string
 	http                *http.Client
 	maxResponseBody     int64 // metadata and error response cap

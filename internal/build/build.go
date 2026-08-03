@@ -1,5 +1,5 @@
-// Package build owns author-side local application builds. The isolated
-// source build-worker remains a separate server-side module.
+// Package build owns author-side local application builds. The server receives
+// the resulting typed artifact through the clean /api/v1 deployment surface.
 package build
 
 import (

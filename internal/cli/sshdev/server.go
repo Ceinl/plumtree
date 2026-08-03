@@ -1,12 +1,12 @@
 // Package sshdev serves a Plumtree app over SSH for local development. It is a
 // thin, single-app stand-in for the production SSH gateway: every connection
 // that requests a shell gets a fresh wazero session (via runner) wired to the
-// SSH channel — keystrokes in, rendered frames out — so `pt dev --ssh` lets you
-// run the app exactly the way users will: `ssh -p <port> localhost`.
+// SSH channel — keystrokes in, rendered frames out. It is exercised directly
+// by the retained local SSH harness, not exposed as a `pt dev` flag.
 //
 // Dev-only simplifications: anonymous auth (no key required), a stable local
 // dev host key, and one app per server. Real auth, `<owner>/<app>` routing, and
-// quotas belong to the gateway/control-plane phases.
+// quotas belong to the hosted gateway and server phases.
 package sshdev
 
 import (

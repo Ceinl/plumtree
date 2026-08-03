@@ -45,6 +45,8 @@ jobs:
         run: ./scripts/workspace-check.sh test
       - name: Build release assets
         run: ./scripts/build-release.sh dist
+      - name: Verify release asset contract
+        run: ./scripts/check-release-contract.sh dist
       - name: Verify checksums
         run: |
           cd dist
