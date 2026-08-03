@@ -45,7 +45,7 @@ run_tests internal/runner . \
   TestRemoteProcessRunnerRejectsWrongToken \
   TestProcessRunnerProxiesAllCapabilities
 
-run_tests pt . \
+run_tests internal/cli . \
   TestTerminalSafeTextStripsTerminalControls \
   TestWriteGoodbyeSanitizesTerminalControls \
   TestDeploySelectsConfiguredServerAlias

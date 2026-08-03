@@ -19,7 +19,7 @@ recreated from the baseline in the ordered issue series.
 | `root/internal/runner` and `internal/protocol` | In-process and isolated WASI execution with bounded explicit capabilities | Implement the clean ABI in #61 |
 | `root/internal/gateway`, `internal/gateway/controlclient`, and `internal/protocol/gateway` | Authenticated SSH leaf sessions and host-owned terminal rendering | Replace transport and identity in #69 |
 | `root/internal/control`, `internal/httpapi`, `internal/auth`, `internal/gatewaybackend`, and `internal/protocol/build` | App, artifact, session, secret, egress, identity, and persistence behavior | Select the replacement state/API at #73 |
-| `pt` and `build-worker` | Project creation, local development, deployment, and management | Move the retained client/build code in #57; remove server source builds at #73 |
+| `root/internal/cli`, `root/internal/build`, and `root/internal/server/controlrole` plus the temporary `pt` and `control-plane` callers | Project creation, local development, deployment, management, and server-role assembly; `build-worker` remains isolated | Remove server source builds at #73 |
 | examples and `_devtest` | Public-SDK consumer and capability scenarios | Keep coverage until every consumer moves to the clean SDK in #62 |
 | native and Compose assets | Local all-in-one and isolated production operation | Replace as one coherent cutover in #73 and qualify in #74 |
 

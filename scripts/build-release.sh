@@ -10,8 +10,8 @@ output_dir=$(cd "$output_dir" && pwd)
 # Regenerate the server's hermetic build bundle so every release contains the
 # SDK and TUI runtime from the exact source revision being built.
 (
-  cd "$workspace_root/control-plane"
-  go generate ./internal/buildassets
+  cd "$workspace_root"
+  go generate ./internal/build
 )
 
 targets=(
@@ -35,16 +35,16 @@ for target in "${targets[@]}"; do
 
   echo "==> build pt $target"
   (
-    cd "$workspace_root/pt"
+    cd "$workspace_root"
     GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 \
-      go build -trimpath -ldflags="-s -w" -o "$pt_output" .
+      go build -trimpath -ldflags="-s -w" -o "$pt_output" ./cmd/pt
   )
 
   echo "==> build plumtree-server $target"
   (
-    cd "$workspace_root/control-plane"
+    cd "$workspace_root"
     GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 \
-      go build -trimpath -ldflags="-s -w" -o "$server_output" ./cmd/control-plane
+      go build -trimpath -ldflags="-s -w" -o "$server_output" ./cmd/plumtree
   )
 done
 

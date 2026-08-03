@@ -5,11 +5,11 @@ use (
 	./_devtest/goodbye-cli
 	./_devtest/goodbye-tui
 	./build-worker
-	./control-plane
 	./examples/agentboard
 	./examples/ascii-saver
 	./examples/chat
 	./examples/tic-tac-toe
-	./pt
 	./sdk
 )
+
+replace github.com/Ceinl/plumtree/sdk v0.0.0 => ./sdk

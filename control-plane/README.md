@@ -1,5 +1,9 @@
 # Plumtree Control Plane
 
+The server implementation is owned by the root module under
+`internal/server/controlrole`; this directory is a temporary compatibility
+caller/config location.
+
 Platform API and persistent state for Plumtree.
 
 Owns:
@@ -39,8 +43,10 @@ Does not own:
 
 ## Local dashboard
 
+Run from the repository root:
+
 ```bash
-go run ./cmd/control-plane
+go run ./cmd/plumtree
 ```
 
 The dashboard is served at `http://localhost:8080/dashboard`, and SSH listens
@@ -53,7 +59,7 @@ To serve over Tailscale instead, use:
 
 ```bash
 tailscale serve --bg 8080
-go run ./cmd/control-plane \
+go run ./cmd/plumtree \
   --tailscale \
   --addr 127.0.0.1:8080 \
   --origin https://your-node.your-tailnet.ts.net
@@ -74,7 +80,7 @@ page. For a trusted tailnet that only needs deploy and SSH access, bypass the
 browser claim flow explicitly:
 
 ```bash
-go run ./cmd/control-plane --tailscale --auto-claim
+go run ./cmd/plumtree --tailscale --auto-claim
 ```
 
 That HTTP-only mode does not provide Shoo dashboard sign-in. Plain startup
