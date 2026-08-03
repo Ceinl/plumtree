@@ -1,0 +1,39 @@
+name: sqlite-performance
+
+on:
+  pull_request:
+    paths:
+      - 'internal/sqlite/**'
+      - 'third_party/mattn/go-sqlite3/**'
+      - '.github/workflows/sqlite-performance.yml'
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Run deterministic SQLite performance corpus
+        env:
+          PLUMTREE_SCHEDULED_STRESS: ${{ github.event_name == 'schedule' && '1' || '0' }}
+        run: |
+          set -o pipefail
+          GOWORK=off go test -json ./internal/sqlite -run 'TestPerformance' -count=1 | tee sqlite-performance.json
+      - name: Publish raw performance result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-performance-${{ github.run_id }}
+          path: sqlite-performance.json
+          if-no-files-found: error

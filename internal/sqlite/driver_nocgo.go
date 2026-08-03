@@ -10,7 +10,7 @@ import (
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
-func newSQLiteDriver([]byte, bool, int) driver.Driver {
+func newSQLiteDriver([]byte, bool, int, int, int, TraceFunc) driver.Driver {
 	return &sqlite3.SQLiteDriver{}
 }
 
