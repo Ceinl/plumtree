@@ -27,8 +27,6 @@ workspace_modules=(
   .
   build-worker
   sdk
-  _devtest/goodbye-cli
-  _devtest/goodbye-tui
   examples/agentboard
   examples/ascii-saver
   examples/chat

@@ -1,6 +1,4 @@
 # Standalone modules that exercise the public SDK as workspace consumers.
-_devtest/goodbye-cli
-_devtest/goodbye-tui
 examples/agentboard
 examples/ascii-saver
 examples/chat

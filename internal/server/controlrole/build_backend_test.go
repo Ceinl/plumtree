@@ -24,29 +24,34 @@ func TestEmbeddedBuildBackendBuildsScaffoldedApps(t *testing.T) {
 	projects := map[string]string{
 		"cli": `package main
 
-import "github.com/Ceinl/plumtree/sdk"
+import (
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/cli"
+	"github.com/Ceinl/plumtree/sdk/ui"
+)
 
 func main() {
-	sdk.CLI(sdk.Meta{Name: "embedded-cli", Type: "cli"}, func(ctx sdk.Ctx, args []string) error {
-		ctx.Out().Println("hello")
-		return nil
-	})
+	commands := cli.Root("embedded").WithCommand(cli.New("hello", "greet").WithHandler(func(cli.Context, []string) (cli.Output, error) {
+		return cli.Value("hello"), nil
+	}))
+	app.Run(&model{}, app.WithCommands(commands))
 }
+
+type model struct{}
+func (*model) Update(app.Event) app.Command { return app.Noop() }
+func (*model) View() ui.Node { return ui.Text("hello") }
 `,
 		"tui": `package main
 
 import (
-	"github.com/Ceinl/plumtree/sdk"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/components"
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
 type model struct{}
-
-func (*model) Update(sdk.Event) {}
-func (*model) View() tui.Component { return components.NewText("hello") }
-
-func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "embedded-tui", Type: "tui"}) }
+func (*model) Update(app.Event) app.Command { return app.Noop() }
+func (*model) View() ui.Node { return ui.Text("hello") }
+func main() { app.Run(&model{}) }
 `,
 	}
 

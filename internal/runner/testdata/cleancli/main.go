@@ -26,5 +26,9 @@ func main() {
 
 type model struct{}
 
+func (*model) Init() app.Command {
+	return app.Quit(app.WithGoodbye("clean CLI complete"))
+}
+
 func (*model) Update(app.Event) app.Command { return app.Noop() }
 func (*model) View() ui.Node                { return ui.Text("clean-cli") }

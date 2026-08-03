@@ -38,7 +38,7 @@ func TestNewTUIWritesLayout(t *testing.T) {
 		t.Errorf("go.mod missing module or sdk require:\n%s", gomod)
 	}
 	main := read(t, proj, "app/main.go")
-	if !strings.Contains(main, `sdk.RunTUI`) || !strings.Contains(main, `Name: "counter"`) {
+	if !strings.Contains(main, `app.Run(&model{})`) || !strings.Contains(main, `github.com/Ceinl/plumtree/sdk/ui`) {
 		t.Errorf("main.go not a TUI app for counter:\n%s", main)
 	}
 	if gi := read(t, proj, ".gitignore"); !strings.Contains(gi, ".env.plumtree.server.local") {
@@ -62,13 +62,13 @@ func TestNewCLIWritesCLIMain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if main := read(t, proj, "app/main.go"); !strings.Contains(main, "sdk.CLI") {
-		t.Errorf("CLI main.go missing sdk.CLI:\n%s", main)
+	if main := read(t, proj, "app/main.go"); !strings.Contains(main, "app.WithCommands") || !strings.Contains(main, "github.com/Ceinl/plumtree/sdk/cli") {
+		t.Errorf("CLI main.go missing clean command app:\n%s", main)
 	}
 	if readme := read(t, proj, "README.md"); !strings.Contains(readme, "pt dev Alice") {
 		t.Errorf("CLI README missing CLI run command:\n%s", readme)
 	}
-	if agents := read(t, proj, "AGENTS.md"); !strings.Contains(agents, "write user output through `sdk.Ctx`") {
+	if agents := read(t, proj, "AGENTS.md"); !strings.Contains(agents, "return typed output through `sdk/cli`") {
 		t.Errorf("CLI AGENTS.md missing CLI guidance:\n%s", agents)
 	}
 }

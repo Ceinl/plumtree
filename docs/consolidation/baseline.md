@@ -44,8 +44,8 @@ that product surface.
 
 Known staging debt is deliberately recorded rather than fixed here. This
 includes sibling-module replacements, old product module paths, source-build
-flow, Shoo/dashboard/claim surfaces, old state and token concepts, legacy server
-binaries, and the old action protocol.
+flow, Shoo/dashboard/claim surfaces, old state and token concepts, and legacy
+server binaries.
 
 ## Frozen behavior and security floor
 

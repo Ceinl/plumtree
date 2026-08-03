@@ -24,6 +24,15 @@ func hostRecv(ptr, capBytes int32) int32
 //go:wasmimport plumtree present
 func hostPresent(ptr, length int32)
 
+//go:wasmimport plumtree timer_start
+func hostTimerStart(delayNanos int64, recurring int32) int32
+
+//go:wasmimport plumtree timer_cancel
+func hostTimerCancel(id int32) int32
+
+//go:wasmimport plumtree goodbye_set
+func hostGoodbyeSet(ptr, length int32)
+
 func runCLIIfRequested(runtime *Runtime) bool {
 	command, attached := runtime.Commands()
 	if !attached || len(os.Args) <= 1 {
@@ -40,6 +49,22 @@ func runPlatform(rt *Runtime) {
 	var eventBuffer [4096]byte
 	var encoded []byte
 	converter := cleanFrameConverter{}
+	ids := make(map[uint32]Event)
+	for _, spec := range rt.HostedTimers() {
+		id := hostTimerStart(spec.Interval.Nanoseconds(), 1)
+		if id > 0 {
+			ids[uint32(id)] = spec.Event
+		}
+	}
+	defer func() {
+		for id := range ids {
+			hostTimerCancel(int32(id))
+		}
+	}()
+	if rt.QuitRequested() {
+		emitGoodbye(rt)
+		return
+	}
 
 	for {
 		n := hostRecv(int32(uintptr(unsafe.Pointer(&eventBuffer[0]))), int32(len(eventBuffer)))
@@ -49,6 +74,12 @@ func runPlatform(rt *Runtime) {
 		if n > 0 {
 			if event, err := abi.DecodeEvent(eventBuffer[:n]); err == nil {
 				if mapped, ok := cleanEvent(event); ok {
+					if timer, ok := mapped.(TimerEvent); ok {
+						mapped = ids[timer.ID]
+						if mapped == nil {
+							continue
+						}
+					}
 					if err := rt.Dispatch(mapped); err != nil {
 						return
 					}
@@ -61,9 +92,20 @@ func runPlatform(rt *Runtime) {
 		hostPresent(int32(uintptr(unsafe.Pointer(&encoded[0]))), int32(len(encoded)))
 		runtime.KeepAlive(encoded)
 		if rt.QuitRequested() {
+			emitGoodbye(rt)
 			return
 		}
 	}
+}
+
+func emitGoodbye(rt *Runtime) {
+	message := rt.Goodbye().Text
+	if len(message) == 0 || len(message) > abi.GoodbyeMaxLen {
+		return
+	}
+	value := []byte(message)
+	hostGoodbyeSet(int32(uintptr(unsafe.Pointer(&value[0]))), int32(len(value)))
+	runtime.KeepAlive(value)
 }
 
 func cleanEvent(event abi.Event) (Event, bool) {
@@ -103,11 +145,6 @@ func cleanKey(key abi.KeyType) (Key, bool) {
 	}
 	value, ok := keys[key]
 	return value, ok
-}
-
-type MessageEvent struct {
-	Topic string
-	Data  []byte
 }
 
 type TimerEvent struct{ ID uint32 }

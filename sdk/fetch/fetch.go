@@ -8,10 +8,8 @@ package fetch
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
-	legacy "github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
@@ -58,7 +56,7 @@ func Request(method, url string, body []byte) RequestOperation {
 		if err := ctx.Err(); err != nil {
 			return Result{Err: err}
 		}
-		response, err := legacy.Fetch(method, url, bodyCopy)
+		response, err := fetch(method, url, bodyCopy)
 		return Result{Response: Response{Status: response.Status, Body: append([]byte(nil), response.Body...)}, Err: normalize(err)}
 	})}
 }
@@ -87,16 +85,5 @@ func normalize(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, legacy.ErrEgressDenied):
-		return fmt.Errorf("%w: %v", ErrDenied, err)
-	case errors.Is(err, legacy.ErrFetchUnavailable):
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
-	case errors.Is(err, legacy.ErrFetchTooLarge):
-		return fmt.Errorf("%w: %v", ErrTooLarge, err)
-	case errors.Is(err, legacy.ErrFetchFailed):
-		return fmt.Errorf("%w: %v", ErrFailed, err)
-	default:
-		return err
-	}
+	return err
 }

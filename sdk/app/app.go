@@ -36,6 +36,21 @@ type Subscriber interface {
 	Subscriptions() Subscription
 }
 
+// HostedTimers returns the current clean timer declarations for the WASI
+// adapter. It is intentionally a snapshot of declarative state, not a public
+// operation handle; hosted timer IDs remain an ABI implementation detail.
+func (r *Runtime) HostedTimers() []TimerSpec {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var timers []TimerSpec
+	for _, subscription := range r.subs {
+		if subscription.Timer != nil {
+			timers = append(timers, *subscription.Timer)
+		}
+	}
+	return timers
+}
+
 // Goodbye is the bounded post-session message requested by Quit.
 type Goodbye struct {
 	Text string
@@ -221,6 +236,18 @@ func (r *Runtime) Dispatch(event Event) error {
 			r.height = resize.Height
 		}
 		r.renderLocked()
+	}
+	if _, ok := event.(MessageEvent); ok {
+		for _, subscription := range r.subs {
+			if subscription.Filter == nil {
+				continue
+			}
+			if mapped, accepted := subscription.Filter(event); accepted {
+				r.queue = append(r.queue, mapped)
+			}
+		}
+		r.processQueueLocked()
+		return r.lastErr
 	}
 	if semantic, handled := ui.HandleFrame(r.frame, toUIInput(event), r.focus); handled {
 		if semantic != nil {
