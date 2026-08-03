@@ -21,7 +21,7 @@ KV_DIR ?= $(STATE_DIR)/kv
 # address/token overrides matching run-server without changing user config.
 PT_LDFLAGS ?= -s -w
 
-.PHONY: help test-control-plane pt-local run-server run-server-memory seed-server clear-server build-pt install-pt
+.PHONY: help test-control-plane pt-local run-server run-server-memory seed-server clear-server build-pt install-pt sqlcipher-test
 
 help:
 	@printf '%s\n' \
@@ -33,7 +33,8 @@ help:
 		'  make seed-server        Run local control plane with demo seed data' \
 		'  make clear-server       Delete local test server state and KV data' \
 		'  make build-pt           Build generic ./pt-bin' \
-		'  make install-pt         Install generic pt; configure it at runtime'
+		'  make install-pt         Install generic pt; configure it at runtime' \
+		'  make sqlcipher-test     Run the native SQLCipher qualification suite'
 
 test-control-plane:
 	GOCACHE=$(GOCACHE) $(GO) test ./internal/server/controlrole
@@ -85,3 +86,6 @@ build-pt:
 install-pt:
 	GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" ./cmd/pt
 	@echo "installed generic pt; run 'pt --add-server URL ALIAS' and enter the token"
+
+sqlcipher-test:
+	./scripts/check-sqlcipher-target.sh "$(shell go env GOOS)/$(shell go env GOARCH)"
