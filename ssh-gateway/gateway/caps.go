@@ -3,7 +3,7 @@ package gateway
 import (
 	"path/filepath"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 )
 
 // capsFor builds the capability set for an app's sessions: a per-app KV store

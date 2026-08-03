@@ -1,8 +1,12 @@
 # module_directory	allowed_dependency_module
+.	github.com/Ceinl/plumtree
+.	github.com/Ceinl/plumtree/sdk
+.	github.com/tetratelabs/wazero
+.	golang.org/x/sys
 build-worker	github.com/Ceinl/plumtree/build-worker
 control-plane	github.com/Ceinl/plumtree/build-worker
 control-plane	github.com/Ceinl/plumtree/control-plane
-control-plane	github.com/Ceinl/plumtree/runner
+control-plane	github.com/Ceinl/plumtree
 control-plane	github.com/Ceinl/plumtree/sdk
 control-plane	github.com/Ceinl/plumtree/ssh-gateway
 control-plane	github.com/tetratelabs/wazero
@@ -11,21 +15,17 @@ control-plane	golang.org/x/sys
 control-plane	golang.org/x/term
 pt	github.com/Ceinl/plumtree/build-worker
 pt	github.com/Ceinl/plumtree/pt
-pt	github.com/Ceinl/plumtree/runner
+pt	github.com/Ceinl/plumtree
 pt	github.com/Ceinl/plumtree/sdk
 pt	github.com/Ceinl/plumtree/ssh-gateway
 pt	github.com/tetratelabs/wazero
 pt	golang.org/x/crypto
 pt	golang.org/x/sys
 pt	golang.org/x/term
-runner	github.com/Ceinl/plumtree/runner
-runner	github.com/Ceinl/plumtree/sdk
-runner	github.com/tetratelabs/wazero
-runner	golang.org/x/sys
 sdk	github.com/Ceinl/plumtree/sdk
 sdk	golang.org/x/sys
 sdk	golang.org/x/term
-ssh-gateway	github.com/Ceinl/plumtree/runner
+ssh-gateway	github.com/Ceinl/plumtree
 ssh-gateway	github.com/Ceinl/plumtree/sdk
 ssh-gateway	github.com/Ceinl/plumtree/ssh-gateway
 ssh-gateway	github.com/tetratelabs/wazero

@@ -16,7 +16,7 @@ recreated from the baseline in the ordered issue series.
 | Current ownership | Retained use case | Planned change |
 | --- | --- | --- |
 | `sdk` | Native and hosted interactive/finite Go leaves, capabilities, ABI v4 | Select the redesigned SDK in #62 |
-| `runner` | In-process and isolated WASI execution with bounded explicit capabilities | Move neutral runner ownership in #54; implement the clean ABI in #61 |
+| `root/internal/runner` and `internal/protocol` | In-process and isolated WASI execution with bounded explicit capabilities | Implement the clean ABI in #61 |
 | `ssh-gateway` | Authenticated SSH leaf sessions and host-owned terminal rendering | Move gateway ownership in #55; replace transport and identity in #69 |
 | `control-plane` | App, artifact, session, secret, egress, identity, and persistence behavior | Move ownership in #56; select the replacement state/API at #73 |
 | `pt` and `build-worker` | Project creation, local development, deployment, and management | Move the retained client/build code in #57; remove server source builds at #73 |
@@ -49,7 +49,7 @@ binaries, and the old action protocol.
 
 ## Frozen behavior and security floor
 
-The checked-in `runner/testdata/compat/abi-v4-counter.wasm.gz` is an already-built
+The checked-in `internal/runner/testdata/compat/abi-v4-counter.wasm.gz` is an already-built
 ABI-v4 guest from the baseline. Its exact uncompressed bytes are pinned by size
 and SHA-256 and run through both current hosted runner compositions. It is not
 regenerated when the SDK or runner changes.

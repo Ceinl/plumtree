@@ -36,7 +36,7 @@ run_tests() {
   )
 }
 
-run_tests runner . \
+run_tests internal/runner . \
   TestBaselineABIV4CounterArtifact \
   TestControlFilterStripsEscapes \
   TestControlFilterDropsC1AndKeepsUTF8 \

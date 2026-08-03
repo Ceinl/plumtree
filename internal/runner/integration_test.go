@@ -61,7 +61,7 @@ func mouseClickEvents() []abi.Event {
 }
 
 func TestHostedSDKButtonMouseClick(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/mousebutton")
+	wasm := buildGuest(t, "../../sdk/examples/mousebutton")
 	var sink capture
 	if err := Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestHostedSDKButtonMouseClick(t *testing.T) {
 }
 
 func TestActionInvocationUsesTUICapabilities(t *testing.T) {
-	wasm := buildGuest(t, "../examples/agentboard/app")
+	wasm := buildGuest(t, "../../examples/agentboard/app")
 	caps := Capabilities{
 		KV: NewMemStore(0, 0), Bus: NewMemBus(),
 		Auth: StaticAuth{Identity: Identity{User: "SHA256:agent-key-0123456789012345", Kind: IdentitySSHKey, OwnsApp: true, Authenticated: true}},
@@ -89,7 +89,7 @@ func TestActionInvocationUsesTUICapabilities(t *testing.T) {
 }
 
 func TestGoodbyeCapabilityInProcess(t *testing.T) {
-	wasm := buildGuest(t, "../_devtest/goodbye-cli/app")
+	wasm := buildGuest(t, "../../_devtest/goodbye-cli/app")
 	goodbye := ""
 	if err := RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func frameText(f abi.Frame) string {
 // host. This exercises the full guest-driven loop (recv/present), the ABI, and
 // the SDK runtime — the same path `pt dev` uses.
 func TestRunCounterExample(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/counter")
+	wasm := buildGuest(t, "../../sdk/examples/counter")
 
 	var sink capture
 	src := NewScriptSource(24, 6, []string{"up", "up", "down", "q"})
@@ -151,7 +151,7 @@ func (s *initialThenIdleSource) Next(ctx context.Context) (abi.Event, bool) {
 }
 
 func TestHostedTimersWakeAndRedraw(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/timer")
+	wasm := buildGuest(t, "../../sdk/examples/timer")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -173,7 +173,7 @@ func TestHostedTimersWakeAndRedraw(t *testing.T) {
 // fresh guest instance sharing the same store loads and renders that value —
 // the proof that two sessions of one app share durable state.
 func TestKVPersistsAcrossSessions(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/kvcounter")
+	wasm := buildGuest(t, "../../sdk/examples/kvcounter")
 	store := NewMemStore(0, 0)
 
 	// Session 1: increment twice, then quit. The count (2) is persisted.
@@ -255,7 +255,7 @@ func frameWith(frames []abi.Frame, want string) bool {
 // bus — exactly what a second guest's bus_pub host call does — and the guest
 // renders it.
 func TestBusDeliversPublishedMessage(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/buschat")
+	wasm := buildGuest(t, "../../sdk/examples/buschat")
 	bus := NewMemBus()
 	var sink capture
 	src := &scriptedBusSource{steps: []busStep{
@@ -290,7 +290,7 @@ func TestBusDeliversPublishedMessage(t *testing.T) {
 // End-to-end: a guest that publishes (key 'p' in buschat) receives its own
 // message back, proving the full bus_pub -> bus -> recv loop within one session.
 func TestBusEchoesPublisherOwnMessage(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/buschat")
+	wasm := buildGuest(t, "../../sdk/examples/buschat")
 	bus := NewMemBus()
 	var sink capture
 	src := &scriptedBusSource{steps: []busStep{
@@ -312,7 +312,7 @@ func TestBusEchoesPublisherOwnMessage(t *testing.T) {
 // capability, and is denied when the host is not allowlisted. The fetchcheck
 // example reads the target URL from a secret and renders the outcome.
 func TestFetchGatedEgress(t *testing.T) {
-	wasm := buildGuest(t, "../sdk/examples/fetchcheck")
+	wasm := buildGuest(t, "../../sdk/examples/fetchcheck")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Ceinl/plumtree/runner"
+	"github.com/Ceinl/plumtree/internal/runner"
 	"golang.org/x/crypto/ssh"
 )
 

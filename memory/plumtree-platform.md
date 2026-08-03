@@ -7,7 +7,7 @@ metadata:
 
 `/Users/c/code/plumtree` is a multi-module Go workspace (go.work) for a platform
 that hosts Go TUI/CLI apps compiled to WASM and streamed over SSH — "Lakebed for
-the terminal." Modules: `sdk`, `pt` (author CLI), `runner`
+the terminal." Modules: `sdk`, `pt` (author CLI), root `internal/runner`
 (wazero session runner + host ABI), `control-plane`, `build-worker`,
 `ssh-gateway` (skeleton). Architecture, subrepo map, and status are all now
 consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
@@ -27,7 +27,7 @@ apps, and e2e tests that build the real WASM guest:
   (claimed-only default-deny gated egress, `pt egress`).
 Auth = the deploy **claim** token (`pt claim` + Shoo); NO `pt auth login`.
 Production hardening (Phase 5, done): out-of-process runner isolation
-(`runner.ProcessRunner` + `cmd/plumtree-runner-worker`, forwards every host call
+(`internal/runner.ProcessRunner` + `runner/cmd/plumtree-runner-worker`, forwards every host call
 over the lock-step `procproto`; control-plane `--runner-worker`); durable
 artifact storage (`control.BlobStore` + `--blob-dir`); out-of-process build
 worker (`--build-url`); deploy-claim rate limiting (`--max-deploys-per-hour`);

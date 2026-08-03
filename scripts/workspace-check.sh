@@ -20,14 +20,14 @@ case "$check" in
     ;;
 esac
 
-# Keep this list aligned with go.work. Nested modules under runner/testdata are
+# Keep this list aligned with go.work. Nested modules under internal/runner/testdata are
 # build fixtures, while sdk/plums is an independent legacy module outside the
 # workspace and therefore outside this repository-level CI contract.
 workspace_modules=(
+  .
   build-worker
   control-plane
   pt
-  runner
   sdk
   ssh-gateway
   _devtest/goodbye-cli
@@ -47,14 +47,14 @@ for module_dir in "${workspace_modules[@]}"; do
       # conceal a dependency on another repository module.
       export GOWORK=off
     fi
-    if [[ "$check" == race && "$module_dir" == runner ]]; then
-      # The runner's normal suite contains deliberate 150 ms wall-clock
+    if [[ "$check" == race && "$module_dir" == . ]]; then
+      # The root runner suite contains deliberate 150 ms wall-clock
       # cancellation budgets around Wazero. Race instrumentation slows those
       # guests by orders of magnitude, so retain them as normal-test
       # performance gates and race-check the shared mutable primitives here.
       go test -race \
         -run '^(TestMemBus.*|TestMemStore.*|TestFileStore.*|TestTokenBucket.*)$' \
-        .
+        ./internal/runner
     else
       "${command[@]}"
     fi

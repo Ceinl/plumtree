@@ -18,7 +18,8 @@ import (
 func buildWorker(t *testing.T) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "runner-worker")
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/plumtree-runner-worker")
+	cmd := exec.Command("go", "build", "-o", out, "./runner/cmd/plumtree-runner-worker")
+	cmd.Dir = filepath.Join("..", "..")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build runner-worker failed (%v):\n%s", err, b)
 	}
@@ -40,7 +41,7 @@ func shortUnixSocket(t *testing.T) string {
 // the in-process Run — proving the worker is a faithful drop-in.
 func TestProcessRunnerCounter(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../sdk/examples/counter")
+	wasm := buildGuest(t, "../../sdk/examples/counter")
 
 	var sink capture
 	src := NewScriptSource(24, 6, []string{"up", "up", "down", "q"})
@@ -78,7 +79,7 @@ func TestProcessRunnerProxiesHostCommands(t *testing.T) {
 
 func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../sdk/examples/mousebutton")
+	wasm := buildGuest(t, "../../sdk/examples/mousebutton")
 	var sink capture
 	pr := NewProcessRunner(worker)
 	if err := pr.Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
@@ -91,7 +92,7 @@ func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
 
 func TestProcessRunnerTimersWakeAndRedraw(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../sdk/examples/timer")
+	wasm := buildGuest(t, "../../sdk/examples/timer")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -111,7 +112,7 @@ func TestProcessRunnerTimersWakeAndRedraw(t *testing.T) {
 
 func TestProcessRunnerActionCapabilityParity(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../examples/agentboard/app")
+	wasm := buildGuest(t, "../../examples/agentboard/app")
 	store := NewMemStore(0, 0)
 	caps := Capabilities{
 		KV: store, Bus: NewMemBus(),
@@ -136,7 +137,7 @@ func TestProcessRunnerActionCapabilityParity(t *testing.T) {
 
 func TestProcessRunnerGoodbyeCapabilityParity(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../_devtest/goodbye-cli/app")
+	wasm := buildGuest(t, "../../_devtest/goodbye-cli/app")
 	goodbye := ""
 	pr := NewProcessRunner(worker)
 	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
@@ -223,7 +224,7 @@ func TestRemoteProcessRunnerRejectsWrongToken(t *testing.T) {
 // session reads it back.
 func TestProcessRunnerProxiesKV(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../sdk/examples/kvcounter")
+	wasm := buildGuest(t, "../../sdk/examples/kvcounter")
 	store := NewMemStore(0, 0)
 	pr := NewProcessRunner(worker)
 
@@ -250,7 +251,7 @@ func TestProcessRunnerProxiesKV(t *testing.T) {
 // Env secret.
 func TestProcessRunnerProxiesAllCapabilities(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../sdk/examples/buschat")
+	wasm := buildGuest(t, "../../sdk/examples/buschat")
 	bus := NewMemBus()
 	pr := NewProcessRunner(worker)
 

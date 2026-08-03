@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/pt/internal/sshdev"
-	"github.com/Ceinl/plumtree/runner"
 	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
 	"github.com/Ceinl/plumtree/sdk/tui/terminal"
 )
