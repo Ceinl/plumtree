@@ -17,7 +17,7 @@ files=$(mktemp)
 text_files=$(mktemp)
 trap 'rm -f "$files" "$text_files"' EXIT
 git -C "$workspace_root" ls-files --cached --others --exclude-standard > "$files"
-grep -E -v '^(docs/consolidation/|testdata/consolidation/|scripts/(check-(abi-fixture|consolidation-guardrails|dependencies|external-consumers|journeys|removal-ratchet)|run-consolidation-journeys|test-guardrails)\.sh$)' \
+grep -E -v '^(docs/consolidation/|testdata/consolidation/|third_party/|plumtree-audit-report\.html$|scripts/(check-(abi-fixture|consolidation-guardrails|dependencies|external-consumers|journeys|removal-ratchet)|run-consolidation-journeys|test-guardrails)\.sh$)' \
   "$files" > "$text_files" || true
 
 failed=0

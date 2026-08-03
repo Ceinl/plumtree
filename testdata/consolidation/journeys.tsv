@@ -7,11 +7,11 @@ live-bus	sdk/examples/buschat	internal/runner/integration_test.go	TestBusDeliver
 mouse-input	sdk/examples/mousebutton	internal/runner/procrunner_test.go	TestProcessRunnerHostedSDKButtonMouseClick
 timers	sdk/examples/timer	internal/runner/procrunner_test.go	TestProcessRunnerTimersWakeAndRedraw
 actions-and-capabilities	examples/agentboard	internal/runner/procrunner_test.go	TestProcessRunnerCleanCLICapabilityParity
-author-deploy	internal/cli	internal/cli/deploy_test.go	TestDeploySelectsConfiguredServerAlias
+author-deploy	internal/cli/workflow	internal/cli/workflow/workflow_test.go	TestAPIUsesStableProblemAndMultipartDeployment
 ssh-leaf-session	internal/gateway	internal/gateway/session_test.go	TestRunSessionProductionCLIUsesWorker
-secret-management	internal/httpapi	internal/httpapi/dev_secrets_test.go	TestDevSecretsLifecycle
-egress-management	internal/httpapi	internal/httpapi/dev_egress_test.go	TestDevEgressLifecycle
+secret-management	internal/httpapi/v1	internal/httpapi/v1/server_test.go	TestSecretAndEgressRoutesDoNotExposeSecretValues
+egress-management	internal/httpapi/v1	internal/httpapi/v1/server_test.go	TestSecretAndEgressRoutesDoNotExposeSecretValues
 terminal-safe-frames	internal/runner	internal/runner/devhost_test.go	TestTextSinkRendersGrid
 terminal-safe-cli	internal/cli	internal/cli/terminal_safe_test.go	TestTerminalSafeTextStripsTerminalControls
 worker-authentication	internal/runner	internal/runner/procrunner_test.go	TestRemoteProcessRunnerRejectsWrongToken
-credential-redaction	internal/httpapi	internal/httpapi/dev_ping_test.go	TestDevPingLogsLifecycleWithoutCredentials
+credential-redaction	internal/transport	internal/transport/transport_test.go	TestCheckedClientRejectsIdentityHeader

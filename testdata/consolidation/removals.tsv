@@ -1,21 +1,21 @@
 # kind	id	planned_issue	expected_count	pattern
-path	standalone-build-worker	73	16	^build-worker/
-path	standalone-control-plane	73	4	^control-plane/
-path	standalone-pt	73	4	^pt/
-path	standalone-runner	73	5	^runner/
-path	standalone-ssh-gateway	73	4	^ssh-gateway/
+path	standalone-build-worker	73	0	^build-worker/
+path	standalone-control-plane	73	0	^control-plane/
+path	standalone-pt	73	0	^pt/
+path	standalone-runner	73	0	^runner/
+path	standalone-ssh-gateway	73	0	^ssh-gateway/
 path	standalone-tui-runtime	53	0	^tui-runtime/
 path	legacy-devtest	62	0	^_devtest/
 text	tui-runtime-import	53	0	github.com/Ceinl/plumtree/tui-runtime
-text	legacy-product-module-imports	54-57	10	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
+text	legacy-product-module-imports	54-57	0	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
 text	local-module-replaces	53	3	=>[[:space:]]+(\./|\.\./|/)
-text	build-worker-surface	73	45	build-worker
-text	shoo-surface	73	194	[Ss][Hh][Oo][Oo]
-text	browser-dashboard-surface	73	109	[Bb]rowser|[Dd]ashboard
-text	claim-flow	73	504	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/claim/|/api/dev/deploy
-text	source-build-flow	73	135	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
-text	legacy-state-store	73	227	[Ss]napshot|[Ee]nvelope
-text	shared-and-ci-tokens	73	150	CIToken|CI token|dev token|PLUMTREE_DEV_TOKEN|X-Plumtree-Dev-Token
-text	legacy-server-binaries	73	194	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
+text	build-worker-surface	73	4	build-worker
+text	shoo-surface	73	2	[Ss][Hh][Oo][Oo]
+text	browser-dashboard-surface	73	4	[Bb]rowser|[Dd]ashboard
+text	claim-flow	73	41	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/claim/|/api/dev/deploy
+text	source-build-flow	73	28	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
+text	legacy-state-store	73	92	[Ss]napshot|[Ee]nvelope
+text	shared-and-ci-tokens	73	0	CIToken|CI token|dev token|PLUMTREE_DEV_TOKEN|X-Plumtree-Dev-Token
+text	legacy-server-binaries	73	9	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
 text	legacy-action-protocol	62	0	ActionArgPrefix|PLUMTREE_ACTION|action protocol
 text	legacy-devtest-references	62	1	_devtest/

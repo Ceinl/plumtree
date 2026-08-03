@@ -14,7 +14,7 @@ own servers, and streams the rendered terminal to the user.
 ssh <owner>/<app>@plumtree.app
 
 # ship your own
-pt new myapp --tui
+pt new myapp --tui --access public
 pt dev
 pt deploy
 ```
@@ -85,8 +85,8 @@ func main() { cli.Run(cli.Root("hello").WithCommand(cli.New("hello", "greet"))) 
 ```
 app/main.go                  # entrypoint: the CLI/TUI definition
 go.mod
-plumtree.json                # committed: { "deployId": "..." } once claimed
-.env.plumtree.server.local   # optional, gitignored; secrets live server-side
+plumtree.json                 # committed: { "name", "type", "access" }
+.plumtree/                    # local development state; gitignored
 ```
 
 ### Capabilities (`ctx`)
@@ -138,13 +138,13 @@ cancelled when the app session ends.
 
 ## The `pt` CLI
 
-`pt` is the author tool — scaffold, dev-run, deploy, inspect. It is **not**
+`pt` is the author tool — scaffold, dev-run, build, deploy, and administration. It is **not**
 needed to *run* apps (that's `ssh`).
 
 ```
-pt new <name> --tui|--cli   # scaffold the standard Go app shape
+pt new <name> --tui|--cli --access public|restricted  # scaffold the app shape
 pt dev                      # compile to WASM + run locally in wazero
-pt dev --ssh                # serve the local app over a local SSH channel
+pt build                    # compile to a typed WASM artifact
 pt deploy                   # build server-side + deploy
 
 pt status                   # server and app state
@@ -152,7 +152,6 @@ pt audit                    # audit records
 pt access                   # typed access-key workflow
 
 pt logs <app>               # session logs
-pt inspect <deploy|handle>  # deploy details
 ```
 
 Author and device identity are represented by the paired SSH workflow and
@@ -202,10 +201,8 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 | `cmd/runner-worker/` | `github.com/Ceinl/plumtree/cmd/runner-worker` | Root-owned isolated WASM worker boundary. |
 | `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
 | `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | Retained hosted-runner qualification harness. |
-| `internal/control/` | `github.com/Ceinl/plumtree/internal/control` | Root-owned control store, persistence, artifacts, sessions, and quotas. |
 | `internal/httpapi/v1/` | `github.com/Ceinl/plumtree/internal/httpapi/v1` | Clean authenticated control and artifact API. |
 | `internal/sqlite/` | `github.com/Ceinl/plumtree/internal/sqlite` | Root-owned strict SQLite/SQLCipher repository. |
-| `internal/gatewaybackend/` | `github.com/Ceinl/plumtree/internal/gatewaybackend` | Root-owned control backend for SSH gateway sessions. |
 | `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, gateway, and exec contracts. |
 | `internal/server/cleanrole/` | `github.com/Ceinl/plumtree/internal/server/cleanrole` | Root native SSH/SQLite assembly. |
 
@@ -215,7 +212,7 @@ The end-to-end author loop works against a local control plane:
 
 ```
 server: go run ./cmd/plumtree
-author: pt new → pt dev → pt deploy → pt claim → ssh -p 2222 <app>@127.0.0.1
+author: pt new → pt dev → pt build → pt deploy
 ```
 
 Local server startup persists the SQLite repository and SSH host key. The clean
