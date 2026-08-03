@@ -24,8 +24,7 @@ import (
 // This is the production isolation split: a bug in the WASM runtime or a host
 // function lives in a disposable child process, not in the control plane.
 type ProcessRunner struct {
-	// WorkerPath is the runner-worker executable to spawn (see
-	// cmd/plumtree-runner-worker).
+	// WorkerPath is the root-owned runner worker executable to spawn.
 	WorkerPath string
 	// WorkerEndpoint is a remote runner-broker endpoint. Supported forms are
 	// unix:///path/to/socket and tcp://host:port. Production uses a Unix socket

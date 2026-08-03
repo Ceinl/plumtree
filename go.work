@@ -2,7 +2,6 @@ go 1.26.5
 
 use (
 	.
-	./build-worker
 	./examples/agentboard
 	./examples/ascii-saver
 	./examples/chat

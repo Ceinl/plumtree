@@ -9,15 +9,9 @@ import (
 
 // These variables keep the private-release linker injection surface on the
 // command package while the implementation lives in internal/cli.
-var (
-	defaultServerURL string
-	defaultDevToken  string
-	devRoot          string
-)
+var devRoot string
 
 func main() {
 	cli.DevRoot = devRoot
-	cli.DefaultServerURL = defaultServerURL
-	cli.DefaultDevToken = defaultDevToken
-	os.Exit(cli.Run(os.Args[1:]))
+	os.Exit(cli.RunClean(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

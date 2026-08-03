@@ -1,12 +1,11 @@
 # module_directory	allowed_dependency_module
 .	github.com/Ceinl/plumtree
-.	github.com/Ceinl/plumtree/build-worker
 .	github.com/Ceinl/plumtree/sdk
+.	github.com/mattn/go-sqlite3
 .	github.com/tetratelabs/wazero
 .	golang.org/x/crypto
 .	golang.org/x/sys
 .	golang.org/x/term
-build-worker	github.com/Ceinl/plumtree/build-worker
 sdk	github.com/Ceinl/plumtree/sdk
 sdk	golang.org/x/sys
 sdk	golang.org/x/term
