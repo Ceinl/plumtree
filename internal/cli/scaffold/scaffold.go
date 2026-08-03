@@ -48,11 +48,20 @@ func ValidateName(name string) error {
 // the directory <parentDir>/<name>. It refuses to overwrite an existing
 // non-empty directory. It returns the created project directory.
 func New(parentDir, name string, kind Kind) (string, error) {
+	return NewWithAccess(parentDir, name, kind, "public")
+}
+
+// NewWithAccess is the clean scaffold entry point. Access is written into the
+// manifest so deployment never has an implicit public/restricted default.
+func NewWithAccess(parentDir, name string, kind Kind, access string) (string, error) {
 	if err := ValidateName(name); err != nil {
 		return "", err
 	}
 	if kind != TUI && kind != CLI {
 		return "", fmt.Errorf("unknown app kind %q (want tui or cli)", kind)
+	}
+	if access != "public" && access != "restricted" {
+		return "", fmt.Errorf("unknown access %q (want public or restricted)", access)
 	}
 
 	dir := filepath.Join(parentDir, name)
@@ -62,7 +71,7 @@ func New(parentDir, name string, kind Kind) (string, error) {
 		return "", err
 	}
 
-	files, err := renderTemplate(name, kind)
+	files, err := renderTemplate(name, kind, access)
 	if err != nil {
 		return "", err
 	}
@@ -81,14 +90,16 @@ func New(parentDir, name string, kind Kind) (string, error) {
 type templateData struct {
 	Name         string
 	Kind         string
+	Access       string
 	RunCommand   string
 	CheckCommand string
 }
 
-func renderTemplate(name string, kind Kind) (map[string]string, error) {
+func renderTemplate(name string, kind Kind, access string) (map[string]string, error) {
 	data := templateData{
 		Name:         name,
 		Kind:         string(kind),
+		Access:       access,
 		RunCommand:   "pt dev",
 		CheckCommand: `pt dev --headless --script "up,up,down,q"`,
 	}
