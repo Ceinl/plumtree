@@ -71,7 +71,7 @@ func collectSourceFiles(projectRoot string) ([]string, error) {
 				return nil
 			}
 			if entry.Type()&os.ModeSymlink != 0 {
-				return fmt.Errorf("source file %q must not be a symlink", path)
+				return nil
 			}
 			if !entry.Type().IsRegular() {
 				return nil

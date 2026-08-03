@@ -65,12 +65,12 @@ func generate(repo, output string) error {
 				return err
 			}
 			if entry.IsDir() {
-				if rel != "." && (entry.Name() == ".git" || entry.Name() == "examples") {
+				if rel != "." && excludedModuleDir(entry.Name()) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if !entry.Type().IsRegular() || strings.HasSuffix(entry.Name(), "_test.go") {
+			if !entry.Type().IsRegular() || !includeModuleFile(filepath.ToSlash(rel)) {
 				return nil
 			}
 			sources = append(sources, source{disk: path, archive: filepath.ToSlash(filepath.Join(module, rel))})
@@ -153,6 +153,17 @@ func generate(repo, output string) error {
 		return err
 	}
 	return nil
+}
+
+func excludedModuleDir(name string) bool {
+	return name == ".git" || name == "examples" || name == "plums"
+}
+
+func includeModuleFile(relative string) bool {
+	if relative == "go.mod" || relative == "go.sum" {
+		return true
+	}
+	return strings.HasSuffix(relative, ".go") && !strings.HasSuffix(relative, "_test.go")
 }
 
 func fatalf(format string, args ...any) {

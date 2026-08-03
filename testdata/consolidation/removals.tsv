@@ -16,6 +16,6 @@ text	claim-flow	73	516	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/
 text	source-build-flow	73	135	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
 text	legacy-state-store	73	234	[Ss]napshot|[Ee]nvelope
 text	shared-and-ci-tokens	73	156	CIToken|CI token|dev token|PLUMTREE_DEV_TOKEN|X-Plumtree-Dev-Token
-text	legacy-server-binaries	73	196	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
+text	legacy-server-binaries	73	195	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
 text	legacy-action-protocol	62	17	ActionArgPrefix|PLUMTREE_ACTION|action protocol
 text	legacy-devtest-references	62	7	_devtest/

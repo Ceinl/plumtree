@@ -10,10 +10,16 @@ import (
 var (
 	defaultServerURL string
 	defaultDevToken  string
+	devRoot          string
 )
 
 func main() {
+	configureCLI()
+	os.Exit(cli.Run(os.Args[1:]))
+}
+
+func configureCLI() {
+	cli.DevRoot = devRoot
 	cli.DefaultServerURL = defaultServerURL
 	cli.DefaultDevToken = defaultDevToken
-	os.Exit(cli.Run(os.Args[1:]))
 }

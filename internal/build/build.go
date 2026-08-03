@@ -63,12 +63,10 @@ func (b LocalBuilder) Build(ctx context.Context, project Project) (Artifact, err
 	env = replaceEnv(env, "GOOS", "wasip1")
 	env = replaceEnv(env, "GOARCH", "wasm")
 	if b.WorkspaceRoot != "" {
-		work, workCleanup, ok := developmentWorkspace(project.Root, b.WorkspaceRoot)
-		if !ok {
-			return Artifact{}, fmt.Errorf("build app: Plumtree checkout %q has no sdk module", b.WorkspaceRoot)
+		if work, workCleanup, ok := developmentWorkspace(project.Root, b.WorkspaceRoot); ok {
+			defer workCleanup()
+			env = replaceEnv(env, "GOWORK", work)
 		}
-		defer workCleanup()
-		env = replaceEnv(env, "GOWORK", work)
 	}
 
 	cmd := exec.CommandContext(ctx, goBin, "build", "-o", outPath, "./app")
