@@ -31,7 +31,7 @@ for target in "${targets[@]}"; do
   fi
 
   pt_output="$output_dir/pt-$target_os-$target_arch$extension"
-  server_output="$output_dir/plumtree-server-$target_os-$target_arch$extension"
+  server_output="$output_dir/plumtree-$target_os-$target_arch$extension"
 
   echo "==> build pt $target"
   (
@@ -40,7 +40,7 @@ for target in "${targets[@]}"; do
       go build -trimpath -ldflags="-s -w" -o "$pt_output" ./cmd/pt
   )
 
-  echo "==> build plumtree-server $target"
+  echo "==> build plumtree $target"
   (
     cd "$workspace_root"
     GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 \
@@ -51,9 +51,9 @@ done
 (
   cd "$output_dir"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum pt-* plumtree-server-* > checksums.txt
+    sha256sum pt-* plumtree-* > checksums.txt
   else
-    shasum -a 256 pt-* plumtree-server-* > checksums.txt
+    shasum -a 256 pt-* plumtree-* > checksums.txt
   fi
 )
 
