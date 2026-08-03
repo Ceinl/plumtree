@@ -29,11 +29,11 @@ the outside world through typed operation packages.
 
 1. **Author** — `pt new` scaffolds the standard app shape; `pt dev` compiles to
    WASM and runs it locally in [wazero](https://wazero.io) over a real PTY.
-2. **Deploy** — `pt deploy` uploads source; the platform builds it to WASM in a
-   sandboxed build worker and stores the artifact.
-3. **Run** — a user connects with plain `ssh`. The platform instantiates the
-   WASM module in an isolated runner, bridges keystrokes in and rendered frames
-   out, and streams it over the SSH PTY.
+2. **Deploy** — `pt build` compiles the app locally to WASM and the clean API
+   stores the typed artifact and metadata.
+3. **Run** — the root server exposes the authenticated SSH control subsystem.
+   Hosted leaf execution remains a release qualification gate and is not
+   claimed here until a live fixture passes.
 
 The connecting user runs **nothing locally** — only `ssh` and a terminal. The
 app's code never reaches their machine, so a malicious app can't touch their
@@ -41,10 +41,10 @@ files, env, or disk. The execution risk lives entirely with the platform, which
 is why every app is sandboxed by default.
 
 ```
-author ── pt deploy ──▶ control-plane ──▶ build-worker (Go ─▶ WASM)
-                            │
-user ── ssh ──▶ ssh-gateway ──▶ runner (wazero sandbox) ──▶ your app
-                                   │
+author ── pt build/deploy ──▶ plumtree (SQLite repository)
+                                  │
+                       SSH control subsystem ──▶ /api/v1
+                                  │
                        ctx: kv · pubsub · auth · env · fetch
 ```
 
@@ -147,24 +147,17 @@ pt dev                      # compile to WASM + run locally in wazero
 pt dev --ssh                # serve the local app over a local SSH channel
 pt deploy                   # build server-side + deploy
 
-pt claim                    # browser-claim the deploy to your owner (this is author auth)
-pt whoami                   # show your claimed namespace
-pt secret set KEY           # server-side secret (claimed apps)
-pt egress add HOST          # egress allowlist entry (claimed apps)
+pt status                   # server and app state
+pt audit                    # audit records
+pt access                   # typed access-key workflow
 
 pt logs <app>               # session logs
 pt inspect <deploy|handle>  # deploy details
 ```
 
-**Author auth is the deploy claim**, not a separate login: `pt claim` opens a
-Shoo browser flow that binds the deploy to your owner. Possession of the claim
-token (in `.plumtree/deploy.json`) authorizes later updates, secrets, and egress.
-
-For a trusted server, `control-plane -auto-claim` combines deploy and claim
-without Shoo, a handle prompt, or dashboard interaction. Every deploy-token
-holder shares the internal `autoclaim/<app>` namespace, while the public SSH
-handle is simply `<app>@<host>`. Leave this mode disabled when those clients
-should not trust one another.
+Author and device identity are represented by the paired SSH workflow and
+persistent root SQLite repository. First-run pairing remains a release gate;
+no browser claim, dashboard, or bearer token is part of the clean API contract.
 
 ## Security model
 
@@ -206,20 +199,15 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 | `cmd/plumtree/`   | `github.com/Ceinl/plumtree/cmd/plumtree`  | Root server-role staging entrypoint.                          |
 | `internal/cli/`   | `github.com/Ceinl/plumtree/internal/cli`  | Root-owned author CLI, scaffold, local dev, deploy, and management. |
 | `internal/build/` | `github.com/Ceinl/plumtree/internal/build`| Root-owned local WASM build and source packaging.              |
-| `internal/server/controlrole/` | `github.com/Ceinl/plumtree/internal/server/controlrole` | Root-owned control/server assembly. |
-| `pt/`             | —                                         | Temporary legacy caller for the root author CLI.               |
-| `control-plane/`  | —                                         | Temporary legacy caller/config location for the root server role. |
-| `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
+| `cmd/runner-worker/` | `github.com/Ceinl/plumtree/cmd/runner-worker` | Root-owned isolated WASM worker boundary. |
 | `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
-| `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | SSH gateway, admission, sessions, rendering, and capabilities. |
+| `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | Retained hosted-runner qualification harness. |
 | `internal/control/` | `github.com/Ceinl/plumtree/internal/control` | Root-owned control store, persistence, artifacts, sessions, and quotas. |
-| `internal/httpapi/` | `github.com/Ceinl/plumtree/internal/httpapi` | Root-owned HTTP handlers, routes, claims, secrets, egress, and gateway API. |
-| `internal/auth/` | `github.com/Ceinl/plumtree/internal/auth` | Root-owned authentication and Shoo token verification.       |
+| `internal/httpapi/v1/` | `github.com/Ceinl/plumtree/internal/httpapi/v1` | Clean authenticated control and artifact API. |
+| `internal/sqlite/` | `github.com/Ceinl/plumtree/internal/sqlite` | Root-owned strict SQLite/SQLCipher repository. |
 | `internal/gatewaybackend/` | `github.com/Ceinl/plumtree/internal/gatewaybackend` | Root-owned control backend for SSH gateway sessions. |
 | `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, gateway, and exec contracts. |
-| `internal/server/gatewayrole/` | `github.com/Ceinl/plumtree/internal/server/gatewayrole` | Standalone gateway role assembly. |
-| `runner/cmd/`    | `github.com/Ceinl/plumtree/runner/cmd/...` | Temporary broker/worker command entrypoints.                  |
-| `ssh-gateway/cmd/` | `github.com/Ceinl/plumtree/ssh-gateway/cmd/...` | Temporary legacy gateway command caller. |
+| `internal/server/cleanrole/` | `github.com/Ceinl/plumtree/internal/server/cleanrole` | Root native SSH/SQLite assembly. |
 
 ## Status
 
@@ -230,26 +218,16 @@ server: go run ./cmd/plumtree
 author: pt new → pt dev → pt deploy → pt claim → ssh -p 2222 <app>@127.0.0.1
 ```
 
-Local server startup is zero-config: HTTP and SSH bind to loopback, and a
-private persistent deploy token is shared automatically with a same-user `pt`
-client. Use Tailscale Serve with an HTTPS MagicDNS public origin for browser
-authentication from other machines; startup then prints the client
-configuration they need. Trusted HTTP-only tailnets can combine `--tailscale`
-with `--auto-claim` to bypass browser claims. See the control-plane README for
-setup.
+Local server startup persists the SQLite repository and SSH host key. The clean
+transport is SSH-only; there is no public HTTP listener or shared deploy token.
 
-A deployed app is built server-side from uploaded source, stored as a WASM
-artifact, and streamed over SSH; every session runs in its own wazero sandbox
-with no ambient authority. The full host-capability surface — KV, pub/sub, auth,
-env/secrets, and gated fetch — is wired end to end on a shared host-import +
-`ptr/len` ABI, with native + `wasip1` builds from one source and e2e tests that
-build the real WASM guest.
+A locally built app is stored as a typed WASM artifact through `/api/v1`; the
+SDK and ABI suites cover the in-process and isolated runner paths. Native
+SQLCipher release linkage and live hosted-leaf execution remain qualification
+gates for a product tag.
 
-Production hardening is in place: hostile WASM runs behind an authenticated
-Unix socket in a separate networkless runner container, with a disposable
-worker process per session. Durable artifact storage, an isolated build worker,
-deploy-rate limiting, anonymous preview mode, and a separate SSH gateway are
-also included.
+Compose uses one root-owned service with a read-only root filesystem, bounded
+resources, a persistent state volume, and only the SSH control transport.
 
 **Next up:** moderation & per-author quotas at scale, richer scoped storage
 (`ctx.DB`), and content-addressed artifact caching on the gateway.

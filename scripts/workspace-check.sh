@@ -25,7 +25,6 @@ esac
 # workspace and therefore outside this repository-level CI contract.
 workspace_modules=(
   .
-  build-worker
   sdk
   examples/agentboard
   examples/ascii-saver
