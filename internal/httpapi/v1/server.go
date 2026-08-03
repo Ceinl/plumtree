@@ -283,7 +283,11 @@ func (s *Server) routeApps(w http.ResponseWriter, r *http.Request, p Principal, 
 		return
 	}
 	if len(parts) == 2 && parts[1] == "access" {
-		s.handleAccess(w, r, p, app.ID)
+		s.handleAccess(w, r, p, app.ID, "")
+		return
+	}
+	if len(parts) == 3 && parts[1] == "access" {
+		s.handleAccess(w, r, p, app.ID, parts[2])
 		return
 	}
 	if len(parts) == 2 && parts[1] == "secrets" {
@@ -319,9 +323,13 @@ func (s *Server) ownedApp(ctx context.Context, p Principal, appID string) (sqlit
 	return app, err == nil && app.AuthorID == p.AuthorID
 }
 
-func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request, p Principal, appID string) {
+func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request, p Principal, appID, keyID string) {
 	switch r.Method {
 	case http.MethodGet:
+		if keyID != "" {
+			s.problemForError(w, sqlite.ErrNotFound)
+			return
+		}
 		keys, err := s.repo.ListAccessKeys(r.Context(), p.AuthorID, appID)
 		if err != nil {
 			s.problemForError(w, err)
@@ -339,6 +347,16 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request, p Principa
 			return
 		}
 		s.writeJSON(w, http.StatusCreated, map[string]any{"key": key})
+	case http.MethodDelete:
+		if keyID == "" {
+			s.problemForError(w, errMalformed)
+			return
+		}
+		if err := s.repo.RemoveAccessKey(r.Context(), p.AuthorID, appID, keyID, p.DeviceID); err != nil {
+			s.problemForError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		s.methodNotAllowed(w)
 	}
