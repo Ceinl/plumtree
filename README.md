@@ -234,10 +234,14 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 | `./`             | `github.com/Ceinl/plumtree`               | Root product module and staged internal ownership boundaries.  |
 | `sdk/`           | `github.com/Ceinl/plumtree/sdk`           | Author-facing Go SDK and the versioned WASM ABI wrapper.       |
 | `pt/`            | `github.com/Ceinl/plumtree/pt`            | Author CLI: scaffold, dev, deploy, claim, logs, secrets.      |
-| `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Platform API: app/deploy metadata, auth, tokens, quotas.      |
+| `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Temporary server caller and embedded build assets.             |
 | `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
 | `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
 | `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | SSH gateway, admission, sessions, rendering, and capabilities. |
+| `internal/control/` | `github.com/Ceinl/plumtree/internal/control` | Root-owned control store, persistence, artifacts, sessions, and quotas. |
+| `internal/httpapi/` | `github.com/Ceinl/plumtree/internal/httpapi` | Root-owned HTTP handlers, routes, claims, secrets, egress, and gateway API. |
+| `internal/auth/` | `github.com/Ceinl/plumtree/internal/auth` | Root-owned authentication and Shoo token verification.       |
+| `internal/gatewaybackend/` | `github.com/Ceinl/plumtree/internal/gatewaybackend` | Root-owned control backend for SSH gateway sessions. |
 | `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, gateway, and exec contracts. |
 | `internal/server/gatewayrole/` | `github.com/Ceinl/plumtree/internal/server/gatewayrole` | Standalone gateway role assembly. |
 | `runner/cmd/`    | `github.com/Ceinl/plumtree/runner/cmd/...` | Temporary broker/worker command entrypoints.                  |

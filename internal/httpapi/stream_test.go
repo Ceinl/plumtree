@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/auth/shoo"
+	"github.com/Ceinl/plumtree/internal/control"
 )
 
 // nextStreamFrame reads SSE lines until it sees a "data:" event and decodes its

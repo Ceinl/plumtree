@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	buildworker "github.com/Ceinl/plumtree/build-worker"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/control"
+	buildprotocol "github.com/Ceinl/plumtree/internal/protocol/build"
 )
 
 type devDeployRequest struct {
@@ -19,7 +19,7 @@ type devDeployRequest struct {
 	SourceDigest      string            `json:"sourceDigest"`
 	BuildMetadata     map[string]string `json:"buildMetadata"`
 	WASM              []byte            `json:"wasm,omitempty"`
-	// Source is a packed app source archive (see buildworker.PackSource). When
+	// Source is a packed app source archive produced by the build worker. When
 	// present and a build backend is configured, the control plane compiles it
 	// server-side and ignores any client-supplied WASM/digest.
 	Source []byte `json:"source,omitempty"`
@@ -266,7 +266,7 @@ func readDevDeployRequest(w http.ResponseWriter, r *http.Request) (devDeployRequ
 	}
 	if len(req.Source) > 0 {
 		// The control plane owns the source digest when it receives source.
-		req.SourceDigest = buildworker.SourceDigest(req.Source)
+		req.SourceDigest = buildprotocol.SourceDigest(req.Source)
 	}
 	return req, nil
 }

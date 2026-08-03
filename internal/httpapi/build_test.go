@@ -14,20 +14,20 @@ import (
 	"testing"
 	"time"
 
-	buildworker "github.com/Ceinl/plumtree/build-worker"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/control"
+	buildprotocol "github.com/Ceinl/plumtree/internal/protocol/build"
 )
 
 // fakeBuilder stands in for the sandboxed build worker so control-plane tests
 // stay fast and hermetic. It echoes a fixed result for the given source.
 type fakeBuilder struct {
-	result buildworker.Result
+	result buildprotocol.Result
 	err    error
-	gotReq buildworker.Request
+	gotReq buildprotocol.Request
 	calls  atomic.Int32
 }
 
-func (f *fakeBuilder) Build(_ context.Context, req buildworker.Request) (buildworker.Result, error) {
+func (f *fakeBuilder) Build(_ context.Context, req buildprotocol.Request) (buildprotocol.Result, error) {
 	f.calls.Add(1)
 	f.gotReq = req
 	return f.result, f.err
@@ -35,14 +35,14 @@ func (f *fakeBuilder) Build(_ context.Context, req buildworker.Request) (buildwo
 
 func successfulFakeBuilder() *fakeBuilder {
 	wasm := []byte("\x00asm\x01\x00\x00\x00fake")
-	return &fakeBuilder{result: buildworker.Result{Success: true, WASM: wasm, Digest: testDigest(wasm), SizeBytes: int64(len(wasm))}}
+	return &fakeBuilder{result: buildprotocol.Result{Success: true, WASM: wasm, Digest: testDigest(wasm), SizeBytes: int64(len(wasm))}}
 }
 
 func TestDevDeployBuildsUploadedSource(t *testing.T) {
 	wasm := []byte("\x00asm\x01\x00\x00\x00fake")
 	sum := sha256.Sum256(wasm)
 	digest := "sha256:" + hex.EncodeToString(sum[:])
-	builder := &fakeBuilder{result: buildworker.Result{
+	builder := &fakeBuilder{result: buildprotocol.Result{
 		Success:         true,
 		WASM:            wasm,
 		Digest:          digest,
@@ -73,9 +73,9 @@ func TestDevDeployBuildsUploadedSource(t *testing.T) {
 }
 
 func TestDevDeploySurfacesBuildFailure(t *testing.T) {
-	builder := &fakeBuilder{result: buildworker.Result{
+	builder := &fakeBuilder{result: buildprotocol.Result{
 		Success: false,
-		Failure: &buildworker.Failure{Stage: buildworker.StageCompile, Message: "go build failed", Log: "main.go:1: syntax error"},
+		Failure: &buildprotocol.Failure{Stage: buildprotocol.StageCompile, Message: "go build failed", Log: "main.go:1: syntax error"},
 	}}
 	server := NewWithConfig(Config{Store: control.NewStore(), DevToken: "secret", Build: builder})
 
@@ -101,7 +101,7 @@ func TestDevDeploySurfacesBuildFailure(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Stage != string(buildworker.StageCompile) || resp.Message == "" || resp.Log == "" {
+	if resp.Stage != string(buildprotocol.StageCompile) || resp.Message == "" || resp.Log == "" {
 		t.Errorf("unexpected failure payload: %+v", resp)
 	}
 }
@@ -170,15 +170,15 @@ type blockingBuilder struct {
 	release chan struct{}
 }
 
-func (b *blockingBuilder) Build(ctx context.Context, _ buildworker.Request) (buildworker.Result, error) {
+func (b *blockingBuilder) Build(ctx context.Context, _ buildprotocol.Request) (buildprotocol.Result, error) {
 	b.entered <- struct{}{}
 	select {
 	case <-b.release:
 	case <-ctx.Done():
-		return buildworker.Result{}, ctx.Err()
+		return buildprotocol.Result{}, ctx.Err()
 	}
 	wasm := []byte("\x00asm\x01\x00\x00\x00")
-	return buildworker.Result{Success: true, WASM: wasm, Digest: testDigest(wasm), SizeBytes: int64(len(wasm))}, nil
+	return buildprotocol.Result{Success: true, WASM: wasm, Digest: testDigest(wasm), SizeBytes: int64(len(wasm))}, nil
 }
 
 func TestDevDeployBuildConcurrencyLimit(t *testing.T) {

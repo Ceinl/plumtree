@@ -20,12 +20,13 @@ import (
 	"time"
 
 	buildworker "github.com/Ceinl/plumtree/build-worker"
-	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
 	"github.com/Ceinl/plumtree/control-plane/internal/buildassets"
-	"github.com/Ceinl/plumtree/control-plane/internal/control"
-	"github.com/Ceinl/plumtree/control-plane/internal/gatewaybackend"
-	"github.com/Ceinl/plumtree/control-plane/internal/httpapi"
+	"github.com/Ceinl/plumtree/internal/auth/shoo"
+	"github.com/Ceinl/plumtree/internal/control"
 	"github.com/Ceinl/plumtree/internal/gateway"
+	"github.com/Ceinl/plumtree/internal/gatewaybackend"
+	"github.com/Ceinl/plumtree/internal/httpapi"
+	buildprotocol "github.com/Ceinl/plumtree/internal/protocol/build"
 	"github.com/Ceinl/plumtree/internal/runner"
 )
 
@@ -37,6 +38,39 @@ const (
 	httpShutdownTimeout   = 10 * time.Second
 )
 
+type legacyBuildBackend interface {
+	Build(context.Context, buildworker.Request) (buildworker.Result, error)
+}
+
+type buildBackendAdapter struct {
+	backend legacyBuildBackend
+}
+
+func (a buildBackendAdapter) Build(ctx context.Context, req buildprotocol.Request) (buildprotocol.Result, error) {
+	res, err := a.backend.Build(ctx, buildworker.Request{Source: req.Source, ABIVersion: req.ABIVersion})
+	if err != nil {
+		return buildprotocol.Result{}, err
+	}
+	out := buildprotocol.Result{
+		Success:         res.Success,
+		WASM:            res.WASM,
+		Digest:          res.Digest,
+		SizeBytes:       res.SizeBytes,
+		ABIVersion:      res.ABIVersion,
+		CompilerVersion: res.CompilerVersion,
+		BuildLog:        res.BuildLog,
+		DurationMillis:  res.DurationMillis,
+	}
+	if res.Failure != nil {
+		out.Failure = &buildprotocol.Failure{Stage: buildprotocol.Stage(res.Failure.Stage), Message: res.Failure.Message, Log: res.Failure.Log}
+	}
+	return out, nil
+}
+
+func adaptBuildBackend(backend legacyBuildBackend) httpapi.BuildBackend {
+	return buildBackendAdapter{backend: backend}
+}
+
 // buildBackend selects the source-to-WASM build implementation. A non-empty URL
 // targets a separate build-worker process; otherwise an in-process sandboxed
 // builder is used. The in-process builder defaults to the SDK, TUI runtime, and
@@ -44,7 +78,7 @@ const (
 // assets with modules from a repository checkout for local development.
 func buildBackend(url, token, devRoot string) (httpapi.BuildBackend, func() error, error) {
 	if url != "" {
-		return buildworker.NewClient(url, token), func() error { return nil }, nil
+		return adaptBuildBackend(buildworker.NewClient(url, token)), func() error { return nil }, nil
 	}
 	if _, err := exec.LookPath("go"); err != nil {
 		return nil, nil, errors.New("in-process builds require a Go toolchain on PATH (or configure -build-url)")
@@ -59,7 +93,7 @@ func buildBackend(url, token, devRoot string) (httpapi.BuildBackend, func() erro
 		// The workspace provides the unpublished SDK; its transitive dependencies
 		// still resolve through the operator's proxy.
 		cfg.GoProxy = env("GOPROXY", "https://proxy.golang.org,direct")
-		return buildworker.NewBuilder(cfg), func() error { return nil }, nil
+		return adaptBuildBackend(buildworker.NewBuilder(cfg)), func() error { return nil }, nil
 	}
 
 	assets, err := buildassets.Extract()
@@ -68,7 +102,7 @@ func buildBackend(url, token, devRoot string) (httpapi.BuildBackend, func() erro
 	}
 	cfg.WorkspaceModules = assets.WorkspaceModules
 	cfg.GoProxy = assets.GoProxy
-	return buildworker.NewBuilder(cfg), assets.Cleanup, nil
+	return adaptBuildBackend(buildworker.NewBuilder(cfg)), assets.Cleanup, nil
 }
 
 // workspaceModules validates the local development modules under devRoot.

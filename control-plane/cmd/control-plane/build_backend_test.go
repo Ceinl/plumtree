@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	buildworker "github.com/Ceinl/plumtree/build-worker"
+	buildprotocol "github.com/Ceinl/plumtree/internal/protocol/build"
 )
 
 func TestEmbeddedBuildBackendBuildsScaffoldedApps(t *testing.T) {
@@ -59,7 +60,7 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "embedded-tui", Type: "tui"}) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := backend.Build(context.Background(), buildworker.Request{Source: source})
+			result, err := backend.Build(context.Background(), buildprotocol.Request{Source: source})
 			if err != nil {
 				t.Fatal(err)
 			}
