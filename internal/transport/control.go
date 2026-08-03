@@ -94,7 +94,7 @@ func ServeHTTPStream(channel io.ReadWriteCloser, handler http.Handler, productVe
 		MaxHeaderBytes:    control.MaxHeaderBytes,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	server.SetKeepAlivesEnabled(false)
+	server.SetKeepAlivesEnabled(true)
 	server.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateClosed {
 			listener.signal()
@@ -135,7 +135,7 @@ func NewHTTPClient(channel io.ReadWriteCloser, expectedVersion string) (*http.Cl
 			return &streamConn{rw: channel}, nil
 		},
 		MaxResponseHeaderBytes: control.MaxHeaderBytes,
-		DisableKeepAlives:      true,
+		DisableKeepAlives:      false,
 	}
 	client := &http.Client{Transport: checkedRoundTripper{base: base, expectedVersion: expectedVersion}}
 	return client, closeTransport{transport: base, channel: channel}, nil
@@ -163,7 +163,16 @@ func (t checkedRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) 
 	if err := RejectIdentityHeaders(r.Header); err != nil {
 		return nil, err
 	}
-	response, err := t.base.RoundTrip(r)
+	// The clean API requires the exact product version on every request except
+	// the version probe. The caller may omit it because this transport already
+	// knows the pinned server version; a conflicting caller value is rejected.
+	request := r.Clone(r.Context())
+	if supplied := request.Header.Get(control.VersionHeader); supplied == "" {
+		request.Header.Set(control.VersionHeader, t.expectedVersion)
+	} else if err := control.ValidateVersion(supplied, t.expectedVersion); err != nil {
+		return nil, err
+	}
+	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		return nil, err
 	}

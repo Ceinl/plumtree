@@ -132,6 +132,14 @@ func TestControlHTTPStream(t *testing.T) {
 	if err != nil || string(body) != "ok" || response.Header.Get(control.VersionHeader) != "v1" {
 		t.Fatalf("body=%q header=%q err=%v", body, response.Header.Get(control.VersionHeader), err)
 	}
+	second, err := client.Get("http://plumtree/api/v1/version")
+	if err != nil {
+		t.Fatalf("second control request: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, second.Body); err != nil {
+		t.Fatal(err)
+	}
+	_ = second.Body.Close()
 	if err := closer.Close(); err != nil {
 		t.Fatal(err)
 	}
