@@ -29,7 +29,6 @@ workspace_modules=(
   control-plane
   pt
   sdk
-  ssh-gateway
   _devtest/goodbye-cli
   _devtest/goodbye-tui
   examples/agentboard
@@ -42,9 +41,9 @@ for module_dir in "${workspace_modules[@]}"; do
   echo "==> $check $module_dir"
   (
     cd "$workspace_root/$module_dir"
-    if [[ "$module_dir" == sdk ]]; then
-      # The public SDK is an independent release domain. Do not let go.work
-      # conceal a dependency on another repository module.
+    if [[ "$module_dir" == . || "$module_dir" == sdk ]]; then
+      # The root product and public SDK are independent release domains. Do
+      # not let go.work conceal a dependency on another repository module.
       export GOWORK=off
     fi
     if [[ "$check" == race && "$module_dir" == . ]]; then
@@ -52,6 +51,8 @@ for module_dir in "${workspace_modules[@]}"; do
       # cancellation budgets around Wazero. Race instrumentation slows those
       # guests by orders of magnitude, so retain them as normal-test
       # performance gates and race-check the shared mutable primitives here.
+      mapfile -t race_packages < <(go list ./... | grep -v '^github.com/Ceinl/plumtree/internal/runner$')
+      go test -race "${race_packages[@]}"
       go test -race \
         -run '^(TestMemBus.*|TestMemStore.*|TestFileStore.*|TestTokenBucket.*)$' \
         ./internal/runner

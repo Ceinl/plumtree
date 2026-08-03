@@ -8,7 +8,7 @@ import (
 	buildworker "github.com/Ceinl/plumtree/build-worker"
 	"github.com/Ceinl/plumtree/control-plane/internal/auth/shoo"
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
-	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
+	"github.com/Ceinl/plumtree/internal/protocol/gateway"
 )
 
 type TokenVerifier interface {

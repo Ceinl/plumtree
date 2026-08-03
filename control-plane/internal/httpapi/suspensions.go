@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
-	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
+	"github.com/Ceinl/plumtree/internal/protocol/gateway"
 )
 
 const (

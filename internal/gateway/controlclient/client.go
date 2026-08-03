@@ -1,7 +1,7 @@
-// Package httpbackend implements gateway.Backend over the control plane's
+// Package controlclient implements gateway.Backend over the control plane's
 // operator-internal gateway API, so the SSH gateway can run as its own process
 // or container, talking to a remote control plane over HTTP.
-package httpbackend
+package controlclient
 
 import (
 	"bytes"
@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ceinl/plumtree/internal/gateway"
+	"github.com/Ceinl/plumtree/internal/protocol/gateway"
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
-	"github.com/Ceinl/plumtree/ssh-gateway/gatewayapi"
 )
 
 // Client calls the control plane's gateway API. It satisfies gateway.Backend.

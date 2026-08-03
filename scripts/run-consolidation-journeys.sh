@@ -50,7 +50,7 @@ run_tests pt . \
   TestWriteGoodbyeSanitizesTerminalControls \
   TestDeploySelectsConfiguredServerAlias
 
-run_tests ssh-gateway ./gateway \
+run_tests internal/gateway . \
   TestOptionalAuthRequiresProofBeforeRecordingFingerprint \
   TestOptionalAuthHandshakeDoesNotTrustInvalidKeyProof \
   TestRunSessionProductionCLIUsesWorker

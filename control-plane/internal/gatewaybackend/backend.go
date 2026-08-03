@@ -9,8 +9,8 @@ import (
 	"fmt"
 
 	"github.com/Ceinl/plumtree/control-plane/internal/control"
+	"github.com/Ceinl/plumtree/internal/gateway"
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/ssh-gateway/gateway"
 )
 
 // StoreBackend implements gateway.Backend directly against a *control.Store.
