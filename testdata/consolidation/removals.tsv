@@ -14,7 +14,7 @@ text	shoo-surface	73	194	[Ss][Hh][Oo][Oo]
 text	browser-dashboard-surface	73	109	[Bb]rowser|[Dd]ashboard
 text	claim-flow	73	504	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/claim/|/api/dev/deploy
 text	source-build-flow	73	135	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
-text	legacy-state-store	73	276	[Ss]napshot|[Ee]nvelope
+text	legacy-state-store	73	292	[Ss]napshot|[Ee]nvelope
 text	shared-and-ci-tokens	73	150	CIToken|CI token|dev token|PLUMTREE_DEV_TOKEN|X-Plumtree-Dev-Token
 text	legacy-server-binaries	73	193	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
 text	legacy-action-protocol	62	0	ActionArgPrefix|PLUMTREE_ACTION|action protocol
