@@ -33,9 +33,10 @@ artifact storage (`control.BlobStore` + `--blob-dir`); out-of-process build
 worker (`--build-url`); deploy-claim rate limiting (`--max-deploys-per-hour`);
 anonymous preview run (`--anonymous-preview`, `ssh preview-<deployID>@host`,
 ownerless tightest sandbox). Module paths were renamed to
-`github.com/Ceinl/plumtree/<sub>` (was `plumtree.dev/*`). Remaining: extract the
-SSH gateway into its own process (still a skeleton; control plane embeds it),
-moderation at scale, `ctx.DB`. See [[plumtree-next-capabilities]].
+`github.com/Ceinl/plumtree/<sub>` (was `plumtree.dev/*`). The SSH gateway now
+runs either embedded in the control plane or through the standalone root-owned
+gateway role. Remaining: moderation at scale, `ctx.DB`. See
+[[plumtree-next-capabilities]].
 
 Note: `sdk/plums` is an independent checkout (github.com/Ceinl/plums, the
 original TUI source repository), with its own .git, untracked/gitignored in sdk

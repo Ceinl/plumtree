@@ -51,11 +51,8 @@ for module_dir in "${workspace_modules[@]}"; do
       # cancellation budgets around Wazero. Race instrumentation slows those
       # guests by orders of magnitude, so retain them as normal-test
       # performance gates and race-check the shared mutable primitives here.
-      go test -race \
-        ./internal/gateway/... \
-        ./internal/protocol/exec \
-        ./internal/protocol/gateway \
-        ./internal/server/gatewayrole
+      mapfile -t race_packages < <(go list ./... | grep -v '^github.com/Ceinl/plumtree/internal/runner$')
+      go test -race "${race_packages[@]}"
       go test -race \
         -run '^(TestMemBus.*|TestMemStore.*|TestFileStore.*|TestTokenBucket.*)$' \
         ./internal/runner
