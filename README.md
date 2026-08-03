@@ -23,9 +23,9 @@ pt deploy
 
 ## How it works
 
-A Plumtree app is a small Go program written against the SDK. You never touch
-raw `os`, `net`, or ANSI — the app reaches the outside world *only* through a
-capability object (`ctx`) the platform hands it.
+A Plumtree app is a small Go program written against the clean SDK. You never
+touch raw terminal rendering or hosted capability plumbing; the app reaches
+the outside world through typed operation packages.
 
 1. **Author** — `pt new` scaffolds the standard app shape; `pt dev` compiles to
    WASM and runs it locally in [wazero](https://wazero.io) over a real PTY.
@@ -50,7 +50,7 @@ user ── ssh ──▶ ssh-gateway ──▶ runner (wazero sandbox) ──�
 
 ## Writing an app
 
-A TUI is *state → build a component tree → the runtime lays it out and
+A TUI is *state → build a UI node tree → the runtime lays it out and
 diff-renders it to a cell grid*. The app returns structured cells; the host
 turns them into terminal output (so apps can never emit raw escape codes).
 
@@ -58,60 +58,26 @@ turns them into terminal output (so apps can never emit raw escape codes).
 package main
 
 import (
-    "fmt"
-
-    "github.com/Ceinl/plumtree/sdk"
-    "github.com/Ceinl/plumtree/sdk/tui"
-    "github.com/Ceinl/plumtree/sdk/tui/components"
+    "github.com/Ceinl/plumtree/sdk/app"
+    "github.com/Ceinl/plumtree/sdk/ui"
 )
 
 type state struct{ n int }
 
-func (s *state) Update(ev sdk.Event) {
-    if k, ok := ev.(sdk.KeyMsg); ok {
-        switch k.Key {
-        case sdk.KeyUp:
-            s.n++
-        case sdk.KeyDown:
-            s.n--
-        case 'q':
-            sdk.Quit()
-        }
+func (s *state) Update(ev app.Event) app.Command {
+    if k, ok := ev.(app.KeyEvent); ok {
+        switch k.Key { case app.KeyUp: s.n++; case app.KeyDown: s.n--; case 'q': return app.Quit() }
     }
+    return app.Noop()
 }
-
-func (s *state) View() tui.Component {
-    root := components.NewDiv()
-    root.SetDirection(tui.Column)
-    root.SetJustify(tui.JCenter)
-    root.SetAlign(tui.ACenter)
-
-    count := components.NewText()
-    count.SetContent(fmt.Sprintf("Count: %d", s.n))
-    hint := components.NewText()
-    hint.SetContent("(↑/↓ to change, q to quit)")
-
-    root.Add(count, hint)
-    return root
-}
-
-func main() { sdk.RunTUI(&state{}, sdk.Meta{Name: "counter", Type: "tui"}) }
+func (s *state) View() ui.Node { return ui.Column(ui.Textf("Count: %d", s.n)) }
+func main() { app.Run(&state{}) }
 ```
 
 …or a non-interactive CLI:
 
 ```go
-func main() {
-    sdk.CLI(sdk.Meta{Name: "hello", Type: "cli"},
-        func(ctx sdk.Ctx, args []string) error {
-            name := "world"
-            if len(args) > 0 {
-                name = args[0]
-            }
-            ctx.Out().Printf("Hello %s\n", name)
-            return nil
-        })
-}
+func main() { cli.Run(cli.Root("hello").WithCommand(cli.New("hello", "greet"))) }
 ```
 
 ### App shape
@@ -135,7 +101,7 @@ guest. More trust unlocks more capability:
 | `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
 | `ctx.Env`   | server-side secrets                    | **claimed** apps    |
 | `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
-| `sdk.Exec`  | run a program as the server OS user   | **claimed** apps when operator-enabled |
+| `hostexec.Run`  | run a program as the server OS user   | **claimed** apps when operator-enabled |
 
 ### Capability examples
 
@@ -147,7 +113,7 @@ something larger than a single-feature fixture:
 | [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh <owner>/chat@plumtree.app` |
 | [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh <owner>/ascii-saver@plumtree.app` |
 | [`tic-tac-toe`](examples/tic-tac-toe) | mouse input + leased player seats + KV/CAS + live pub/sub | `ssh <owner>/tic-tac-toe@plumtree.app` |
-| [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + actions | `ssh <owner>/agentboard@plumtree.app` |
+| [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + clean CLI | `ssh <owner>/agentboard@plumtree.app` |
 
 The chat remembers display names only for stable SSH-key identities; anonymous
 session IDs are intentionally ephemeral. Tic-tac-toe gives its first two live
@@ -161,7 +127,7 @@ apps. Set `allowHostCommands` to `true` in the server JSON config, pass
 then invoke installed tools directly:
 
 ```go
-result, err := sdk.Exec("codex", "exec", "summarize the current project")
+result := hostexec.Run("codex", "exec", "summarize the current project").Run(context.Background())
 ```
 
 The option is off by default and never applies to unclaimed preview apps. It is

@@ -2,8 +2,6 @@ go 1.26.5
 
 use (
 	.
-	./_devtest/goodbye-cli
-	./_devtest/goodbye-tui
 	./build-worker
 	./examples/agentboard
 	./examples/ascii-saver

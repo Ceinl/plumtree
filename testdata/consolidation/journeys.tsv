@@ -1,12 +1,12 @@
 # id	fixture	proof_file	proof_symbol
 interactive-counter	sdk/examples/counter	internal/runner/compatibility_test.go	TestBaselineABIV4CounterArtifact
-finite-cli	_devtest/goodbye-cli	internal/runner/integration_test.go	TestGoodbyeCapabilityInProcess
-structured-tui	_devtest/goodbye-tui	testdata/consolidation/external-consumers.txt	_devtest/goodbye-tui
+finite-cli	internal/runner/testdata/cleancli	internal/runner/integration_test.go	TestGoodbyeCapabilityInProcess
+structured-tui	examples/ascii-saver	examples/ascii-saver/app/main_test.go	TestAsciiSaverCleanRuntime
 scoped-kv	sdk/examples/kvcounter	internal/runner/integration_test.go	TestKVPersistsAcrossSessions
 live-bus	sdk/examples/buschat	internal/runner/integration_test.go	TestBusDeliversPublishedMessage
 mouse-input	sdk/examples/mousebutton	internal/runner/procrunner_test.go	TestProcessRunnerHostedSDKButtonMouseClick
 timers	sdk/examples/timer	internal/runner/procrunner_test.go	TestProcessRunnerTimersWakeAndRedraw
-actions-and-capabilities	examples/agentboard	internal/runner/procrunner_test.go	TestProcessRunnerActionCapabilityParity
+actions-and-capabilities	examples/agentboard	internal/runner/procrunner_test.go	TestProcessRunnerCleanCLICapabilityParity
 author-deploy	internal/cli	internal/cli/deploy_test.go	TestDeploySelectsConfiguredServerAlias
 ssh-leaf-session	internal/gateway	internal/gateway/session_test.go	TestRunSessionProductionCLIUsesWorker
 ssh-host-identity	internal/gateway	internal/gateway/hostkey_test.go	TestDevHostKeyPersistsIdentity

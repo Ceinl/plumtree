@@ -8,9 +8,7 @@ package secrets
 import (
 	"context"
 	"errors"
-	"fmt"
 
-	legacy "github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
@@ -46,7 +44,7 @@ func Get(key string) Operation {
 		if err := ctx.Err(); err != nil {
 			return Result{Err: err}
 		}
-		value, found, err := legacy.Env(key)
+		value, found, err := envGet(key)
 		return Result{Value: value, Found: found, Err: normalize(err)}
 	})}
 }
@@ -55,12 +53,5 @@ func normalize(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, legacy.ErrEnvUnavailable):
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
-	case errors.Is(err, legacy.ErrEnvTooLarge):
-		return fmt.Errorf("%w: %v", ErrTooLarge, err)
-	default:
-		return err
-	}
+	return err
 }

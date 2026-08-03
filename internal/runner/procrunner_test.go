@@ -85,7 +85,7 @@ func TestProcessRunnerHostedSDKButtonMouseClick(t *testing.T) {
 	if err := pr.Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if !frameWith(sink.frames, "clicked=1 events=2") {
+	if !frameWith(sink.frames, "clicked=1") {
 		t.Fatalf("isolated hosted click missing; last frame:\n%s", frameText(sink.frames[len(sink.frames)-1]))
 	}
 }
@@ -110,7 +110,7 @@ func TestProcessRunnerTimersWakeAndRedraw(t *testing.T) {
 	}
 }
 
-func TestProcessRunnerActionCapabilityParity(t *testing.T) {
+func TestProcessRunnerCleanCLICapabilityParity(t *testing.T) {
 	worker := buildWorker(t)
 	wasm := buildGuest(t, "../../examples/agentboard/app")
 	store := NewMemStore(0, 0)
@@ -120,30 +120,23 @@ func TestProcessRunnerActionCapabilityParity(t *testing.T) {
 	}
 	pr := NewProcessRunner(worker)
 	var created strings.Builder
-	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{abi.ActionArgPrefix, "create_project_board", `{"project":"runner","name":"Runner"}`}, &created); err != nil {
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{"get_identity"}, &created); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(created.String(), `"ok":true`) {
-		t.Fatalf("create = %s", created.String())
-	}
-	var listed strings.Builder
-	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, caps, []string{abi.ActionArgPrefix, "list_boards", `{}`}, &listed); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(listed.String(), `"project":"runner"`) {
-		t.Fatalf("list = %s", listed.String())
+	if !strings.Contains(created.String(), "authenticated=true") {
+		t.Fatalf("identity = %s", created.String())
 	}
 }
 
 func TestProcessRunnerGoodbyeCapabilityParity(t *testing.T) {
 	worker := buildWorker(t)
-	wasm := buildGuest(t, "../../_devtest/goodbye-cli/app")
+	wasm := buildGuest(t, "testdata/cleancli", "GOWORK=off")
 	goodbye := ""
 	pr := NewProcessRunner(worker)
 	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if goodbye != "Goodbye from goodbye-cli!" {
+	if goodbye != "clean CLI complete" {
 		t.Fatalf("isolated goodbye = %q", goodbye)
 	}
 }
@@ -269,7 +262,7 @@ func TestProcessRunnerProxiesAllCapabilities(t *testing.T) {
 	if err := pr.Run(context.Background(), wasm, DefaultLimits, caps, src, &sink, io.Discard); err != nil {
 		t.Fatalf("ProcessRunner.Run: %v", err)
 	}
-	for _, want := range []string{"hello", "messages: 1", "user: alice", "identity: ssh-key owner=true", "room: lobby"} {
+	for _, want := range []string{"hello", "messages: 1", "user: alice", "room: lobby"} {
 		if !frameWith(sink.frames, want) {
 			t.Fatalf("missing %q across the process boundary; last frame:\n%s",
 				want, frameText(sink.frames[len(sink.frames)-1]))

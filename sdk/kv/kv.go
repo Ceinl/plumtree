@@ -9,9 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 
-	legacy "github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
@@ -120,7 +118,7 @@ func Get(key string) GetOperation {
 		if adapter := adapterFor(ctx); adapter != nil {
 			value, found, err = adapter.Get(key)
 		} else {
-			value, found, err = legacy.KVGet(key)
+			value, found, err = kvGet(key)
 		}
 		return GetResult{Value: append([]byte(nil), value...), Found: found, Err: normalize(err)}
 	})}
@@ -139,7 +137,7 @@ func Set(key string, value []byte) SetOperation {
 		if adapter := adapterFor(ctx); adapter != nil {
 			return SetResult{Err: normalize(adapter.Set(key, copyValue))}
 		}
-		return SetResult{Err: normalize(legacy.KVSet(key, copyValue))}
+		return SetResult{Err: normalize(kvSet(key, copyValue))}
 	})}
 }
 
@@ -155,7 +153,7 @@ func Delete(key string) DeleteOperation {
 		if adapter := adapterFor(ctx); adapter != nil {
 			return DeleteResult{Err: normalize(adapter.Delete(key))}
 		}
-		return DeleteResult{Err: normalize(legacy.KVDelete(key))}
+		return DeleteResult{Err: normalize(kvDelete(key))}
 	})}
 }
 
@@ -176,7 +174,7 @@ func List(prefix string, limit int) ListOperation {
 		if adapter := adapterFor(ctx); adapter != nil {
 			keys, err = adapter.List(prefix, limit)
 		} else {
-			keys, err = legacy.KVList(prefix, limit)
+			keys, err = kvList(prefix, limit)
 		}
 		return ListResult{Keys: append([]string(nil), keys...), Err: normalize(err)}
 	})}
@@ -195,12 +193,12 @@ func CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) Compar
 		if adapter := adapterFor(ctx); adapter != nil {
 			return CompareAndSwapResult{Err: normalize(adapter.CompareAndSwap(key, expected, copyValue))}
 		}
-		return CompareAndSwapResult{Err: normalize(legacy.KVCompareAndSwap(key, expected, copyValue))}
+		return CompareAndSwapResult{Err: normalize(kvCompareAndSwap(key, expected, copyValue))}
 	})}
 }
 
 // Hash returns the revision expected by CompareAndSwap.
-func Hash(value []byte) [sha256.Size]byte { return legacy.KVHash(value) }
+func Hash(value []byte) [sha256.Size]byte { return sha256.Sum256(value) }
 
 func validateKey(key string) error {
 	if len(key) == 0 {
@@ -226,18 +224,7 @@ func normalize(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, legacy.ErrKVUnavailable):
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
-	case errors.Is(err, legacy.ErrKVTooLarge):
-		return fmt.Errorf("%w: %v", ErrTooLarge, err)
-	case errors.Is(err, legacy.ErrKVQuota):
-		return fmt.Errorf("%w: %v", ErrQuota, err)
-	case errors.Is(err, legacy.ErrKVConflict):
-		return fmt.Errorf("%w: %v", ErrConflict, err)
-	default:
-		return err
-	}
+	return err
 }
 
 // Compile-time references keep the app conversion visible in package docs and

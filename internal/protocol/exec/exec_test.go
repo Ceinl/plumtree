@@ -3,21 +3,19 @@ package execprotocol
 import (
 	"reflect"
 	"testing"
-
-	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 func TestParseExecCommand(t *testing.T) {
-	got, err := ParseExecCommand(`action create_task {"title":"hello world"}`)
-	want := []string{abi.ActionArgPrefix, "create_task", `{"title":"hello world"}`}
+	got, err := ParseExecCommand(`get_identity "hello world"`)
+	want := []string{"get_identity", "hello world"}
 	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("action = %q, %v", got, err)
+		t.Fatalf("quoted command = %q, %v", got, err)
 	}
 	got, err = ParseExecCommand("Alice two")
 	if err != nil || !reflect.DeepEqual(got, []string{"Alice", "two"}) {
 		t.Fatalf("CLI = %q, %v", got, err)
 	}
-	for _, bad := range []string{"action", "action BAD {}", "action ok {", "actionx nope" + string(make([]byte, abi.ActionMaxCommand))} {
+	for _, bad := range []string{"unterminated'", "echo | cat", "echo " + string(make([]byte, 64*1024))} {
 		if _, err := ParseExecCommand(bad); err == nil {
 			t.Errorf("accepted %q", bad[:min(len(bad), 40)])
 		}

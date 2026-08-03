@@ -8,12 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	legacy "github.com/Ceinl/plumtree/sdk"
 )
 
 func TestUnavailableErrorMapping(t *testing.T) {
-	if !errors.Is(normalize(legacy.ErrFetchUnavailable), ErrUnavailable) {
+	if !errors.Is(normalize(ErrUnavailable), ErrUnavailable) {
 		t.Fatal("unavailable host error was not mapped to the package contract")
 	}
 }

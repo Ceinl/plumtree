@@ -15,8 +15,8 @@ import (
 
 	"github.com/Ceinl/plumtree/internal/cli/sshdev"
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
-	"github.com/Ceinl/plumtree/sdk/tui/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal/keyboard"
 )
 
 func cmdDev(args []string) error {

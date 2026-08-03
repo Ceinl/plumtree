@@ -14,6 +14,8 @@ var native = struct {
 	topics map[string]map[chan Message]struct{}
 }{topics: make(map[string]map[chan Message]struct{})}
 
+func registerTopic(string) {}
+
 func publish(topic string, data []byte) error {
 	if err := validate(topic, data); err != nil {
 		return err
