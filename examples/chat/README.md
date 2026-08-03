@@ -10,10 +10,11 @@ Connect with an SSH key if you want the app to remember you. Anonymous
 identities are intentionally ephemeral.
 
 ```bash
-pt dev --ssh
-# or, after deployment
-ssh <owner>/chat@plumtree.app
+pt dev
 ```
+
+Hosted SSH access requires a paired server and a live qualification fixture;
+the repository does not claim a public endpoint from local examples alone.
 
 Type a display name on the first visit. On later visits the app restores it.
 Type a message and press Enter to send; `/name NewName` changes the remembered

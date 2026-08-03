@@ -11,9 +11,10 @@ import (
 	"github.com/Ceinl/plumtree/internal/cli/workflow"
 )
 
-// RunClean exposes the final workflow surface for staged black-box journeys.
-// Run remains the currently selected project command dispatcher until the
-// coordinated clean-break cutover.
+// DevRoot optionally points local project builds at a Plumtree checkout's SDK.
+var DevRoot string
+
+// RunClean is the selected root author workflow surface.
 func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 	storePath, err := paired.DefaultPath()
 	if err != nil {

@@ -16,7 +16,7 @@ type Identity struct {
 	Authenticated bool   // verified against a claimed owner key
 	Kind          IdentityKind
 	OwnsApp       bool
-	// OwnerID is control-plane metadata used only by the gateway to derive
+	// OwnerID is root-server metadata used only by the gateway to derive
 	// OwnsApp after resolving an app. It is never encoded into the guest ABI.
 	OwnerID string
 }
