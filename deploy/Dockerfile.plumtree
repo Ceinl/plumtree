@@ -1,0 +1,13 @@
+FROM golang:1.26.5-alpine3.24 AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=1 go build -trimpath -o /out/plumtree ./cmd/plumtree
+
+FROM alpine:3.24.1
+RUN adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data
+COPY --from=build /out/plumtree /usr/local/bin/plumtree
+USER plumtree
+ENV HOME=/data
+VOLUME /data
+EXPOSE 2222
+ENTRYPOINT ["plumtree"]

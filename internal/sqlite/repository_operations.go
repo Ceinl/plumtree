@@ -202,6 +202,32 @@ func (r *Repository) Device(ctx context.Context, deviceID string) (Device, error
 	return d, nil
 }
 
+// DeviceByFingerprint resolves one active device for SSH public-key
+// authentication. Revoked devices remain auditable through Device and
+// ListDevices but can never authenticate the control transport.
+func (r *Repository) DeviceByFingerprint(ctx context.Context, fingerprint string) (Device, error) {
+	if strings.TrimSpace(fingerprint) == "" {
+		return Device{}, fmt.Errorf("%w: device fingerprint", ErrInvalid)
+	}
+	var d Device
+	var created, revoked sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `SELECT id,author_id,name,public_key,fingerprint,created_at_ns,revoked_at_ns
+FROM devices WHERE fingerprint=? AND revoked_at_ns IS NULL`, fingerprint).Scan(
+		&d.ID, &d.AuthorID, &d.Name, &d.PublicKey, &d.Fingerprint, &created, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	if err != nil {
+		return Device{}, storageError(err)
+	}
+	d.CreatedAt = time.Unix(0, created.Int64)
+	if revoked.Valid {
+		value := time.Unix(0, revoked.Int64)
+		d.RevokedAt = &value
+	}
+	return d, nil
+}
+
 // ListDevices lists all devices for an author, including revoked records, so
 // local audit and recovery tooling can explain the complete lifecycle.
 func (r *Repository) ListDevices(ctx context.Context, authorID string) ([]Device, error) {
