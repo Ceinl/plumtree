@@ -4,9 +4,9 @@ package main
 import (
 	"os"
 
-	"github.com/Ceinl/plumtree/internal/server/controlrole"
+	"github.com/Ceinl/plumtree/internal/server/cleanrole"
 )
 
 func main() {
-	controlrole.Run(os.Args[1:])
+	cleanrole.Run(os.Args[1:])
 }

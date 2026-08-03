@@ -18,7 +18,7 @@ import (
 func buildWorker(t *testing.T) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "runner-worker")
-	cmd := exec.Command("go", "build", "-o", out, "./runner/cmd/plumtree-runner-worker")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/runner-worker")
 	cmd.Dir = filepath.Join("..", "..")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build runner-worker failed (%v):\n%s", err, b)
