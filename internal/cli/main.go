@@ -49,6 +49,8 @@ func Run(args []string) int {
 		err = cmdWhoami(args[1:])
 	case "ping":
 		err = cmdPing(args[1:], os.Stdout)
+	case "state":
+		err = cmdState(args[1:])
 	case "--add-server", "add-server":
 		err = cmdAddServer(args[1:], os.Stdin, os.Stdout)
 	case "-h", "--help", "help":
@@ -80,8 +82,11 @@ Usage:
   pt egress add|list|rm          manage this app's outbound HTTP allowlist (claimed apps)
   pt whoami                     show the claimed app namespace for this project
   pt ping [list]                 verify server access and optionally list deployed apps
-  pt --add-server ADDR ALIAS    save a server and securely read its token;
+	pt --add-server ADDR ALIAS    save a server and securely read its token;
                                 the first server is the default
+  pt state backup|restore       offline current-format state operations
+  pt state inventory             list state identifiers without key bytes
+  pt state rekey                 rotate an encrypted database key
 
 pt dev flags:
   --ssh                serve over SSH; connect with: ssh <app>@plumtree.dev
