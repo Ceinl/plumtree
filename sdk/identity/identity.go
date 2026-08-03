@@ -8,9 +8,7 @@ package identity
 import (
 	"context"
 	"errors"
-	"fmt"
 
-	legacy "github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
 )
@@ -18,15 +16,20 @@ import (
 var ErrUnavailable = errors.New("identity: capability unavailable")
 
 // Kind identifies how the session was authenticated.
-type Kind = legacy.IdentityKind
+type Kind string
 
 const (
-	KindSSHKey    = legacy.IdentitySSHKey
-	KindAnonymous = legacy.IdentityAnonymous
+	KindSSHKey    Kind = "ssh-key"
+	KindAnonymous Kind = "anonymous"
 )
 
 // Identity is an immutable copy of the connected session identity.
-type Identity = legacy.Identity
+type Identity struct {
+	User          string
+	Authenticated bool
+	Kind          Kind
+	OwnsApp       bool
+}
 
 type Result struct {
 	Identity
@@ -46,7 +49,7 @@ func Whoami() Operation {
 		if err := ctx.Err(); err != nil {
 			return Result{Err: err}
 		}
-		value, err := legacy.Whoami()
+		value, err := whoami()
 		return Result{Identity: value, Err: normalize(err)}
 	})}
 }
@@ -54,9 +57,6 @@ func Whoami() Operation {
 func normalize(err error) error {
 	if err == nil {
 		return nil
-	}
-	if errors.Is(err, legacy.ErrAuthUnavailable) {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	return err
 }

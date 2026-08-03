@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ceinl/plumtree/internal/terminal/keyboard"
 	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
 )
 
 // DefaultRefresh is a reasonable repaint cadence for apps that poll shared state

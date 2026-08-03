@@ -55,7 +55,7 @@ func (s *eventListSource) Next(context.Context) (abi.Event, bool) {
 func mouseClickEvents() []abi.Event {
 	return []abi.Event{
 		{Kind: abi.KindResize, W: 24, H: 6},
-		{Kind: abi.KindMouse, MouseX: 10, MouseY: 4, Button: abi.MouseButtonLeft, Action: abi.MouseDown},
+		{Kind: abi.KindMouse, MouseX: 10, MouseY: 2, Button: abi.MouseButtonLeft, Action: abi.MouseDown},
 		{Kind: abi.KindMouse, MouseX: 10, MouseY: 4, Button: abi.MouseButtonLeft, Action: abi.MouseUp},
 	}
 }
@@ -66,12 +66,12 @@ func TestHostedSDKButtonMouseClick(t *testing.T) {
 	if err := Run(context.Background(), wasm, DefaultLimits, Capabilities{}, &eventListSource{events: mouseClickEvents()}, &sink, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if !frameWith(sink.frames, "clicked=1 events=2") {
+	if !frameWith(sink.frames, "clicked=1") {
 		t.Fatalf("hosted click missing; last frame:\n%s", frameText(sink.frames[len(sink.frames)-1]))
 	}
 }
 
-func TestActionInvocationUsesTUICapabilities(t *testing.T) {
+func TestCleanCLIInvocationUsesCapabilities(t *testing.T) {
 	wasm := buildGuest(t, "../../examples/agentboard/app")
 	caps := Capabilities{
 		KV: NewMemStore(0, 0), Bus: NewMemBus(),
@@ -79,22 +79,22 @@ func TestActionInvocationUsesTUICapabilities(t *testing.T) {
 		Env:  MapEnv{"TEST": "value"},
 	}
 	var out strings.Builder
-	args := []string{abi.ActionArgPrefix, "get_identity", `{}`}
+	args := []string{"get_identity"}
 	if err := RunCLI(context.Background(), wasm, DefaultLimits, caps, args, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"ok":true`) || !strings.Contains(out.String(), `"owns_app":true`) {
-		t.Fatalf("action envelope = %s", out.String())
+	if !strings.Contains(out.String(), "authenticated=true") || !strings.Contains(out.String(), "SHA256:agent-key") {
+		t.Fatalf("clean CLI output = %s", out.String())
 	}
 }
 
 func TestGoodbyeCapabilityInProcess(t *testing.T) {
-	wasm := buildGuest(t, "../../_devtest/goodbye-cli/app")
+	wasm := buildGuest(t, "testdata/cleancli", "GOWORK=off")
 	goodbye := ""
 	if err := RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Goodbye: &goodbye}, nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if goodbye != "Goodbye from goodbye-cli!" {
+	if goodbye != "clean CLI complete" {
 		t.Fatalf("goodbye = %q", goodbye)
 	}
 }

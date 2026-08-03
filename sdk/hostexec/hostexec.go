@@ -8,9 +8,7 @@ package hostexec
 import (
 	"context"
 	"errors"
-	"fmt"
 
-	legacy "github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
@@ -46,7 +44,7 @@ func Run(name string, args ...string) Operation {
 		if err := ctx.Err(); err != nil {
 			return Result{Err: err}
 		}
-		value, err := legacy.Exec(name, argsCopy...)
+		value, err := execCommand(name, argsCopy)
 		return Result{ExitCode: value.ExitCode, Stdout: append([]byte(nil), value.Stdout...), Stderr: append([]byte(nil), value.Stderr...), Err: normalize(err)}
 	})}
 }
@@ -67,14 +65,5 @@ func normalize(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, legacy.ErrExecUnavailable):
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
-	case errors.Is(err, legacy.ErrExecTooLarge):
-		return fmt.Errorf("%w: %v", ErrTooLarge, err)
-	case errors.Is(err, legacy.ErrExecFailed):
-		return fmt.Errorf("%w: %v", ErrFailed, err)
-	default:
-		return err
-	}
+	return err
 }

@@ -153,7 +153,7 @@ func TestServeOverSSH(t *testing.T) {
 	}
 }
 
-func TestServeActionOverSSHExec(t *testing.T) {
+func TestServeCleanCLIOverSSHExec(t *testing.T) {
 	srv := &Server{
 		Wasm: buildAgentboard(t), Limits: runner.DefaultLimits, AppType: "tui", AppName: "agentboard",
 		Caps: runner.Capabilities{
@@ -175,12 +175,12 @@ func TestServeActionOverSSHExec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := session.Output(`action get_identity {}`)
+	out, err := session.Output(`get_identity`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(out); !strings.Contains(got, `"ok":true`) || !strings.Contains(got, `"owns_app":true`) {
-		t.Fatalf("action = %s", got)
+	if got := string(out); !strings.Contains(got, "authenticated=true") || !strings.Contains(got, "local") {
+		t.Fatalf("clean CLI = %s", got)
 	}
 }
 
