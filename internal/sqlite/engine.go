@@ -33,12 +33,25 @@ var nextDriverID atomic.Uint64
 // Config controls one database handle. Key is a raw 32-byte key; it is copied
 // when the handle is opened and is never included in the DSN.
 type Config struct {
-	Path         string
-	Key          []byte
-	BusyTimeout  time.Duration
-	MaxOpenConns int
-	MaxIdleConns int
+	Path                   string
+	Key                    []byte
+	BusyTimeout            time.Duration
+	MaxOpenConns           int
+	MaxIdleConns           int
+	CacheSizeKB            int
+	WALAutoCheckpointPages int
+	Trace                  TraceFunc
 }
+
+// TraceEvent is deliberately statement-only: expanded SQL is never captured,
+// so bound secrets and artifact values cannot enter qualification logs.
+type TraceEvent struct {
+	Kind      string
+	Statement string
+	Duration  time.Duration
+}
+
+type TraceFunc func(TraceEvent)
 
 // String is intentionally non-diagnostic so configs can be included in
 // structured logs without exposing a raw key or a caller-supplied DSN.
@@ -96,6 +109,18 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 	if cfg.BusyTimeout <= 0 {
 		cfg.BusyTimeout = DefaultBusyTimeout
 	}
+	if cfg.MaxOpenConns <= 0 {
+		cfg.MaxOpenConns = 4
+	}
+	if cfg.MaxIdleConns <= 0 {
+		cfg.MaxIdleConns = cfg.MaxOpenConns
+	}
+	if cfg.CacheSizeKB <= 0 {
+		cfg.CacheSizeKB = 8192
+	}
+	if cfg.WALAutoCheckpointPages <= 0 {
+		cfg.WALAutoCheckpointPages = 1000
+	}
 
 	id := nextDriverID.Add(1)
 	driverName := fmt.Sprintf("plumtree-sqlite-%d", id)
@@ -109,7 +134,25 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 			return keyConnection(conn, key, encrypted)
 		},
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-			return configureConnection(conn, encrypted, timeoutMS)
+			if err := configureConnection(conn, encrypted, timeoutMS, cfg.CacheSizeKB, cfg.WALAutoCheckpointPages); err != nil {
+				return err
+			}
+			if cfg.Trace != nil {
+				if err := conn.SetTrace(&sqlite3.TraceConfig{
+					EventMask: sqlite3.TraceStmt | sqlite3.TraceProfile,
+					Callback: func(info sqlite3.TraceInfo) int {
+						kind := "statement"
+						if info.EventCode == sqlite3.TraceProfile {
+							kind = "profile"
+						}
+						cfg.Trace(TraceEvent{Kind: kind, Statement: info.StmtOrTrigger, Duration: time.Duration(info.RunTimeNanosec)})
+						return 0
+					},
+				}); err != nil {
+					return redactError(err)
+				}
+			}
+			return nil
 		},
 	}
 	sql.Register(driverName, driver)
@@ -159,7 +202,7 @@ func sqliteDSN(path string) string {
 	return (&url.URL{Scheme: "file", Path: abs, RawQuery: "_txlock=immediate"}).String()
 }
 
-func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS int) error {
+func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages int) error {
 	// The key has already been applied by BeforeConnectHook. No key is placed in
 	// the DSN; x'...' only exists in transient SQL text inside that hook.
 
@@ -180,7 +223,7 @@ func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS
 		return ErrSQLCipherUnavailable
 	}
 
-	return configurePragmas(conn, busyTimeoutMS)
+	return configurePragmas(conn, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages)
 }
 
 func keyConnection(conn *sqlite3.SQLiteConn, key []byte, encrypted bool) error {
@@ -196,13 +239,14 @@ func keyConnection(conn *sqlite3.SQLiteConn, key []byte, encrypted bool) error {
 	return nil
 }
 
-func configurePragmas(conn *sqlite3.SQLiteConn, busyTimeoutMS int) error {
+func configurePragmas(conn *sqlite3.SQLiteConn, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages int) error {
 	pragmas := []string{
 		fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeoutMS),
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA temp_store = MEMORY",
 		"PRAGMA secure_delete = ON",
 		"PRAGMA synchronous = NORMAL",
+		fmt.Sprintf("PRAGMA cache_size = -%d", cacheSizeKB),
 	}
 	for _, statement := range pragmas {
 		if _, err := conn.Exec(statement, nil); err != nil {
@@ -217,7 +261,7 @@ func configurePragmas(conn *sqlite3.SQLiteConn, busyTimeoutMS int) error {
 	} else if value != "wal" && !strings.Contains(value, "memory") {
 		return fmt.Errorf("sqlite: WAL unavailable: %s", value)
 	}
-	if _, err := conn.Exec("PRAGMA wal_autocheckpoint = 1000", nil); err != nil {
+	if _, err := conn.Exec(fmt.Sprintf("PRAGMA wal_autocheckpoint = %d", walAutoCheckpointPages), nil); err != nil {
 		return redactError(err)
 	}
 	return nil
