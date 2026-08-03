@@ -150,13 +150,13 @@ func sqliteDSN(path string) string {
 		// A unique shared-memory URI lets pooled connections see one database
 		// while avoiding user-controlled DSN parameters.
 		id := nextDriverID.Add(1)
-		return fmt.Sprintf("file:plumtree-memory-%d?mode=memory&cache=shared", id)
+		return fmt.Sprintf("file:plumtree-memory-%d?mode=memory&cache=shared&_txlock=immediate", id)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	return (&url.URL{Scheme: "file", Path: abs}).String()
+	return (&url.URL{Scheme: "file", Path: abs, RawQuery: "_txlock=immediate"}).String()
 }
 
 func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS int) error {
