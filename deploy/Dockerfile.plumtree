@@ -1,5 +1,6 @@
 FROM golang:1.26.5-alpine3.24 AS build
 WORKDIR /src
+RUN apk add --no-cache gcc musl-dev
 COPY . .
 RUN CGO_ENABLED=1 go build -trimpath -o /out/plumtree ./cmd/plumtree
 
