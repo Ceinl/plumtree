@@ -34,9 +34,17 @@ func buildGuest(t *testing.T, dir string, extraEnv ...string) []byte {
 	return b
 }
 
-type capture struct{ frames []abi.Frame }
+type capture struct {
+	frames    []abi.Frame
+	onPresent func([]abi.Frame)
+}
 
-func (c *capture) Present(f abi.Frame) { c.frames = append(c.frames, f) }
+func (c *capture) Present(f abi.Frame) {
+	c.frames = append(c.frames, f)
+	if c.onPresent != nil {
+		c.onPresent(c.frames)
+	}
+}
 
 type eventListSource struct {
 	events []abi.Event
@@ -152,12 +160,17 @@ func (s *initialThenIdleSource) Next(ctx context.Context) (abi.Event, bool) {
 
 func TestHostedTimersWakeAndRedraw(t *testing.T) {
 	wasm := buildGuest(t, "../../sdk/examples/timer")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	var sink capture
+	sink.onPresent = func(frames []abi.Frame) {
+		if frameWith(frames, "ticks: 2") && frameWith(frames, "one-shot fired: true") {
+			cancel()
+		}
+	}
 	err := Run(ctx, wasm, DefaultLimits, Capabilities{}, &initialThenIdleSource{}, &sink, io.Discard)
-	if err != nil && err != context.DeadlineExceeded {
+	if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
 		t.Fatal(err)
 	}
 	if !frameWith(sink.frames, "ticks: 2") {
