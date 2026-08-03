@@ -26,8 +26,9 @@ import (
 // Run starts the standalone SSH gateway role.
 func Run(args []string) {
 	previousArgs, previousFlags := os.Args, flag.CommandLine
-	os.Args = append([]string{"plumtree gateway"}, args...)
-	flag.CommandLine = flag.NewFlagSet("plumtree gateway", flag.ExitOnError)
+	commandName := invokedCommandName(previousArgs)
+	os.Args = append([]string{commandName}, args...)
+	flag.CommandLine = flag.NewFlagSet(commandName, flag.ExitOnError)
 	defer func() {
 		os.Args = previousArgs
 		flag.CommandLine = previousFlags
@@ -103,6 +104,13 @@ type config struct {
 	production          bool
 	ackUnlimited        bool
 	allowHostCommands   bool
+}
+
+func invokedCommandName(args []string) string {
+	if len(args) > 0 && args[0] != "" {
+		return args[0]
+	}
+	return "gateway"
 }
 
 func parseFlags() config {

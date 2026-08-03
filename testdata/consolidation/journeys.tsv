@@ -9,6 +9,7 @@ timers	sdk/examples/timer	internal/runner/procrunner_test.go	TestProcessRunnerTi
 actions-and-capabilities	examples/agentboard	internal/runner/procrunner_test.go	TestProcessRunnerActionCapabilityParity
 author-deploy	pt	pt/deploy_test.go	TestDeploySelectsConfiguredServerAlias
 ssh-leaf-session	internal/gateway	internal/gateway/session_test.go	TestRunSessionProductionCLIUsesWorker
+ssh-host-identity	internal/gateway	internal/gateway/hostkey_test.go	TestDevHostKeyPersistsIdentity
 secret-management	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_secrets_test.go	TestDevSecretsLifecycle
 egress-management	control-plane/internal/httpapi	control-plane/internal/httpapi/dev_egress_test.go	TestDevEgressLifecycle
 terminal-safe-frames	internal/runner	internal/runner/devhost_test.go	TestTextSinkRendersGrid

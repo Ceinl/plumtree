@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+func TestInvokedCommandNamePreservesLegacyEntrypoint(t *testing.T) {
+	const entrypoint = "/usr/local/bin/legacy-gateway"
+	if got := invokedCommandName([]string{entrypoint}); got != entrypoint {
+		t.Fatalf("command name = %q, want %q", got, entrypoint)
+	}
+	if got := invokedCommandName(nil); got != "gateway" {
+		t.Fatalf("fallback command name = %q, want gateway", got)
+	}
+}
+
 func TestValidateProductionLimits(t *testing.T) {
 	cfg := config{production: true, maxSessions: 64, maxConnections: 1024,
 		maxConnectionsPerIP: 32, handshakeTimeout: 10 * time.Second, idleTimeout: time.Minute,
