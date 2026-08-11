@@ -115,7 +115,7 @@ func TestRuntimeCancelsReplacedSubscriptionsByStableKey(t *testing.T) {
 	}
 	select {
 	case <-model.canceled:
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("subscription source was not canceled during reconciliation")
 	}
 }
