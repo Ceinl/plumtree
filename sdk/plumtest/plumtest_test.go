@@ -14,13 +14,13 @@ type tick struct{}
 type counter struct{ count, ticks int }
 
 func (counter *counter) Update(event app.Event) app.Command {
-	switch event.(type) {
+	switch event := event.(type) {
 	case increment:
 		counter.count++
 	case tick:
 		counter.ticks++
 	case app.KeyEvent:
-		if event.(app.KeyEvent).Key == 'q' {
+		if event.Key == 'q' {
 			return app.Quit(app.WithGoodbye("finished"))
 		}
 	}

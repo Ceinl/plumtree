@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,12 +18,168 @@ type testModel struct {
 	quit                     bool
 }
 
+func TestCommandMayCallRuntimeWithoutDeadlocking(t *testing.T) {
+	model := &callbackModel{}
+	runtime := NewRuntime(model)
+	model.runtime = runtime
+	done := make(chan error, 1)
+	go func() { done <- runtime.Init(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("command deadlocked while calling Runtime.Frame")
+	}
+}
+
+type callbackModel struct{ runtime *Runtime }
+
+func (model *callbackModel) Init() Command {
+	return Task(func(context.Context) (Event, error) {
+		_ = model.runtime.Frame()
+		return nil, nil
+	})
+}
+func (*callbackModel) Update(Event) Command { return Noop() }
+func (*callbackModel) View() ui.Node        { return ui.Text("callback") }
+
+func TestBatchQueuesResultsInDeclarationOrder(t *testing.T) {
+	model := &batchModel{}
+	runtime := NewRuntime(model)
+	if err := runtime.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := model.events; len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("events = %#v", got)
+	}
+}
+
+type batchModel struct{ events []string }
+
+func (*batchModel) Init() Command {
+	return Batch(
+		Task(func(context.Context) (Event, error) { time.Sleep(10 * time.Millisecond); return "first", nil }),
+		Task(func(context.Context) (Event, error) { return "second", nil }),
+	)
+}
+func (model *batchModel) Update(event Event) Command {
+	model.events = append(model.events, event.(string))
+	return Noop()
+}
+func (*batchModel) View() ui.Node { return ui.Text("batch") }
+
+func TestUnsupportedNamedKeyRemainsRaw(t *testing.T) {
+	model := &rawKeyModel{}
+	runtime := NewRuntime(model)
+	if err := runtime.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Dispatch(KeyEvent{Key: KeyLeft}); err != nil {
+		t.Fatal(err)
+	}
+	if model.key != KeyLeft {
+		t.Fatalf("key = %v", model.key)
+	}
+}
+
+type rawKeyModel struct{ key Key }
+
+func (model *rawKeyModel) Update(event Event) Command {
+	if key, ok := event.(KeyEvent); ok {
+		model.key = key.Key
+	}
+	return Noop()
+}
+func (*rawKeyModel) View() ui.Node { return ui.Button("button", "semantic").Key("button") }
+
+func TestRunErrReportsInvalidModel(t *testing.T) {
+	if err := RunErr(nil); !errors.Is(err, ErrInvalidModel) {
+		t.Fatalf("RunErr = %v", err)
+	}
+}
+
+func TestRealTimeSubscriptionsTickAndStop(t *testing.T) {
+	model := &realTimeModel{tick: make(chan struct{}, 1)}
+	runtime := NewRuntime(model)
+	runtime.enableRealTime()
+	if err := runtime.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-model.tick:
+	case <-time.After(time.Second):
+		t.Fatal("real-time subscription did not tick")
+	}
+	runtime.Stop()
+}
+
+type realTimeModel struct{ tick chan struct{} }
+
+func (model *realTimeModel) Update(event Event) Command {
+	if _, ok := event.(tickEvent); ok {
+		select {
+		case model.tick <- struct{}{}:
+		default:
+		}
+	}
+	return Noop()
+}
+func (*realTimeModel) View() ui.Node { return ui.Text("timer") }
+func (*realTimeModel) Subscriptions() Subscription {
+	return Every("real-clock", time.Millisecond, tickEvent{})
+}
+
+func TestCanceledSourceCannotEmit(t *testing.T) {
+	model := &lateSourceModel{enabled: true, ready: make(chan struct{}), emit: make(chan func(Event), 1)}
+	runtime := NewRuntime(model)
+	if err := runtime.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	emit := <-model.emit
+	model.enabled = false
+	if err := runtime.Dispatch(struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	emit("late")
+	if model.late != 0 {
+		t.Fatalf("late events = %d", model.late)
+	}
+	runtime.Stop()
+}
+
+type lateSourceModel struct {
+	enabled bool
+	ready   chan struct{}
+	emit    chan func(Event)
+	late    int
+}
+
+func (model *lateSourceModel) Update(event Event) Command {
+	if event == "late" {
+		model.late++
+	}
+	return Noop()
+}
+func (*lateSourceModel) View() ui.Node { return ui.Text("source") }
+func (model *lateSourceModel) Subscriptions() Subscription {
+	if !model.enabled {
+		return nil
+	}
+	return Source("late", "late-v1", func(ctx context.Context, emit func(Event)) {
+		model.emit <- emit
+		close(model.ready)
+		<-ctx.Done()
+	})
+}
+
 func (model *testModel) Init() Command {
 	return Task(func(_ context.Context) (Event, error) { return readyEvent{}, nil })
 }
 
 func (model *testModel) Update(event Event) Command {
-	switch event.(type) {
+	switch event := event.(type) {
 	case readyEvent:
 		model.ready++
 	case tickEvent:
@@ -30,7 +187,7 @@ func (model *testModel) Update(event Event) Command {
 	case incrementEvent:
 		model.increments++
 	case KeyEvent:
-		if event.(KeyEvent).Key == 'q' {
+		if event.Key == 'q' {
 			model.quit = true
 			return Quit(WithGoodbye("done"))
 		}
@@ -52,7 +209,7 @@ func (model *testModel) View() ui.Node {
 func TestRuntimeSerializesInitInputAndVirtualSubscriptions(t *testing.T) {
 	model := &testModel{}
 	runtime := NewRuntime(model, Viewport(40, 4))
-	if err := runtime.Init(nil); err != nil {
+	if err := runtime.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if model.ready != 1 {
@@ -78,7 +235,7 @@ func TestRuntimeSerializesInitInputAndVirtualSubscriptions(t *testing.T) {
 func TestRuntimeQuitCarriesGoodbyeAndStopsInput(t *testing.T) {
 	model := &testModel{}
 	runtime := NewRuntime(model)
-	if err := runtime.Init(nil); err != nil {
+	if err := runtime.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.Dispatch(KeyEvent{Key: 'q'}); err != nil {
@@ -95,7 +252,7 @@ func TestRuntimeQuitCarriesGoodbyeAndStopsInput(t *testing.T) {
 func TestRuntimeRejectsDuplicateSubscriptionKeys(t *testing.T) {
 	model := &duplicateSubscriptionModel{}
 	runtime := NewRuntime(model)
-	if err := runtime.Init(nil); err == nil {
+	if err := runtime.Init(context.Background()); err == nil {
 		t.Fatal("expected duplicate-key error")
 	}
 	if runtime.Err() == nil {
@@ -106,7 +263,7 @@ func TestRuntimeRejectsDuplicateSubscriptionKeys(t *testing.T) {
 func TestRuntimeCancelsReplacedSubscriptionsByStableKey(t *testing.T) {
 	model := &cancelSubscriptionModel{enabled: true, canceled: make(chan struct{})}
 	runtime := NewRuntime(model)
-	if err := runtime.Init(nil); err != nil {
+	if err := runtime.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	model.enabled = false

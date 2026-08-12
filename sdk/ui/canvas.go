@@ -21,7 +21,7 @@ func (surface *CanvasSurface) Set(x, y int, value rune, style Style) bool {
 	if surface == nil || surface.cells == nil || x < 0 || y < 0 || x >= surface.width || y >= surface.height {
 		return false
 	}
-	if value < 0 || value == '\x1b' {
+	if !safeRune(value) {
 		return false
 	}
 	surface.cells.cells[surface.y+y][surface.x+x] = Cell{Rune: value, Style: style}
@@ -30,8 +30,20 @@ func (surface *CanvasSurface) Set(x, y int, value rune, style Style) bool {
 
 // SetText writes clipped text beginning at x,y.
 func (surface *CanvasSurface) SetText(x, y int, text string, style Style) int {
+	if surface == nil || y < 0 || y >= surface.height || x >= surface.width {
+		return 0
+	}
+	values := []rune(text)
+	start := 0
+	if x < 0 {
+		start = min(len(values), -x)
+		x = 0
+	}
 	count := 0
-	for _, value := range text {
+	for _, value := range values[start:] {
+		if x >= surface.width {
+			break
+		}
 		if surface.Set(x, y, value, style) {
 			count++
 		}
@@ -42,10 +54,15 @@ func (surface *CanvasSurface) SetText(x, y int, text string, style Style) int {
 
 // Fill writes a bounded rectangle.
 func (surface *CanvasSurface) Fill(x, y, width, height int, value rune, style Style) int {
+	if surface == nil || width <= 0 || height <= 0 {
+		return 0
+	}
+	left, top := max(0, x), max(0, y)
+	right, bottom := min(surface.width, x+width), min(surface.height, y+height)
 	count := 0
-	for row := 0; row < height; row++ {
-		for column := 0; column < width; column++ {
-			if surface.Set(x+column, y+row, value, style) {
+	for row := top; row < bottom; row++ {
+		for column := left; column < right; column++ {
+			if surface.Set(column, row, value, style) {
 				count++
 			}
 		}

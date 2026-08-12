@@ -82,6 +82,9 @@ func ReconcileFocus(root Node, focus *Focus) {
 
 // Handle gives semantic controls first refusal of key and mouse input.
 func Handle(root Node, input Input, focus *Focus) (any, bool) {
+	if input.Kind == MouseInputKind {
+		return nil, false
+	}
 	return handleHits(root, rootHits(root), input, focus)
 }
 
