@@ -4,6 +4,40 @@ Author-facing Go SDK for Plumtree apps. The same source runs natively
 (`go run .`) and compiled to WASM for hosted execution; the low-level ABI is
 hidden behind `RunTUI`/`CLI`.
 
+The clean interactive surface is additive during the consolidation sequence:
+`sdk/app` owns the serialized model lifecycle and finite commands, `sdk/ui`
+owns declarative nodes and structured drawing, and `sdk/plumtest` drives models
+without sleeps, subprocesses, global argv/stdio, or external services. Existing
+root SDK APIs remain selected until the later consumer cutover.
+
+```go
+package main
+
+import (
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/ui"
+)
+
+type increment struct{}
+type model struct{ count int }
+
+func (m *model) Update(event app.Event) app.Command {
+	if _, ok := event.(increment); ok {
+		m.count++
+	}
+	return app.Noop()
+}
+
+func (m *model) View() ui.Node {
+	return ui.Column(
+		ui.Textf("Count: %d", m.count),
+		ui.Button("+", increment{}).Key("increment"),
+	).Fill()
+}
+
+func main() { app.Run(&model{}) }
+```
+
 ```go
 package main
 
@@ -47,6 +81,9 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 | Import | Responsibility |
 | --- | --- |
 | `github.com/Ceinl/plumtree/sdk` | `RunTUI`, `CLI`, `Model`, `Event`/`KeyMsg`/`MouseMsg`/`ResizeMsg`/`MessageMsg`, `Meta`, `Quit`, `Ctx`/`Out`. |
+| `github.com/Ceinl/plumtree/sdk/app` | Clean interactive model lifecycle, input events, finite commands, quit/goodbye, and declarative subscriptions. |
+| `github.com/Ceinl/plumtree/sdk/ui` | Chained declarative nodes, semantic themes, focus/input routing, structured frames, and clipped canvas drawing. |
+| `github.com/Ceinl/plumtree/sdk/plumtest` | Deterministic in-process model/runtime harness with virtual time, viewport, input, view, and fixture assertions. |
 | `github.com/Ceinl/plumtree/sdk` (capabilities) | `KVGet`/`KVSet`/`KVDelete`/`KVList`/`KVCompareAndSwap` (durable state); `Subscribe`/`Publish` + `MessageMsg` (live pub/sub); `Whoami` (SSH-key identity); `Env` (claimed-only secrets); `Fetch`/`Get` (claimed-only gated egress). The same calls work natively and hosted. |
 | `github.com/Ceinl/plumtree/sdk/tui` | Layout primitives (`Component`, `Unit`, `Direction`, `Style`, …) re-exported from the runtime. |
 | `github.com/Ceinl/plumtree/sdk/tui/components` | Default widgets: `Div`, `Text`, `Button`. |
@@ -54,6 +91,21 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 
 The SDK module is self-contained. Its TUI implementation is private under
 `internal/tui`; app code should use only the public packages listed above.
+
+## Clean interactive example
+
+The additive [`examples/clean-counter`](examples/clean-counter) app shows the
+new lifecycle without changing the currently selected examples:
+
+```sh
+go test ./examples/clean-counter
+go run ./examples/clean-counter
+```
+
+Only `Update` changes model state. `View` returns a fresh node tree, buttons
+emit app-defined values, and `plumtest.Start` drives the same model with a
+virtual viewport and clock. Use stable `.Key(...)` values for dynamic controls
+so focus survives insertion, deletion, and reordering.
 
 ## How it runs
 
