@@ -1,6 +1,9 @@
 package ui
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestDeclarativeChainsRenderThemesAndBounds(t *testing.T) {
 	root := Column(
@@ -90,6 +93,9 @@ func TestHandleRequiresRenderedFrameForMouseInput(t *testing.T) {
 
 func TestCanvasBulkOperationsClipBeforeIterating(t *testing.T) {
 	frame := Render(Canvas(3, 2, func(surface *CanvasSurface) {
+		if got := surface.SetText(math.MinInt, 0, "offscreen", Style{}); got != 0 {
+			t.Errorf("SetText minimum-coordinate count = %d", got)
+		}
 		if got := surface.SetText(-2, 0, "abcd", Style{}); got != 2 {
 			t.Errorf("SetText count = %d", got)
 		}

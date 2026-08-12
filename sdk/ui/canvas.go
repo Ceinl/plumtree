@@ -36,6 +36,9 @@ func (surface *CanvasSurface) SetText(x, y int, text string, style Style) int {
 	values := []rune(text)
 	start := 0
 	if x < 0 {
+		if x <= -len(values) {
+			return 0
+		}
 		start = min(len(values), -x)
 		x = 0
 	}

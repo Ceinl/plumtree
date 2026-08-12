@@ -46,9 +46,13 @@ func (*callbackModel) Update(Event) Command { return Noop() }
 func (*callbackModel) View() ui.Node        { return ui.Text("callback") }
 
 func TestBatchQueuesResultsInDeclarationOrder(t *testing.T) {
-	model := &batchModel{}
+	model := &batchModel{releaseFirst: make(chan struct{})}
 	runtime := NewRuntime(model)
-	if err := runtime.Init(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.Init(ctx) }()
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	if got := model.events; len(got) != 2 || got[0] != "first" || got[1] != "second" {
@@ -56,12 +60,25 @@ func TestBatchQueuesResultsInDeclarationOrder(t *testing.T) {
 	}
 }
 
-type batchModel struct{ events []string }
+type batchModel struct {
+	events       []string
+	releaseFirst chan struct{}
+}
 
-func (*batchModel) Init() Command {
+func (model *batchModel) Init() Command {
 	return Batch(
-		Task(func(context.Context) (Event, error) { time.Sleep(10 * time.Millisecond); return "first", nil }),
-		Task(func(context.Context) (Event, error) { return "second", nil }),
+		Task(func(ctx context.Context) (Event, error) {
+			select {
+			case <-model.releaseFirst:
+				return "first", nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}),
+		Task(func(context.Context) (Event, error) {
+			close(model.releaseFirst)
+			return "second", nil
+		}),
 	)
 }
 func (model *batchModel) Update(event Event) Command {
