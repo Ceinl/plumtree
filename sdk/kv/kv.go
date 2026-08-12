@@ -149,8 +149,11 @@ func Delete(key string) DeleteOperation {
 // List returns an inert bounded key listing operation.
 func List(prefix string, limit int) ListOperation {
 	return ListOperation{inner: operation.New(func(ctx context.Context) ListResult {
-		if len(prefix) > abi.KVMaxKey || limit < 1 || limit > abi.KVMaxList {
+		if len(prefix) > abi.KVMaxKey || limit > abi.KVMaxList {
 			return ListResult{Err: ErrTooLarge}
+		}
+		if limit < 1 {
+			return ListResult{Err: ErrInvalid}
 		}
 		if err := ctx.Err(); err != nil {
 			return ListResult{Err: err}

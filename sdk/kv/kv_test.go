@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	legacy "github.com/Ceinl/plumtree/sdk"
+	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
 func TestUnavailableErrorMapping(t *testing.T) {
@@ -42,6 +43,12 @@ func TestValidationAndCancellation(t *testing.T) {
 	}
 	if result := Get(strings.Repeat("k", 257)).Run(context.Background()); !errors.Is(result.Err, ErrTooLarge) {
 		t.Fatalf("large key err = %v", result.Err)
+	}
+	if result := List("", 0).Run(context.Background()); !errors.Is(result.Err, ErrInvalid) {
+		t.Fatalf("zero list limit err = %v", result.Err)
+	}
+	if result := List("", abi.KVMaxList+1).Run(context.Background()); !errors.Is(result.Err, ErrTooLarge) {
+		t.Fatalf("large list limit err = %v", result.Err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

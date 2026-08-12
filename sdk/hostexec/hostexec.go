@@ -46,7 +46,7 @@ func Run(name string, args ...string) Operation {
 		if err := ctx.Err(); err != nil {
 			return Result{Err: err}
 		}
-		value, err := legacy.Exec(name, argsCopy...)
+		value, err := legacy.ExecContext(ctx, name, argsCopy...)
 		return Result{ExitCode: value.ExitCode, Stdout: append([]byte(nil), value.Stdout...), Stderr: append([]byte(nil), value.Stderr...), Err: normalize(err)}
 	})}
 }

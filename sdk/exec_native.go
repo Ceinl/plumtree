@@ -10,19 +10,22 @@ import (
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
-func execCommand(name string, args []string) (ExecResult, error) {
+func execCommand(ctx context.Context, name string, args []string) (ExecResult, error) {
 	if !validExecRequest(name, args) {
 		return ExecResult{}, ErrExecTooLarge
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	commandContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(commandContext, name, args...)
 	stdout := &execOutputBuffer{max: abi.ExecMaxOutput, cancel: cancel}
 	stderr := &execOutputBuffer{max: abi.ExecMaxOutput, cancel: cancel}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err := cmd.Run()
 	if stdout.overflow || stderr.overflow {
 		return ExecResult{}, ErrExecTooLarge
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ExecResult{}, ctxErr
 	}
 	result := ExecResult{ExitCode: 0, Stdout: stdout.b, Stderr: stderr.b}
 	if err == nil {

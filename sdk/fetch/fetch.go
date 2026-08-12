@@ -58,7 +58,7 @@ func Request(method, url string, body []byte) RequestOperation {
 		if err := ctx.Err(); err != nil {
 			return Result{Err: err}
 		}
-		response, err := legacy.Fetch(method, url, bodyCopy)
+		response, err := legacy.FetchContext(ctx, method, url, bodyCopy)
 		return Result{Response: Response{Status: response.Status, Body: append([]byte(nil), response.Body...)}, Err: normalize(err)}
 	})}
 }
