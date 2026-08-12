@@ -66,25 +66,33 @@ func (r *Runtime) runCommandLocked(ctx context.Context, current Command) {
 	}
 	if len(current.children) > 0 {
 		type result struct {
+			index int
 			event Event
 			err   error
 		}
 		results := make(chan result, len(current.children))
 		var group sync.WaitGroup
-		for _, child := range current.children {
+		r.mu.Unlock()
+		for index, child := range current.children {
+			index := index
 			child := child
 			group.Add(1)
 			go func() {
 				defer group.Done()
 				event, err := child.runResult(ctx)
-				results <- result{event: event, err: err}
+				results <- result{index: index, event: event, err: err}
 			}()
 		}
 		group.Wait()
 		close(results)
+		r.mu.Lock()
+		ordered := make([]result, len(current.children))
 		for result := range results {
+			ordered[result.index] = result
+		}
+		for _, result := range ordered {
 			if result.err != nil {
-				r.failLocked(result.err)
+				_ = r.failLocked(result.err)
 				return
 			}
 			if result.event != nil {
@@ -93,9 +101,11 @@ func (r *Runtime) runCommandLocked(ctx context.Context, current Command) {
 		}
 		return
 	}
+	r.mu.Unlock()
 	event, err := current.runResult(ctx)
+	r.mu.Lock()
 	if err != nil {
-		r.failLocked(err)
+		_ = r.failLocked(err)
 		return
 	}
 	if event != nil {

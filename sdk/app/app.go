@@ -8,6 +8,8 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -69,11 +71,19 @@ func Noop() Command { return Command{} }
 // small and deterministic; terminal adapters can feed the same Input values
 // through NewRuntime in tests or a host integration.
 func Run(model Model, options ...Option) {
-	runtime := NewRuntime(model, options...)
-	if err := runtime.Init(context.Background()); err != nil {
-		return
+	if err := RunErr(model, options...); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
-	runPlatform(runtime)
+}
+
+// RunErr starts an application and returns initialization or platform errors.
+func RunErr(model Model, options ...Option) error {
+	runtime := NewRuntime(model, options...)
+	runtime.enableRealTime()
+	if err := runtime.Init(context.Background()); err != nil {
+		return err
+	}
+	return runPlatform(runtime)
 }
 
 // Option configures a Runtime.
@@ -96,6 +106,8 @@ var (
 	ErrInvalidModel = errors.New("app: invalid model")
 	// ErrRuntimeStopped reports input sent after a session has ended.
 	ErrRuntimeStopped = errors.New("app: runtime stopped")
+	// ErrPlatformUnsupported reports that app.Run has no platform event loop.
+	ErrPlatformUnsupported = errors.New("app: platform run loop unsupported")
 )
 
 // Runtime is a deterministic serialized app runner. It is exported so the
@@ -127,6 +139,7 @@ type Runtime struct {
 	doneOnce  sync.Once
 
 	virtualTime timeState
+	realTime    bool
 }
 
 // NewRuntime constructs a runtime without running model code.
@@ -156,24 +169,10 @@ func NewRuntime(model Model, options ...Option) *Runtime {
 func (r *Runtime) Init(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.initialized {
-		return r.lastErr
-	}
-	if r.model == nil {
-		return r.failLocked(ErrInvalidModel)
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	r.initialized = true
-	if initializer, ok := r.model.(Initializer); ok {
-		r.commands = append(r.commands, initializer.Init())
-	}
-	r.runCommandsLocked(ctx)
-	r.processQueueLocked()
-	r.reconcileLocked()
-	r.renderLocked()
-	return r.lastErr
+	return r.initLocked(ctx)
 }
 
 // Dispatch delivers one event after initialization. Input consumed by the UI
@@ -197,7 +196,6 @@ func (r *Runtime) Dispatch(event Event) error {
 		if resize.Height > 0 {
 			r.height = resize.Height
 		}
-		r.renderLocked()
 	}
 	if semantic, handled := ui.HandleFrame(r.frame, toUIInput(event), r.focus); handled {
 		if semantic != nil {
@@ -251,6 +249,20 @@ func (r *Runtime) Frame() ui.Frame {
 // must only inspect it outside Update; mutating it breaks the lifecycle rules.
 func (r *Runtime) Model() Model { return r.model }
 
+// Context returns the runtime lifetime context.
+func (r *Runtime) Context() context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ctx
+}
+
+// Stopped reports whether the runtime has stopped.
+func (r *Runtime) Stopped() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopped
+}
+
 // Advance moves the deterministic clock and queues due timer events. It never
 // sleeps, making virtual-time tests independent of wall-clock scheduling.
 func (r *Runtime) Advance(duration time.Duration) error {
@@ -302,6 +314,12 @@ func (r *Runtime) Stop() {
 	r.stopLocked()
 }
 
+func (r *Runtime) enableRealTime() {
+	r.mu.Lock()
+	r.realTime = true
+	r.mu.Unlock()
+}
+
 func (r *Runtime) stopLocked() {
 	if r.stopped {
 		return
@@ -325,7 +343,7 @@ func (r *Runtime) renderLocked() {
 	}
 	node := r.model.View()
 	if node == nil {
-		r.failLocked(ErrInvalidModel)
+		_ = r.failLocked(ErrInvalidModel)
 		return
 	}
 	r.frame = ui.Render(node, r.width, r.height)
@@ -335,7 +353,7 @@ func (r *Runtime) renderLocked() {
 func toUIInput(event Event) ui.Input {
 	switch value := event.(type) {
 	case KeyEvent:
-		key := ui.Key(value.Key)
+		var key ui.Key
 		switch value.Key {
 		case KeyEnter:
 			key = ui.KeyEnter
@@ -345,6 +363,11 @@ func toUIInput(event Event) ui.Input {
 			key = ui.KeyTab
 		case KeySpace:
 			key = ui.KeySpace
+		default:
+			if value.Key < 0 {
+				return ui.Input{}
+			}
+			key = ui.Key(value.Key)
 		}
 		return ui.KeyInput{Kind: ui.KeyInputKind, Key: key, Shift: value.Shift, Ctrl: value.Ctrl, Alt: value.Alt}
 	case MouseEvent:

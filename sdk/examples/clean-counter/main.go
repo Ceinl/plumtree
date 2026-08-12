@@ -13,11 +13,11 @@ type increment struct{}
 type counter struct{ count int }
 
 func (model *counter) Update(event app.Event) app.Command {
-	switch event.(type) {
+	switch event := event.(type) {
 	case increment:
 		model.count++
 	case app.KeyEvent:
-		if event.(app.KeyEvent).Key == 'q' {
+		if event.Key == 'q' {
 			return app.Quit(app.WithGoodbye("Thanks for using clean-counter."))
 		}
 	}
