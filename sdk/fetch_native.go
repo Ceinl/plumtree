@@ -4,6 +4,7 @@ package sdk
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"time"
@@ -14,7 +15,7 @@ import (
 // Native fetch uses the process's network directly, so `go run .` can develop
 // against real endpoints. The hosted build instead routes through the platform's
 // default-deny egress allowlist.
-func fetch(method, url string, body []byte) (Response, error) {
+func fetch(ctx context.Context, method, url string, body []byte) (Response, error) {
 	if len(url) == 0 || len(url) > abi.FetchMaxURL || len(body) > abi.FetchMaxBody {
 		return Response{}, ErrFetchTooLarge
 	}
@@ -25,13 +26,16 @@ func fetch(method, url string, body []byte) (Response, error) {
 	if len(body) > 0 {
 		r = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, url, r)
+	req, err := http.NewRequestWithContext(ctx, method, url, r)
 	if err != nil {
 		return Response{}, ErrFetchFailed
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Response{}, ctxErr
+		}
 		return Response{}, ErrFetchFailed
 	}
 	defer resp.Body.Close()
@@ -39,6 +43,9 @@ func fetch(method, url string, body []byte) (Response, error) {
 	// oversized one is reported rather than silently truncated by LimitReader.
 	out, err := io.ReadAll(io.LimitReader(resp.Body, abi.FetchMaxBody+1))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Response{}, ctxErr
+		}
 		return Response{}, ErrFetchFailed
 	}
 	if len(out) > abi.FetchMaxBody {

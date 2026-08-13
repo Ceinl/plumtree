@@ -1,6 +1,9 @@
 package sdk
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // Gated outbound HTTP — the claimed-and-allowlisted capability. Egress is
 // default-deny: an app reaches the network only after it is claimed and the
@@ -29,7 +32,15 @@ type Response struct {
 
 // Fetch performs an outbound HTTP request. method defaults to GET when empty;
 // body may be nil. It returns ErrEgressDenied when the target is not allowlisted.
-func Fetch(method, url string, body []byte) (Response, error) { return fetch(method, url, body) }
+func Fetch(method, url string, body []byte) (Response, error) {
+	return FetchContext(context.Background(), method, url, body)
+}
+
+// FetchContext performs an outbound HTTP request and cancels the selected
+// adapter when ctx ends.
+func FetchContext(ctx context.Context, method, url string, body []byte) (Response, error) {
+	return fetch(ctx, method, url, body)
+}
 
 // Get is a convenience wrapper for a GET request.
-func Get(url string) (Response, error) { return fetch("GET", url, nil) }
+func Get(url string) (Response, error) { return Fetch("GET", url, nil) }
