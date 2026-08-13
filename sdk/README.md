@@ -10,6 +10,10 @@ owns declarative nodes and structured drawing, and `sdk/plumtest` drives models
 without sleeps, subprocesses, global argv/stdio, or external services. Existing
 root SDK APIs remain selected until the later consumer cutover.
 
+The finite surface is separate: `sdk/cli` owns one bounded immutable command
+tree, synchronous handlers, typed parsing, result presentation, and stable
+exit/errors. It does not start the interactive model lifecycle.
+
 The typed capability surface is also additive at this step. Each capability
 owns its operation builder, result, bounds, stable errors, and native/hosted
 adapter boundary. `Run(ctx)` executes once for finite code; `Map(...)` converts
@@ -87,8 +91,9 @@ func main() { sdk.RunTUI(&model{}, sdk.Meta{Name: "counter", Type: "tui"}) }
 | --- | --- |
 | `github.com/Ceinl/plumtree/sdk` | `RunTUI`, `CLI`, `Model`, `Event`/`KeyMsg`/`MouseMsg`/`ResizeMsg`/`MessageMsg`, `Meta`, `Quit`, `Ctx`/`Out`. |
 | `github.com/Ceinl/plumtree/sdk/app` | Clean interactive model lifecycle, input events, finite commands, quit/goodbye, and declarative subscriptions. |
+| `github.com/Ceinl/plumtree/sdk/cli` | Bounded immutable command trees, typed flags/arguments, help/schema, synchronous handlers, human/JSON output, and shell-style lexing without shell execution. |
 | `github.com/Ceinl/plumtree/sdk/ui` | Chained declarative nodes, semantic themes, focus/input routing, structured frames, and clipped canvas drawing. |
-| `github.com/Ceinl/plumtree/sdk/plumtest` | Deterministic in-process model/runtime harness with virtual time, viewport, input, view, and fixture assertions. |
+| `github.com/Ceinl/plumtree/sdk/plumtest` | Deterministic in-process model/runtime and `InvokeCLI` harness with virtual time, argv, streams, output, and fixture assertions. |
 | `github.com/Ceinl/plumtree/sdk/kv` | Typed durable `Get`, `Set`, `Delete`, `List`, and `CompareAndSwap` operations. |
 | `github.com/Ceinl/plumtree/sdk/bus` | Typed best-effort `Publish` and declarative `Messages` subscriptions. |
 | `github.com/Ceinl/plumtree/sdk/identity` | Typed connected-session `Whoami` operation. |
@@ -119,6 +124,40 @@ The SDK module is self-contained. Its TUI implementation is private under
 No package exposes a generic capability registry, string dispatch, or generic
 RPC payload. The compatibility root remains in place solely for the ordered
 consumer cutover that follows this issue.
+
+## Finite CLI
+
+Declare commands as values and attach handlers without mutating process
+arguments or streams in application code:
+
+```go
+func commands() cli.Command {
+    by := cli.IntFlag("by", "amount to add").WithShort('b').WithDefault(1)
+    return cli.Root("counter", cli.New("add", "add to the count").
+        WithFlag(by).
+        WithHandler(func(ctx cli.Context, _ []string) (cli.Output, error) {
+            amount, err := ctx.Int("by")
+            if err != nil { return cli.Empty(), err }
+            result := struct { Count int `json:"count"` }{Count: amount}
+            return cli.Present(result, func(out cli.Writer, value struct { Count int `json:"count"` }) {
+                out.Printf("Count: %d\n", value.Count)
+            }), nil
+        }))
+}
+
+func main() { cli.Run(commands()) }
+```
+
+`--json` serializes the same typed result as the human renderer. `--help`,
+typed flags, `--`, bounded positional arguments, and nested subcommands are
+validated before a handler runs. `cli.Lex` accepts quoted and escaped SSH exec
+words but never expands variables or invokes a shell. Use
+`plumtest.InvokeCLI(t, commands(), plumtest.Args("add", "--by", "2"))` for
+deterministic argv, stdin, stderr, exit, human, JSON, and lexer tests.
+
+An interactive leaf may attach the same tree with `app.WithCommands`. A native
+exec invocation dispatches the tree before model initialization; an ordinary
+interactive invocation keeps the serialized `Update`/`View` lifecycle.
 
 ## Clean interactive example
 

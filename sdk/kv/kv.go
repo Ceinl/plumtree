@@ -114,7 +114,14 @@ func Get(key string) GetOperation {
 		if err := ctx.Err(); err != nil {
 			return GetResult{Err: err}
 		}
-		value, found, err := legacy.KVGet(key)
+		var value []byte
+		var found bool
+		var err error
+		if adapter := adapterFor(ctx); adapter != nil {
+			value, found, err = adapter.Get(key)
+		} else {
+			value, found, err = legacy.KVGet(key)
+		}
 		return GetResult{Value: append([]byte(nil), value...), Found: found, Err: normalize(err)}
 	})}
 }
@@ -129,6 +136,9 @@ func Set(key string, value []byte) SetOperation {
 		if err := ctx.Err(); err != nil {
 			return SetResult{Err: err}
 		}
+		if adapter := adapterFor(ctx); adapter != nil {
+			return SetResult{Err: normalize(adapter.Set(key, copyValue))}
+		}
 		return SetResult{Err: normalize(legacy.KVSet(key, copyValue))}
 	})}
 }
@@ -141,6 +151,9 @@ func Delete(key string) DeleteOperation {
 		}
 		if err := ctx.Err(); err != nil {
 			return DeleteResult{Err: err}
+		}
+		if adapter := adapterFor(ctx); adapter != nil {
+			return DeleteResult{Err: normalize(adapter.Delete(key))}
 		}
 		return DeleteResult{Err: normalize(legacy.KVDelete(key))}
 	})}
@@ -158,7 +171,13 @@ func List(prefix string, limit int) ListOperation {
 		if err := ctx.Err(); err != nil {
 			return ListResult{Err: err}
 		}
-		keys, err := legacy.KVList(prefix, limit)
+		var keys []string
+		var err error
+		if adapter := adapterFor(ctx); adapter != nil {
+			keys, err = adapter.List(prefix, limit)
+		} else {
+			keys, err = legacy.KVList(prefix, limit)
+		}
 		return ListResult{Keys: append([]string(nil), keys...), Err: normalize(err)}
 	})}
 }
@@ -172,6 +191,9 @@ func CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) Compar
 		}
 		if err := ctx.Err(); err != nil {
 			return CompareAndSwapResult{Err: err}
+		}
+		if adapter := adapterFor(ctx); adapter != nil {
+			return CompareAndSwapResult{Err: normalize(adapter.CompareAndSwap(key, expected, copyValue))}
 		}
 		return CompareAndSwapResult{Err: normalize(legacy.KVCompareAndSwap(key, expected, copyValue))}
 	})}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Ceinl/plumtree/sdk/cli"
 	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
@@ -246,6 +247,31 @@ func TestRuntimeSerializesInitInputAndVirtualSubscriptions(t *testing.T) {
 	}
 	if got := runtime.FocusKey(); got != "increment" {
 		t.Fatalf("focus = %q", got)
+	}
+}
+
+func TestWithCommandsAttachesWithoutInitializingRuntime(t *testing.T) {
+	command := cli.Root("attached", cli.New("run", "run command").
+		WithFlag(cli.StringFlag("name", "name")).
+		WithArgument(cli.StringArg("target", "target")))
+	option := WithCommands(command)
+	command.Subcommands[0].Flags[0].Name = "changed"
+	command.Subcommands[0].Arguments[0].Name = "changed"
+	runtime := NewRuntime(&testModel{}, option)
+	got, attached := runtime.Commands()
+	if !attached || got.Summary != "attached" {
+		t.Fatalf("attached command = %#v, attached=%t", got, attached)
+	}
+	if got.Subcommands[0].Flags[0].Name != "name" || got.Subcommands[0].Arguments[0].Name != "target" {
+		t.Fatalf("attached command shares caller slices: %#v", got.Subcommands[0])
+	}
+	got.Subcommands[0].Flags[0].Name = "returned"
+	again, _ := runtime.Commands()
+	if again.Subcommands[0].Flags[0].Name != "name" {
+		t.Fatalf("returned command shares runtime slices: %#v", again.Subcommands[0])
+	}
+	if runtime.Err() != nil {
+		t.Fatal(runtime.Err())
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ceinl/plumtree/sdk/cli"
 	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
@@ -79,6 +80,9 @@ func Run(model Model, options ...Option) {
 // RunErr starts an application and returns initialization or platform errors.
 func RunErr(model Model, options ...Option) error {
 	runtime := NewRuntime(model, options...)
+	if runCLIIfRequested(runtime) {
+		return nil
+	}
 	runtime.enableRealTime()
 	if err := runtime.Init(context.Background()); err != nil {
 		return err
@@ -90,8 +94,34 @@ func RunErr(model Model, options ...Option) error {
 type Option func(*runtimeOptions)
 
 type runtimeOptions struct {
-	width  int
-	height int
+	width       int
+	height      int
+	commandTree cli.Command
+	commandSet  bool
+}
+
+// WithCommands attaches a finite command tree to an interactive leaf. The
+// native runtime dispatches an exec invocation before model initialization;
+// the interactive path continues through the normal app lifecycle.
+func WithCommands(commands cli.Command) Option {
+	commands = cloneCommand(commands)
+	return func(options *runtimeOptions) {
+		options.commandTree = commands
+		options.commandSet = true
+	}
+}
+
+func cloneCommand(command cli.Command) cli.Command {
+	command.Flags = append([]cli.Flag(nil), command.Flags...)
+	command.Arguments = append([]cli.Argument(nil), command.Arguments...)
+	if len(command.Subcommands) > 0 {
+		subcommands := command.Subcommands
+		command.Subcommands = make([]cli.Command, len(subcommands))
+		for index, child := range subcommands {
+			command.Subcommands[index] = cloneCommand(child)
+		}
+	}
+	return command
 }
 
 // Viewport supplies the initial render dimensions. Zero uses 80 by 24.
@@ -130,6 +160,8 @@ type Runtime struct {
 	quit        bool
 	goodbye     Goodbye
 	lastErr     error
+	commandTree cli.Command
+	commandSet  bool
 
 	queue     []Event
 	commands  []Command
@@ -160,10 +192,15 @@ func NewRuntime(model Model, options ...Option) *Runtime {
 	return &Runtime{
 		model: model, ctx: ctx, cancel: cancel,
 		width: settings.width, height: settings.height,
+		commandTree: settings.commandTree, commandSet: settings.commandSet,
 		focus: ui.NewFocus(), subs: make(map[SubscriptionKey]SubscriptionSpec), subCancel: make(map[SubscriptionKey]context.CancelFunc),
 		done: make(chan struct{}),
 	}
 }
+
+// Commands returns the attached finite tree, if any. Host integrations use
+// this during exec dispatch; an ordinary interactive session does not need it.
+func (r *Runtime) Commands() (cli.Command, bool) { return cloneCommand(r.commandTree), r.commandSet }
 
 // Init runs optional initialization, reconciles subscriptions, and renders.
 func (r *Runtime) Init(ctx context.Context) error {
