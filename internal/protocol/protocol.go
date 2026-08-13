@@ -35,6 +35,7 @@ const (
 	OpTimerStart   Op = 18
 	OpTimerCancel  Op = 19
 	OpOutputStderr Op = 20 // worker -> parent: stderr output
+	OpInput        Op = 21 // worker -> parent: request stdin bytes
 )
 
 // MaxFrame bounds a single protocol message before any payload allocation.

@@ -78,6 +78,35 @@ func TestCleanCLIStreamsAndArgvHostedByBothRunners(t *testing.T) {
 	}
 }
 
+func TestCleanCLIStdinHostedByBothRunners(t *testing.T) {
+	wasm := buildGuest(t, "testdata/cleancli", "GOWORK=off")
+	for _, test := range []struct {
+		name string
+		run  func(CLIStreams) error
+	}{
+		{name: "in-process", run: func(streams CLIStreams) error {
+			return RunCLIWithStreams(context.Background(), wasm, DefaultLimits, Capabilities{}, []string{"stdin"}, streams)
+		}},
+		{name: "isolated-worker", run: func(streams CLIStreams) error {
+			return NewProcessRunner(buildWorker(t)).RunCLIWithStreams(context.Background(), wasm, DefaultLimits, Capabilities{}, []string{"stdin"}, streams)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr strings.Builder
+			streams := CLIStreams{Stdin: strings.NewReader("clean-cli-input"), Stdout: &stdout, Stderr: &stderr}
+			if err := test.run(streams); err != nil {
+				t.Fatal(err)
+			}
+			if got := stdout.String(); got != "clean-cli-input\n" {
+				t.Fatalf("stdout = %q", got)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestCleanCLIExitAndStderrParity(t *testing.T) {
 	wasm := buildGuest(t, "testdata/cleancli", "GOWORK=off")
 	for _, test := range []struct {

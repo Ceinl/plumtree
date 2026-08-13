@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/cli"
 	"github.com/Ceinl/plumtree/sdk/ui"
@@ -13,6 +15,15 @@ func main() {
 			WithArgument(cli.StringArg("name", "name to greet")).
 			WithHandler(func(_ cli.Context, _ []string) (cli.Output, error) {
 				return cli.Value("clean-cli-ok"), nil
+			}),
+	).WithCommand(
+		cli.New("stdin", "copy standard input").
+			WithHandler(func(context cli.Context, _ []string) (cli.Output, error) {
+				input, err := io.ReadAll(context.Stdin)
+				if err != nil {
+					return cli.Empty(), err
+				}
+				return cli.Value(string(input)), nil
 			}),
 	).WithCommand(
 		cli.New("fail", "write an error").

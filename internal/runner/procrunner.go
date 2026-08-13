@@ -62,6 +62,7 @@ func (pr *ProcessRunner) RunCLI(ctx context.Context, wasm []byte, lim Limits, ca
 	return pr.RunCLIWithStreams(ctx, wasm, lim, caps, args, CLIStreams{Stdout: out, Stderr: out})
 }
 
+// RunCLIWithStreams runs an isolated finite guest with distinct standard streams.
 func (pr *ProcessRunner) RunCLIWithStreams(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, streams CLIStreams) error {
 	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, streams, nil)
 }
@@ -161,6 +162,7 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 const (
 	maxEncodedFrame = 8 + 150_000*11
 	maxWorkerOutput = 64 << 10
+	maxWorkerInput  = 64 << 10
 	maxWorkerError  = 64 << 10
 	maxEncodedFetch = 2 + abi.FetchMaxMethod + 2 + abi.FetchMaxURL + 4 + abi.FetchMaxBody
 	maxEncodedExec  = 4 + abi.ExecMaxName + 4 + abi.ExecMaxArgs*(4+abi.ExecMaxArg)
@@ -170,6 +172,8 @@ func maxWorkerPayload(o op) uint32 {
 	switch o {
 	case opRecv, opAuth:
 		return 0
+	case opInput:
+		return 4
 	case opPresent:
 		return maxEncodedFrame
 	case opKVGet, opKVDel:
@@ -475,6 +479,31 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 			return err
 		}
 		return writeMsg(w, opResp, nil)
+
+	case opInput:
+		if len(payload) != 4 {
+			return errProtocol
+		}
+		requested := binary.LittleEndian.Uint32(payload)
+		if requested == 0 || requested > maxWorkerInput {
+			return errProtocol
+		}
+		if streams.Stdin == nil {
+			return writeMsg(w, opResp, []byte{stdinEOF})
+		}
+		buffer := make([]byte, requested)
+		n, err := streams.Stdin.Read(buffer)
+		if n < 0 || n > len(buffer) {
+			return errProtocol
+		}
+		status := byte(stdinOK)
+		switch {
+		case errors.Is(err, io.EOF):
+			status = stdinEOF
+		case err != nil:
+			status = stdinError
+		}
+		return writeMsg(w, opResp, append([]byte{status}, buffer[:n]...))
 
 	default:
 		return errProtocol

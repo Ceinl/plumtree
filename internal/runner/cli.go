@@ -13,23 +13,23 @@ import (
 	"github.com/tetratelabs/wazero/sys"
 )
 
-// RunCLI runs a non-interactive guest command, forwarding its text output to
-// out with control characters stripped (the host-side filtering that stops a
-// CLI guest from emitting raw terminal escapes). args are passed as the guest's
-// program arguments.
-//
-// Like Run, RunCLI compiles the WASM from scratch each call; use a Runner to
-// reuse compiled code across sessions of the same module.
+// CLIStreams supplies the finite guest's standard streams.
 type CLIStreams struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 }
 
+// RunCLI runs a non-interactive guest command, forwarding its text output to
+// out with control characters stripped (the host-side filtering that stops a
+// CLI guest from emitting raw terminal escapes). args are passed as the guest's
+// program arguments. Like Run, it compiles the WASM from scratch each call;
+// use a Runner to reuse compiled code across sessions of the same module.
 func RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
 	return RunCLIWithStreams(ctx, wasm, lim, caps, args, CLIStreams{Stdout: out, Stderr: out})
 }
 
+// RunCLIWithStreams runs a finite guest with distinct standard streams.
 func RunCLIWithStreams(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, streams CLIStreams) error {
 	return runCLI(ctx, nil, wasm, lim, caps, args, streams)
 }

@@ -46,6 +46,7 @@ const (
 	opTimerStart   = protocol.OpTimerStart
 	opTimerCancel  = protocol.OpTimerCancel
 	opOutputStderr = protocol.OpOutputStderr
+	opInput        = protocol.OpInput
 	maxFrame       = protocol.MaxFrame
 )
 
