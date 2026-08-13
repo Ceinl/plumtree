@@ -23,20 +23,26 @@ func runCLIIfRequested(runtime *Runtime) bool {
 	return true
 }
 
-func runPlatform(runtime *Runtime) {
-	if runtime.stopped {
-		return
+func runPlatform(runtime *Runtime) error {
+	defer runtime.Stop()
+	if runtime.Stopped() {
+		return runtime.Err()
 	}
-	fmt.Fprintln(os.Stdout, runtime.Frame().Text())
-	for event := range keyboard.Listen(runtime.ctx) {
-		if err := runtime.Dispatch(platformEvent(event)); err != nil {
-			return
+	_, _ = fmt.Fprintln(os.Stdout, runtime.Frame().Text())
+	for event := range keyboard.Listen(runtime.Context()) {
+		converted := platformEvent(event)
+		if converted == nil {
+			continue
+		}
+		if err := runtime.Dispatch(converted); err != nil {
+			return err
 		}
 		if runtime.QuitRequested() {
-			return
+			return runtime.Err()
 		}
-		fmt.Fprintln(os.Stdout, runtime.Frame().Text())
+		_, _ = fmt.Fprintln(os.Stdout, runtime.Frame().Text())
 	}
+	return runtime.Err()
 }
 
 func platformEvent(event keyboard.Event) Event {
@@ -72,6 +78,6 @@ func platformEvent(event keyboard.Event) Event {
 	case keyboard.KeyMouseWheelDown:
 		return MouseEvent{X: event.MouseX, Y: event.MouseY, Button: MouseNone, Action: MouseWheelDown}
 	default:
-		return KeyEvent{Key: Key(event.Ch), Shift: event.Shift, Ctrl: event.Ctrl, Alt: event.Alt, Cmd: event.Cmd}
+		return nil
 	}
 }

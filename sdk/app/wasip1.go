@@ -36,7 +36,8 @@ func runCLIIfRequested(runtime *Runtime) bool {
 	return true
 }
 
-func runPlatform(rt *Runtime) {
+func runPlatform(rt *Runtime) error {
+	defer rt.Stop()
 	var eventBuffer [4096]byte
 	var encoded []byte
 	converter := cleanFrameConverter{}
@@ -44,13 +45,13 @@ func runPlatform(rt *Runtime) {
 	for {
 		n := hostRecv(int32(uintptr(unsafe.Pointer(&eventBuffer[0]))), int32(len(eventBuffer)))
 		if n < 0 {
-			return
+			return rt.Err()
 		}
 		if n > 0 {
 			if event, err := abi.DecodeEvent(eventBuffer[:n]); err == nil {
 				if mapped, ok := cleanEvent(event); ok {
 					if err := rt.Dispatch(mapped); err != nil {
-						return
+						return err
 					}
 				}
 			}
@@ -61,7 +62,7 @@ func runPlatform(rt *Runtime) {
 		hostPresent(int32(uintptr(unsafe.Pointer(&encoded[0]))), int32(len(encoded)))
 		runtime.KeepAlive(encoded)
 		if rt.QuitRequested() {
-			return
+			return rt.Err()
 		}
 	}
 }

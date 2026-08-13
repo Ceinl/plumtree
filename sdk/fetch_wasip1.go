@@ -3,6 +3,7 @@
 package sdk
 
 import (
+	"context"
 	"runtime"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -11,15 +12,21 @@ import (
 //go:wasmimport plumtree fetch
 func hostFetch(reqPtr, reqLen, outPtr, outCap int32) int32
 
-func fetch(method, url string, body []byte) (Response, error) {
+func fetch(ctx context.Context, method, url string, body []byte) (Response, error) {
 	if len(url) == 0 || len(url) > abi.FetchMaxURL || len(body) > abi.FetchMaxBody {
 		return Response{}, ErrFetchTooLarge
+	}
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
 	}
 	enc := abi.EncodeFetchRequest(abi.FetchRequest{Method: method, URL: url, Body: body})
 	buf := make([]byte, 4096)
 	for {
 		n := hostFetch(bytePtr(enc), int32(len(enc)), bytePtr(buf), int32(len(buf)))
 		runtime.KeepAlive(enc)
+		if err := ctx.Err(); err != nil {
+			return Response{}, err
+		}
 		switch {
 		case n == abi.FetchErrDenied:
 			return Response{}, ErrEgressDenied

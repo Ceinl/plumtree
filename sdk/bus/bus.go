@@ -23,8 +23,8 @@ var (
 	ErrTooLarge    = errors.New("bus: topic or payload too large")
 )
 
-// Message is a copied topic notification. Err is populated only when the
-// selected adapter cannot provide the requested subscription.
+// Message is a copied topic notification. Err reports invalid subscription
+// input or a selected adapter that cannot provide the subscription.
 type Message struct {
 	Topic string
 	Data  []byte
@@ -61,6 +61,20 @@ func Publish(topic string, data []byte) PublishOperation {
 // event queue, preserving serialized model updates.
 func Messages(key app.SubscriptionKey, topic string, mapper func(Message) app.Event) app.Subscription {
 	definition := fmt.Sprintf("bus:%s", topic)
+	if err := validate(topic, nil); err != nil {
+		return app.Source(key, definition, func(ctx context.Context, emit func(app.Event)) {
+			if mapper == nil {
+				return
+			}
+			event := mapper(Message{Topic: topic, Err: err})
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				emit(event)
+			}
+		})
+	}
 	return app.Source(key, definition, messageSource(topic, mapper))
 }
 

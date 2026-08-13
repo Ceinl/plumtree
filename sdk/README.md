@@ -119,7 +119,7 @@ The SDK module is self-contained. Its TUI implementation is private under
 | `secrets` | Owner-enabled app secret store; value lives in result | Process environment / isolated server secret capability | `ErrInvalid`, `ErrTooLarge`, `ErrUnavailable` |
 | `fetch` | Owner-enabled app egress allowlist; response lives in result | Local network / isolated gated host fetch | `ErrInvalid`, `ErrTooLarge`, `ErrDenied`, `ErrFailed`, `ErrUnavailable` |
 | `hostexec` | Explicit operator authority; output lives in result | Local process / isolated opt-in host command | `ErrInvalid`, `ErrTooLarge`, `ErrFailed`, `ErrUnavailable` |
-| `timer` | No external authority; event lives until completion | Native clock / app-managed isolated runtime clock | `ErrInvalid` plus context cancellation |
+| `timer` | No external authority; `After` completes once and `Every` lives until model cancellation | Native clock / app-managed isolated runtime clock | `ErrInvalid` plus context cancellation |
 
 No package exposes a generic capability registry, string dispatch, or generic
 RPC payload. The compatibility root remains in place solely for the ordered

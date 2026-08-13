@@ -3,6 +3,7 @@
 package sdk
 
 import (
+	"context"
 	"runtime"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -11,15 +12,21 @@ import (
 //go:wasmimport plumtree exec
 func hostExec(reqPtr, reqLen, outPtr, outCap int32) int32
 
-func execCommand(name string, args []string) (ExecResult, error) {
+func execCommand(ctx context.Context, name string, args []string) (ExecResult, error) {
 	if !validExecRequest(name, args) {
 		return ExecResult{}, ErrExecTooLarge
+	}
+	if err := ctx.Err(); err != nil {
+		return ExecResult{}, err
 	}
 	req := abi.EncodeExecRequest(abi.ExecRequest{Name: name, Args: args})
 	buf := make([]byte, 4096)
 	for {
 		n := hostExec(bytePtr(req), int32(len(req)), bytePtr(buf), int32(len(buf)))
 		runtime.KeepAlive(req)
+		if err := ctx.Err(); err != nil {
+			return ExecResult{}, err
+		}
 		switch {
 		case n == abi.ExecErrUnavailable:
 			return ExecResult{}, ErrExecUnavailable

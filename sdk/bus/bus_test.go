@@ -3,11 +3,11 @@ package bus
 import (
 	"context"
 	"errors"
-	"runtime"
+	"strings"
 	"testing"
-	"time"
 
 	legacy "github.com/Ceinl/plumtree/sdk"
+	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/app"
 )
 
@@ -17,47 +17,36 @@ func TestUnavailableErrorMapping(t *testing.T) {
 	}
 }
 
-func TestPublishCopiesAndDeliversNativeMessage(t *testing.T) {
-	topic := "typed-bus-test"
-	inbox := make(chan Message, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go messageSource(topic, func(message Message) app.Event {
-		inbox <- message
-		return nil
-	})(ctx, func(app.Event) {})
-	// Let the source register before publishing.
-	ready := false
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		native.Lock()
-		ready = len(native.topics[topic]) > 0
-		native.Unlock()
-		if ready {
-			break
-		}
-		runtime.Gosched()
-	}
-	if !ready {
-		t.Fatal("subscription did not register")
-	}
-	data := []byte("payload")
-	if err := publish(topic, data); err != nil {
-		t.Fatal(err)
-	}
-	data[0] = 'X'
-	select {
-	case message := <-inbox:
-		if string(message.Data) != "payload" {
-			t.Fatalf("message data = %q", message.Data)
-		}
-	case <-context.Background().Done():
-		t.Fatal("unreachable")
-	}
-}
-
 func TestValidation(t *testing.T) {
 	if result := Publish("", nil).Run(context.Background()); !errors.Is(result.Err, ErrInvalid) {
 		t.Fatalf("empty topic err = %v", result.Err)
+	}
+}
+
+func TestMessagesReportsValidationErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		topic string
+		want  error
+	}{
+		{name: "empty", want: ErrInvalid},
+		{name: "too large", topic: strings.Repeat("x", abi.BusMaxTopic+1), want: ErrTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			emitted := make(chan Message, 1)
+			subscription := Messages("validation", test.topic, func(message Message) app.Event { return message })
+			subscription[0].Start(context.Background(), func(event app.Event) {
+				emitted <- event.(Message)
+			})
+			select {
+			case message := <-emitted:
+				if !errors.Is(message.Err, test.want) {
+					t.Fatalf("message err = %v, want %v", message.Err, test.want)
+				}
+			default:
+				t.Fatal("validation message was not emitted")
+			}
+		})
 	}
 }

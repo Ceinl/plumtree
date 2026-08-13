@@ -13,7 +13,7 @@ import (
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
 )
 
-var ErrInvalid = errors.New("timer: interval must be positive")
+var ErrInvalid = errors.New("timer: invalid duration")
 
 type Result struct{ Err error }
 
@@ -28,6 +28,9 @@ func After(delay time.Duration) Operation {
 	return Operation{inner: operation.New(func(ctx context.Context) Result {
 		if delay < 0 {
 			return Result{Err: ErrInvalid}
+		}
+		if err := ctx.Err(); err != nil {
+			return Result{Err: err}
 		}
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
@@ -44,8 +47,5 @@ func After(delay time.Duration) Operation {
 // cancellation and reconciliation; the returned subscription has no side
 // effects until installed by a model.
 func Every(key app.SubscriptionKey, interval time.Duration, event app.Event) app.Subscription {
-	if interval <= 0 {
-		return app.Source(key, "timer:invalid", func(context.Context, func(app.Event)) {})
-	}
 	return app.Every(key, interval, event)
 }
