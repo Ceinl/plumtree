@@ -182,8 +182,6 @@ func Canvas(width, height int, draw func(*CanvasSurface)) *CanvasNode {
 	return &CanvasNode{nodeBase: nodeBase{kind: kindCanvas, draw: draw}, width: width, height: height}
 }
 
-func (node *nodeBase) setStyle(fn func(*Style)) { fn(&node.style) }
-
 func (node *Container) Fill() *Container                   { node.fill = true; return node }
 func (node *Container) Gap(size int) *Container            { node.gap = max(0, size); return node }
 func (node *Container) Align(value Alignment) *Container   { node.align = value; return node }
@@ -256,5 +254,3 @@ func max(a, b int) int {
 	}
 	return b
 }
-
-func nodeStyle(node Node) Style { return node.nodeData().style }

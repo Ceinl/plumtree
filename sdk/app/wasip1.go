@@ -4,4 +4,7 @@ package app
 
 func runCLIIfRequested(*Runtime) bool { return false }
 
-func runPlatform(runtime *Runtime) { <-runtime.Done() }
+func runPlatform(runtime *Runtime) error {
+	runtime.Stop()
+	return ErrPlatformUnsupported
+}

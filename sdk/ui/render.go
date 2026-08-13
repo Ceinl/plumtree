@@ -137,18 +137,24 @@ func renderNode(frame *Frame, node Node, x, y, width, height int, theme Theme) {
 }
 
 func renderChildren(frame *Frame, base *nodeBase, x, y, width, height int, theme Theme) {
-	if len(base.children) == 0 {
+	children := make([]Node, 0, len(base.children))
+	for _, child := range base.children {
+		if child != nil {
+			children = append(children, child)
+		}
+	}
+	if len(children) == 0 {
 		return
 	}
 	mainSize := width
 	if base.direction == ColumnLayout {
 		mainSize = height
 	}
-	gaps := max(0, len(base.children)-1) * base.gap
+	gaps := max(0, len(children)-1) * base.gap
 	remaining := max(0, mainSize-gaps)
-	intrinsic := make([]int, len(base.children))
+	intrinsic := make([]int, len(children))
 	fillCount := 0
-	for index, child := range base.children {
+	for index, child := range children {
 		intrinsic[index] = intrinsicMain(child, base.direction, width, height)
 		if child.nodeData().fill {
 			fillCount++
@@ -160,22 +166,59 @@ func renderChildren(frame *Frame, base *nodeBase, x, y, width, height int, theme
 	if fillCount > 0 {
 		fillSize = max(0, remaining) / fillCount
 	}
+	contentSize := gaps
+	for index, child := range children {
+		contentSize += intrinsic[index]
+		if child.nodeData().fill {
+			contentSize += fillSize - intrinsic[index]
+		}
+	}
 	position := 0
-	for index, child := range base.children {
+	free := max(0, mainSize-contentSize)
+	switch base.justify {
+	case Center:
+		position = free / 2
+	case End:
+		position = free
+	}
+	for index, child := range children {
 		size := intrinsic[index]
 		if child.nodeData().fill {
 			size = fillSize
 		}
-		if index == len(base.children)-1 && child.nodeData().fill {
+		if index == len(children)-1 && child.nodeData().fill {
 			size = max(0, mainSize-position)
 		}
+		size = min(size, max(0, mainSize-position))
+		crossSize := intrinsicCross(child, base.direction, width, height)
+		crossLimit := height
 		if base.direction == ColumnLayout {
-			renderNode(frame, child, x, y+position, width, size, theme)
+			crossLimit = width
+		}
+		crossSize = min(crossSize, crossLimit)
+		crossPosition := 0
+		switch base.align {
+		case Stretch:
+			crossSize = crossLimit
+		case Center:
+			crossPosition = max(0, crossLimit-crossSize) / 2
+		case End:
+			crossPosition = max(0, crossLimit-crossSize)
+		}
+		if base.direction == ColumnLayout {
+			renderNode(frame, child, x+crossPosition, y+position, crossSize, size, theme)
 		} else {
-			renderNode(frame, child, x+position, y, size, height, theme)
+			renderNode(frame, child, x+position, y+crossPosition, size, crossSize, theme)
 		}
 		position += size + base.gap
 	}
+}
+
+func intrinsicCross(node Node, direction Direction, width, height int) int {
+	if direction == ColumnLayout {
+		return intrinsicMain(node, RowLayout, width, height)
+	}
+	return intrinsicMain(node, ColumnLayout, width, height)
 }
 
 func intrinsicMain(node Node, direction Direction, width, height int) int {
@@ -225,9 +268,17 @@ func drawText(frame *Frame, x, y, width, height int, text string, style Style) {
 			if x+offset < 0 || x+offset >= frame.width {
 				continue
 			}
-			frame.cells[y+lineIndex][x+offset] = Cell{Rune: runes[offset], Style: style}
+			value := runes[offset]
+			if !safeRune(value) {
+				value = '\ufffd'
+			}
+			frame.cells[y+lineIndex][x+offset] = Cell{Rune: value, Style: style}
 		}
 	}
+}
+
+func safeRune(value rune) bool {
+	return value >= 0x20 && value != 0x7f && !(value >= 0x80 && value <= 0x9f)
 }
 
 func drawBorder(frame *Frame, x, y, width, height int, border BorderStyle, style Style) {

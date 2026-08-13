@@ -1,6 +1,9 @@
 package sdk
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // Exec runs a program on the server host. Hosted apps receive this capability
 // only when the operator explicitly enables allowHostCommands, and only after
@@ -9,7 +12,15 @@ import "errors"
 //
 // The command is executed directly, without a shell. Use Exec("sh", "-lc",
 // script) when shell syntax is intentionally required.
-func Exec(name string, args ...string) (ExecResult, error) { return execCommand(name, args) }
+func Exec(name string, args ...string) (ExecResult, error) {
+	return ExecContext(context.Background(), name, args...)
+}
+
+// ExecContext runs a host command and terminates the selected adapter when ctx
+// ends.
+func ExecContext(ctx context.Context, name string, args ...string) (ExecResult, error) {
+	return execCommand(ctx, name, args)
+}
 
 type ExecResult struct {
 	ExitCode int

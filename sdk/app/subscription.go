@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -59,21 +60,23 @@ func (r *Runtime) reconcileLocked() {
 		return
 	}
 	declared := map[SubscriptionKey]SubscriptionSpec{}
+	var declaredOrder []SubscriptionSpec
 	if subscriber, ok := r.model.(Subscriber); ok {
 		for _, spec := range subscriber.Subscriptions() {
 			if spec.Key == "" {
-				r.failLocked(fmt.Errorf("app: subscription key is empty"))
+				_ = r.failLocked(fmt.Errorf("app: subscription key is empty"))
 				return
 			}
 			if _, exists := declared[spec.Key]; exists {
-				r.failLocked(fmt.Errorf("app: duplicate subscription key %q", spec.Key))
+				_ = r.failLocked(fmt.Errorf("app: duplicate subscription key %q", spec.Key))
 				return
 			}
 			if spec.Timer != nil && spec.Timer.Interval <= 0 {
-				r.failLocked(fmt.Errorf("app: subscription %q has invalid interval", spec.Key))
+				_ = r.failLocked(fmt.Errorf("app: subscription %q has invalid interval", spec.Key))
 				return
 			}
 			declared[spec.Key] = spec
+			declaredOrder = append(declaredOrder, spec)
 		}
 	}
 	for key := range r.subs {
@@ -85,7 +88,8 @@ func (r *Runtime) reconcileLocked() {
 			delete(r.subs, key)
 		}
 	}
-	for key, spec := range declared {
+	for _, spec := range declaredOrder {
+		key := spec.Key
 		previous, present := r.subs[key]
 		if present && previous.Definition == spec.Definition {
 			continue
@@ -94,14 +98,29 @@ func (r *Runtime) reconcileLocked() {
 			cancel()
 		}
 		r.subs[key] = spec
-		if spec.Start != nil {
-			start := spec.Start
+		if spec.Start != nil || (r.realTime && spec.Timer != nil) {
 			sourceContext, cancel := context.WithCancel(r.ctx)
 			r.subCancel[key] = cancel
+			start := spec.Start
+			if spec.Timer != nil {
+				timer := *spec.Timer
+				start = func(ctx context.Context, emit func(Event)) {
+					ticker := time.NewTicker(timer.Interval)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+							emit(timer.Event)
+						}
+					}
+				}
+			}
 			go start(sourceContext, func(event Event) {
 				r.mu.Lock()
 				defer r.mu.Unlock()
-				if !r.stopped {
+				if sourceContext.Err() == nil && !r.stopped {
 					r.queue = append(r.queue, event)
 					r.processQueueLocked()
 				}
@@ -117,7 +136,13 @@ func (clock *timeState) advance(duration time.Duration, subscriptions map[Subscr
 		return
 	}
 	clock.elapsed += duration
-	for _, spec := range subscriptions {
+	keys := make([]string, 0, len(subscriptions))
+	for key := range subscriptions {
+		keys = append(keys, string(key))
+	}
+	sort.Strings(keys)
+	for _, rawKey := range keys {
+		spec := subscriptions[SubscriptionKey(rawKey)]
 		if spec.Timer == nil || spec.Timer.Interval <= 0 {
 			continue
 		}
