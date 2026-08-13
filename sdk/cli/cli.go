@@ -550,15 +550,15 @@ func normalizeFailure(err error, usage bool) Error {
 	if errors.Is(err, ErrUsage) || errors.Is(err, ErrUnknown) || errors.Is(err, ErrMissing) || errors.Is(err, ErrInvalid) || errors.Is(err, ErrLexer) {
 		code, message, exit = "usage", err.Error(), 2
 	}
-	if usage {
-		code, exit = "invalid_definition", 2
-		message = err.Error()
-	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrCanceled) {
 		code, message, exit = "canceled", "invocation canceled", 1
 	}
 	if errors.Is(err, ErrLimit) {
 		code, message, exit = "limit", "invocation limit exceeded", 1
+	}
+	if usage {
+		code, exit = "invalid_definition", 2
+		message = err.Error()
 	}
 	return sanitizeFailure(Error{Code: code, Message: message, ExitCode: exit, ShowUsage: usage})
 }
@@ -631,7 +631,7 @@ func parse(ctx context.Context, root Command, raw []string, stdin io.Reader) (in
 			if consumed > 0 {
 				index += consumed
 			}
-			if err := setFlag(result.values, flag, value, hasValue, nil); err != nil {
+			if err := setFlag(result.values, flag, value, hasValue); err != nil {
 				return result, flagFailure(flag, err)
 			}
 			continue
@@ -648,6 +648,8 @@ func parse(ctx context.Context, root Command, raw []string, stdin io.Reader) (in
 			if child, ok := findCommand(command.Subcommands, token); ok && len(positionals) == 0 {
 				command = child
 				path = append(path, child.Name)
+				result.command = command
+				result.path = strings.Join(path, " ")
 				positionals = positionals[:0]
 				stopFlags = false
 				continue
@@ -732,12 +734,16 @@ func consumeFlag(flag Flag, value string, hasValue bool, rest []string) (int, er
 	return 0, nil
 }
 
-func setFlag(values map[string]any, flag Flag, value string, hasValue bool, rest []string) error {
+func setFlag(values map[string]any, flag Flag, value string, hasValue bool) error {
 	if !hasValue && flag.Kind == BoolValue {
 		value = "true"
-		hasValue = true
 	} else if !hasValue {
-		value = rest[0]
+		return ErrMissing
+	}
+	if flag.Validate != nil {
+		if err := flag.Validate(value); err != nil {
+			return err
+		}
 	}
 	if flag.Repeated {
 		parsed, err := parseValue(StringValue, value, false)
@@ -752,16 +758,12 @@ func setFlag(values map[string]any, flag Flag, value string, hasValue bool, rest
 	if err != nil {
 		return err
 	}
-	if flag.Validate != nil {
-		if err := flag.Validate(value); err != nil {
-			return err
-		}
-	}
 	values[flag.Name] = parsed
 	return nil
 }
 
 func parseShortFlags(flags []Flag, raw string, rest []string, values map[string]any) (int, *Error) {
+	consumed := 0
 	for offset := 0; offset < len(raw); offset++ {
 		flag, ok := findShortFlag(flags, rune(raw[offset]))
 		if !ok {
@@ -772,28 +774,18 @@ func parseShortFlags(flags []Flag, raw string, rest []string, values map[string]
 			continue
 		}
 		value := raw[offset+1:]
-		consumed := 0
 		if value == "" {
 			if len(rest) == 0 {
 				return 0, &Error{Code: "missing_value", Message: "flag -" + string(flag.Short) + " requires a value", ExitCode: 2, ShowUsage: true}
 			}
 			value, consumed = rest[0], 1
 		}
-		if err := setFlag(values, flag, value, true, nil); err != nil {
+		if err := setFlag(values, flag, value, true); err != nil {
 			return consumed, flagFailure(flag, err)
 		}
 		break
 	}
-	return consumedForShort(raw, flags, rest), nil
-}
-
-func consumedForShort(raw string, flags []Flag, rest []string) int {
-	for _, flag := range flags {
-		if flag.Short != 0 && strings.ContainsRune(raw, flag.Short) && flag.Kind != BoolValue && len(raw) == 1 && len(rest) > 0 {
-			return 1
-		}
-	}
-	return 0
+	return consumed, nil
 }
 
 func parseValue(kind ValueKind, raw string, emptyBool bool) (any, error) {
@@ -985,6 +977,9 @@ func validateCommand(command Command, depth int, count *int) error {
 		}
 	}
 	seenArgs := map[string]bool{}
+	if len(command.Arguments) > command.Args.Max {
+		return fmt.Errorf("%w: command %q declares %d arguments but accepts at most %d", ErrUsage, command.Name, len(command.Arguments), command.Args.Max)
+	}
 	for _, argument := range command.Arguments {
 		if !namePattern.MatchString(argument.Name) || seenArgs[argument.Name] {
 			return fmt.Errorf("%w: duplicate argument %q", ErrUsage, argument.Name)
@@ -1040,7 +1035,11 @@ func (command Command) Schema() (Schema, error) {
 func (command Command) schemaValue() Schema {
 	schema := Schema{Name: command.Name, Summary: command.Summary, Args: command.Args, Arguments: append([]Argument(nil), command.Arguments...)}
 	for _, flag := range command.Flags {
-		schema.Flags = append(schema.Flags, FlagSchema{Name: flag.Name, Short: string(flag.Short), Help: flag.Help, Kind: flag.Kind, Default: flag.Default, Required: flag.Required, Repeated: flag.Repeated})
+		short := ""
+		if flag.Short != 0 {
+			short = string(flag.Short)
+		}
+		schema.Flags = append(schema.Flags, FlagSchema{Name: flag.Name, Short: short, Help: flag.Help, Kind: flag.Kind, Default: flag.Default, Required: flag.Required, Repeated: flag.Repeated})
 	}
 	for _, child := range command.Subcommands {
 		schema.Subcommands = append(schema.Subcommands, child.schemaValue())
@@ -1192,14 +1191,17 @@ type boundedReader struct {
 }
 
 func (reader *boundedReader) Read(target []byte) (int, error) {
-	if reader.read >= reader.limit {
+	if reader.read > reader.limit {
 		return 0, ErrLimit
 	}
-	if remaining := reader.limit - reader.read; len(target) > remaining {
+	if remaining := reader.limit - reader.read + 1; len(target) > remaining {
 		target = target[:remaining]
 	}
 	n, err := reader.reader.Read(target)
 	reader.read += n
+	if reader.read > reader.limit {
+		return 0, ErrLimit
+	}
 	return n, err
 }
 
@@ -1222,10 +1224,10 @@ func (writer *boundedWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 func (writer *boundedWriter) Printf(format string, args ...any) {
-	_, _ = writer.Write([]byte(fmt.Sprintf(format, args...)))
+	_, _ = fmt.Fprintf(writer, format, args...)
 }
-func (writer *boundedWriter) Print(args ...any)   { _, _ = writer.Write([]byte(fmt.Sprint(args...))) }
-func (writer *boundedWriter) Println(args ...any) { _, _ = writer.Write([]byte(fmt.Sprintln(args...))) }
+func (writer *boundedWriter) Print(args ...any)   { _, _ = fmt.Fprint(writer, args...) }
+func (writer *boundedWriter) Println(args ...any) { _, _ = fmt.Fprintln(writer, args...) }
 func (writer *boundedWriter) bytes() []byte       { return append([]byte(nil), writer.buffer.data...) }
 
 type bytesBuffer struct{ data []byte }

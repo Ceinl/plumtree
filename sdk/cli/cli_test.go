@@ -60,7 +60,7 @@ func TestHelpUsageErrorsAndTermination(t *testing.T) {
 		t.Fatalf("help stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	execution, _, stderr := executeForTest(t, countCommands(), "add", "--bogus")
-	if execution.ExitCode != 2 || !strings.Contains(stderr.String(), "unknown flag") || !strings.Contains(stderr.String(), "Usage:") {
+	if execution.ExitCode != 2 || !strings.Contains(stderr.String(), "unknown flag") || !strings.Contains(stderr.String(), "Usage: add") {
 		t.Fatalf("usage execution = %#v stderr=%q", execution, stderr.String())
 	}
 	root := Root("raw", New("echo", "echo raw").WithArgs(AnyArgs()).WithHandler(func(_ Context, args []string) (Output, error) {
@@ -72,6 +72,11 @@ func TestHelpUsageErrorsAndTermination(t *testing.T) {
 	}
 	if err := New("broken", "").Validate(); err == nil {
 		t.Fatal("leaf without a handler should be rejected")
+	}
+	if err := New("broken", "").WithArgument(StringArg("value", "value")).WithHandler(func(Context, []string) (Output, error) {
+		return Empty(), nil
+	}).Validate(); err == nil {
+		t.Fatal("an argument outside the accepted range should be rejected")
 	}
 	schema, err := countCommands().Schema()
 	if err != nil || len(schema.Subcommands) != 1 || schema.Subcommands[0].Name != "add" {
@@ -108,12 +113,102 @@ func TestTypedArgumentsRepeatedFlagsAndBoundedStdin(t *testing.T) {
 		if err != nil {
 			return Empty(), err
 		}
-		return Value(string(data)), nil
+		return Value(len(data)), nil
 	}))
+	exact := strings.Repeat("x", MaxInput)
+	execution, stdoutText, stderrText := ExecuteWithInput(inputCommand, []string{"read"}, exact)
+	if execution.ExitCode != 0 || stdoutText != "1048576\n" || stderrText != "" {
+		t.Fatalf("exact-limit stdin execution = %#v stdout=%q stderr=%q", execution, stdoutText, stderrText)
+	}
 	large := strings.Repeat("x", MaxInput+1)
 	execution, _, stderr := ExecuteWithInput(inputCommand, []string{"read"}, large)
 	if execution.ExitCode == 0 || !strings.Contains(stderr, "invocation limit exceeded") {
 		t.Fatalf("bounded stdin execution = %#v stderr=%q", execution, stderr)
+	}
+}
+
+func TestGroupedShortFlagsConsumeTheirValue(t *testing.T) {
+	verbose := BoolFlag("verbose", "verbose").WithShort('v')
+	by := IntFlag("by", "amount").WithShort('b')
+	command := Root("grouped", New("run", "run").WithFlag(verbose).WithFlag(by).WithHandler(func(ctx Context, _ []string) (Output, error) {
+		verboseValue, err := ctx.Bool("verbose")
+		if err != nil {
+			return Empty(), err
+		}
+		byValue, err := ctx.Int("by")
+		if err != nil {
+			return Empty(), err
+		}
+		return Value(map[string]any{"verbose": verboseValue, "by": byValue}), nil
+	}))
+	execution, stdout, stderr := executeForTest(t, command, "run", "-vb", "2", "--json")
+	if execution.ExitCode != 0 || !strings.Contains(stdout.String(), `"verbose":true`) || !strings.Contains(stdout.String(), `"by":2`) || stderr.Len() != 0 {
+		t.Fatalf("grouped execution = %#v stdout=%q stderr=%q", execution, stdout.String(), stderr.String())
+	}
+}
+
+func TestRepeatedFlagValidatorRuns(t *testing.T) {
+	tag := StringsFlag("tag", "tag").WithValidator(func(value string) error {
+		if value == "blocked" {
+			return ErrInvalid
+		}
+		return nil
+	})
+	command := Root("validated", New("run", "run").WithFlag(tag).WithHandler(func(Context, []string) (Output, error) {
+		return Empty(), nil
+	}))
+	execution, _, stderr := executeForTest(t, command, "run", "--tag", "blocked")
+	if execution.ExitCode != 2 || !strings.Contains(stderr.String(), ErrInvalid.Error()) {
+		t.Fatalf("validated execution = %#v stderr=%q", execution, stderr.String())
+	}
+}
+
+func TestOutputLimitIsAtomicAndStderrIsSafe(t *testing.T) {
+	tooLarge := Root("output", New("large", "large").WithHandler(func(Context, []string) (Output, error) {
+		return Present(struct{}{}, func(writer Writer, _ struct{}) {
+			writer.Print(strings.Repeat("x", MaxOutput+1))
+		}), nil
+	}))
+	execution, stdout, stderr := executeForTest(t, tooLarge, "large")
+	if execution.ExitCode == 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "invocation limit exceeded") {
+		t.Fatalf("large output execution = %#v stdout=%q stderr=%q", execution, stdout.String(), stderr.String())
+	}
+
+	unsafeStderr := Root("output", New("safe", "safe").WithHandler(func(ctx Context, _ []string) (Output, error) {
+		ctx.Stderr.Print("start\x00\x01\x7f", string([]byte{0xff}), "end\n")
+		return Empty(), nil
+	}))
+	execution, stdout, stderr = executeForTest(t, unsafeStderr, "safe")
+	if execution.ExitCode != 0 || stdout.Len() != 0 || stderr.String() != "start�end\n" {
+		t.Fatalf("safe stderr execution = %#v stdout=%q stderr=%q", execution, stdout.String(), stderr.String())
+	}
+}
+
+func TestDefinitionLimitsAndSchemaUseStableRepresentations(t *testing.T) {
+	invalid := Root("invalid")
+	invalid.Flags = make([]Flag, MaxFlags+1)
+	execution, _, stderr := executeForTest(t, invalid)
+	if execution.ExitCode != 2 || !strings.Contains(stderr.String(), "too many descriptors") {
+		t.Fatalf("invalid definition execution = %#v stderr=%q", execution, stderr.String())
+	}
+	failure := normalizeFailure(invalid.Validate(), true)
+	if failure.Code != "invalid_definition" || failure.ExitCode != 2 {
+		t.Fatalf("invalid definition failure = %#v", failure)
+	}
+
+	command := Root("schema", New("run", "run").WithFlag(StringFlag("name", "name")).WithHandler(func(Context, []string) (Output, error) {
+		return Empty(), nil
+	}))
+	schema, err := command.Schema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := schema.Subcommands[0].Flags[0].Short; got != "" {
+		t.Fatalf("unset short flag = %q", got)
+	}
+	encoded, err := schema.JSON()
+	if err != nil || bytes.Contains(encoded, []byte(`\u0000`)) {
+		t.Fatalf("schema JSON = %q err=%v", encoded, err)
 	}
 }
 

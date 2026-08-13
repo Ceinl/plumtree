@@ -104,10 +104,24 @@ type runtimeOptions struct {
 // native runtime dispatches an exec invocation before model initialization;
 // the interactive path continues through the normal app lifecycle.
 func WithCommands(commands cli.Command) Option {
+	commands = cloneCommand(commands)
 	return func(options *runtimeOptions) {
 		options.commandTree = commands
 		options.commandSet = true
 	}
+}
+
+func cloneCommand(command cli.Command) cli.Command {
+	command.Flags = append([]cli.Flag(nil), command.Flags...)
+	command.Arguments = append([]cli.Argument(nil), command.Arguments...)
+	if len(command.Subcommands) > 0 {
+		subcommands := command.Subcommands
+		command.Subcommands = make([]cli.Command, len(subcommands))
+		for index, child := range subcommands {
+			command.Subcommands[index] = cloneCommand(child)
+		}
+	}
+	return command
 }
 
 // Viewport supplies the initial render dimensions. Zero uses 80 by 24.
@@ -186,7 +200,7 @@ func NewRuntime(model Model, options ...Option) *Runtime {
 
 // Commands returns the attached finite tree, if any. Host integrations use
 // this during exec dispatch; an ordinary interactive session does not need it.
-func (r *Runtime) Commands() (cli.Command, bool) { return r.commandTree, r.commandSet }
+func (r *Runtime) Commands() (cli.Command, bool) { return cloneCommand(r.commandTree), r.commandSet }
 
 // Init runs optional initialization, reconciles subscriptions, and renders.
 func (r *Runtime) Init(ctx context.Context) error {
