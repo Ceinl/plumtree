@@ -52,17 +52,22 @@ func NewRemoteProcessRunner(endpoint, token string) *ProcessRunner {
 // the guest exits. It returns the same errors as the in-process Run (a guest
 // failure, ErrFrameDeadline surfaced by the worker, or ctx.Err()).
 func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, src Source, sink Sink, logs io.Writer) error {
-	return pr.run(ctx, wasm, lim, caps, false, nil, src, sink, nil, logs)
+	return pr.run(ctx, wasm, lim, caps, false, nil, src, sink, CLIStreams{}, logs)
 }
 
 // RunCLI spawns a worker for one non-interactive CLI invocation. Guest output
 // is filtered inside the worker and streamed back to out over the process
 // protocol; args become the guest's command-line arguments.
 func (pr *ProcessRunner) RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
-	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, out, nil)
+	return pr.RunCLIWithStreams(ctx, wasm, lim, caps, args, CLIStreams{Stdout: out, Stderr: out})
 }
 
-func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, out, logs io.Writer) error {
+// RunCLIWithStreams runs an isolated finite guest with distinct standard streams.
+func (pr *ProcessRunner) RunCLIWithStreams(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, streams CLIStreams) error {
+	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, streams, nil)
+}
+
+func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, streams CLIStreams, logs io.Writer) error {
 	if err := validateLimits(lim); err != nil {
 		return err
 	}
@@ -142,7 +147,7 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			}
 			return nil
 		}
-		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, out); err != nil {
+		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, streams); err != nil {
 			if callerCtx.Err() != nil {
 				return callerCtx.Err()
 			}
@@ -157,6 +162,7 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 const (
 	maxEncodedFrame = 8 + 150_000*11
 	maxWorkerOutput = 64 << 10
+	maxWorkerInput  = 64 << 10
 	maxWorkerError  = 64 << 10
 	maxEncodedFetch = 2 + abi.FetchMaxMethod + 2 + abi.FetchMaxURL + 4 + abi.FetchMaxBody
 	maxEncodedExec  = 4 + abi.ExecMaxName + 4 + abi.ExecMaxArgs*(4+abi.ExecMaxArg)
@@ -166,6 +172,8 @@ func maxWorkerPayload(o op) uint32 {
 	switch o {
 	case opRecv, opAuth:
 		return 0
+	case opInput:
+		return 4
 	case opPresent:
 		return maxEncodedFrame
 	case opKVGet, opKVDel:
@@ -192,7 +200,7 @@ func maxWorkerPayload(o op) uint32 {
 		return 4
 	case opDone:
 		return 8 + maxWorkerError + abi.GoodbyeMaxLen + maxSessionLog
-	case opOutput:
+	case opOutput, opOutputStderr:
 		return maxWorkerOutput
 	default:
 		return 0
@@ -286,7 +294,7 @@ func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, erro
 }
 
 // serve handles one worker request and writes the opResp reply.
-func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber, out io.Writer) error {
+func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber, streams CLIStreams) error {
 	switch o {
 	case opRecv:
 		if src == nil {
@@ -459,14 +467,46 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		}
 		return writeMsg(w, opResp, []byte{result})
 
-	case opOutput:
-		if out == nil || len(payload) > maxWorkerOutput {
+	case opOutput, opOutputStderr:
+		out := streams.Stdout
+		if o == opOutputStderr {
+			out = streams.Stderr
+		}
+		if len(payload) > maxWorkerOutput {
 			return errProtocol
+		}
+		if out == nil {
+			out = io.Discard
 		}
 		if _, err := out.Write(payload); err != nil {
 			return err
 		}
 		return writeMsg(w, opResp, nil)
+
+	case opInput:
+		if len(payload) != 4 {
+			return errProtocol
+		}
+		requested := binary.LittleEndian.Uint32(payload)
+		if requested == 0 || requested > maxWorkerInput {
+			return errProtocol
+		}
+		if streams.Stdin == nil {
+			return writeMsg(w, opResp, []byte{stdinEOF})
+		}
+		buffer := make([]byte, requested)
+		n, err := streams.Stdin.Read(buffer)
+		if n < 0 || n > len(buffer) {
+			return errProtocol
+		}
+		status := byte(stdinOK)
+		switch {
+		case errors.Is(err, io.EOF):
+			status = stdinEOF
+		case err != nil:
+			status = stdinError
+		}
+		return writeMsg(w, opResp, append([]byte{status}, buffer[:n]...))
 
 	default:
 		return errProtocol

@@ -26,26 +26,28 @@ import (
 type op = protocol.Op
 
 const (
-	opStart       = protocol.OpStart
-	opResp        = protocol.OpResp
-	opRecv        = protocol.OpRecv
-	opPresent     = protocol.OpPresent
-	opKVGet       = protocol.OpKVGet
-	opKVSet       = protocol.OpKVSet
-	opKVDel       = protocol.OpKVDel
-	opBusSub      = protocol.OpBusSub
-	opBusPub      = protocol.OpBusPub
-	opAuth        = protocol.OpAuth
-	opEnv         = protocol.OpEnv
-	opFetch       = protocol.OpFetch
-	opDone        = protocol.OpDone
-	opOutput      = protocol.OpOutput
-	opKVList      = protocol.OpKVList
-	opKVCAS       = protocol.OpKVCAS
-	opExec        = protocol.OpExec
-	opTimerStart  = protocol.OpTimerStart
-	opTimerCancel = protocol.OpTimerCancel
-	maxFrame      = protocol.MaxFrame
+	opStart        = protocol.OpStart
+	opResp         = protocol.OpResp
+	opRecv         = protocol.OpRecv
+	opPresent      = protocol.OpPresent
+	opKVGet        = protocol.OpKVGet
+	opKVSet        = protocol.OpKVSet
+	opKVDel        = protocol.OpKVDel
+	opBusSub       = protocol.OpBusSub
+	opBusPub       = protocol.OpBusPub
+	opAuth         = protocol.OpAuth
+	opEnv          = protocol.OpEnv
+	opFetch        = protocol.OpFetch
+	opDone         = protocol.OpDone
+	opOutput       = protocol.OpOutput
+	opKVList       = protocol.OpKVList
+	opKVCAS        = protocol.OpKVCAS
+	opExec         = protocol.OpExec
+	opTimerStart   = protocol.OpTimerStart
+	opTimerCancel  = protocol.OpTimerCancel
+	opOutputStderr = protocol.OpOutputStderr
+	opInput        = protocol.OpInput
+	maxFrame       = protocol.MaxFrame
 )
 
 var errProtocol = protocol.ErrProtocol

@@ -44,5 +44,11 @@ func (rn *Runner) Run(ctx context.Context, wasm []byte, lim Limits, caps Capabil
 // RunCLI is like the package-level RunCLI but reuses compiled code via the
 // Runner's cache. See RunCLI for semantics.
 func (rn *Runner) RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
-	return runCLI(ctx, rn.cache, wasm, lim, caps, args, out)
+	return rn.RunCLIWithStreams(ctx, wasm, lim, caps, args, CLIStreams{Stdout: out, Stderr: out})
+}
+
+// RunCLIWithStreams runs a finite guest while reusing compiled code and
+// preserving distinct standard streams.
+func (rn *Runner) RunCLIWithStreams(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, streams CLIStreams) error {
+	return runCLI(ctx, rn.cache, wasm, lim, caps, args, streams)
 }

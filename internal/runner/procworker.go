@@ -63,7 +63,11 @@ func RunWorker(in io.Reader, out io.Writer) error {
 	logs := &boundedBuffer{max: maxSessionLog}
 	var runErr error
 	if cli {
-		runErr = RunCLI(context.Background(), wasm, lim, caps, args, proxyOutput{rpc})
+		runErr = RunCLIWithStreams(context.Background(), wasm, lim, caps, args, CLIStreams{
+			Stdin:  proxyInput{rpc: rpc},
+			Stdout: proxyOutput{rpc: rpc, stderr: false},
+			Stderr: proxyOutput{rpc: rpc, stderr: true},
+		})
 	} else {
 		runErr = Run(context.Background(), wasm, lim, caps, &proxySource{rpc}, &proxySink{rpc}, logs)
 	}
@@ -141,13 +145,51 @@ func (t proxyTimers) Cancel(id uint32) bool {
 func (proxyTimers) Events() <-chan abi.Event { return nil }
 func (proxyTimers) Close()                   {}
 
-type proxyOutput struct{ rpc *workerRPC }
+type proxyOutput struct {
+	rpc    *workerRPC
+	stderr bool
+}
+
+const (
+	stdinOK byte = iota
+	stdinEOF
+	stdinError
+)
+
+type proxyInput struct{ rpc *workerRPC }
+
+func (r proxyInput) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	requested := min(len(p), maxWorkerInput)
+	payload := binary.LittleEndian.AppendUint32(nil, uint32(requested))
+	response, err := r.rpc.call(opInput, payload)
+	if err != nil || len(response) == 0 || len(response)-1 > requested {
+		return 0, errRPC
+	}
+	n := copy(p, response[1:])
+	switch response[0] {
+	case stdinOK:
+		return n, nil
+	case stdinEOF:
+		return n, io.EOF
+	case stdinError:
+		return n, errRPC
+	default:
+		return 0, errRPC
+	}
+}
 
 func (w proxyOutput) Write(p []byte) (int, error) {
 	written := 0
 	for len(p) > 0 {
 		n := min(len(p), maxWorkerOutput)
-		if _, err := w.rpc.call(opOutput, p[:n]); err != nil {
+		opcode := opOutput
+		if w.stderr {
+			opcode = opOutputStderr
+		}
+		if _, err := w.rpc.call(opcode, p[:n]); err != nil {
 			return written, err
 		}
 		written += n

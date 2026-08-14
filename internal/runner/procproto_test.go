@@ -61,6 +61,12 @@ func TestReadWorkerMessageRejectsOperationOversizeBeforePayload(t *testing.T) {
 	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
 		t.Fatalf("unknown operation error = %v, want protocol error", err)
 	}
+
+	header[0] = byte(opInput)
+	binary.LittleEndian.PutUint32(header[1:], 5)
+	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
+		t.Fatalf("oversized input request error = %v, want protocol error", err)
+	}
 }
 
 func TestEncodeDecodeDoneRoundTrip(t *testing.T) {

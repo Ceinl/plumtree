@@ -8,7 +8,7 @@ path	standalone-tui-runtime	53	0	^tui-runtime/
 path	legacy-devtest	62	12	^_devtest/
 text	tui-runtime-import	53	0	github.com/Ceinl/plumtree/tui-runtime
 text	legacy-product-module-imports	54-57	10	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
-text	local-module-replaces	53	2	=>[[:space:]]+(\./|\.\./|/)
+text	local-module-replaces	53	3	=>[[:space:]]+(\./|\.\./|/)
 text	build-worker-surface	73	45	build-worker
 text	shoo-surface	73	194	[Ss][Hh][Oo][Oo]
 text	browser-dashboard-surface	73	109	[Bb]rowser|[Dd]ashboard
