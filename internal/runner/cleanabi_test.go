@@ -131,3 +131,27 @@ func TestCleanCLIExitAndStderrParity(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanCLIOmittedOutputStreamsHostedByBothRunners(t *testing.T) {
+	wasm := buildGuest(t, "testdata/cleancli", "GOWORK=off")
+	for _, runner := range []struct {
+		name string
+		run  func([]string) error
+	}{
+		{name: "in-process", run: func(args []string) error {
+			return RunCLIWithStreams(context.Background(), wasm, DefaultLimits, Capabilities{}, args, CLIStreams{})
+		}},
+		{name: "isolated-worker", run: func(args []string) error {
+			return NewProcessRunner(buildWorker(t)).RunCLIWithStreams(context.Background(), wasm, DefaultLimits, Capabilities{}, args, CLIStreams{})
+		}},
+	} {
+		t.Run(runner.name, func(t *testing.T) {
+			if err := runner.run([]string{"greet", "Ada"}); err != nil {
+				t.Fatalf("omitted stdout: %v", err)
+			}
+			if err := runner.run([]string{"fail"}); err == nil || !strings.Contains(err.Error(), "code 7") {
+				t.Fatalf("omitted stderr error = %v, want exit code 7", err)
+			}
+		})
+	}
+}

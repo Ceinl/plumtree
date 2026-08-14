@@ -472,8 +472,11 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		if o == opOutputStderr {
 			out = streams.Stderr
 		}
-		if out == nil || len(payload) > maxWorkerOutput {
+		if len(payload) > maxWorkerOutput {
 			return errProtocol
+		}
+		if out == nil {
+			out = io.Discard
 		}
 		if _, err := out.Write(payload); err != nil {
 			return err
