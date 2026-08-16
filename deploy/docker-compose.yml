@@ -1,160 +1,33 @@
-# Production topology: four services, least privilege each.
-#
-#   internet ──▶ ${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}
-#                         └──▶ ssh-gateway:2222 ──▶ control-plane:8080 (internal)
-#                                      └── Unix socket ──▶ runner-broker (no network)
-#   internet ──▶ control-plane:8080 (dashboard/API, put a TLS proxy in front)
-#   control-plane ──▶ build-worker:8090 (internal only, no egress at all)
-#
-# Copy .env.example to .env and fill in the tokens first.
+# Native Compose deployment: one root-owned Plumtree process and one
+# persistent SQLite volume. Only the SSH control transport is published.
 services:
-  control-plane:
+  plumtree:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.control-plane
+      dockerfile: deploy/Dockerfile.plumtree
     restart: unless-stopped
-    environment:
-      PLUMTREE_PUBLIC_ORIGIN: ${PLUMTREE_PUBLIC_ORIGIN:?set in .env}
-      PLUMTREE_DEV_TOKEN: ${PLUMTREE_DEV_TOKEN:?set in .env}
-      PLUMTREE_GATEWAY_TOKEN: ${PLUMTREE_GATEWAY_TOKEN:?set in .env}
-      PLUMTREE_BUILD_TOKEN: ${PLUMTREE_BUILD_TOKEN:?set in .env}
-      # The KEK is a Docker secret mount, never part of control-plane-data.
-      PLUMTREE_STATE_ENCRYPTION_KEY_FILE: /run/secrets/control_plane_state_kek
-      PLUMTREE_BUILD_URL: http://build-worker:8090
-      PLUMTREE_ANONYMOUS_PREVIEW: ${PLUMTREE_ANONYMOUS_PREVIEW:-false}
-      # Trusted deployments may let every deploy-token holder bypass Shoo claim.
-      PLUMTREE_AUTO_CLAIM: ${PLUMTREE_AUTO_CLAIM:-false}
-      PLUMTREE_PRODUCTION: "true"
-      PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS: ${PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS:-false}
-      PLUMTREE_MAX_APPS_PER_OWNER: ${PLUMTREE_MAX_APPS_PER_OWNER:-5}
-      PLUMTREE_MAX_SESSIONS_PER_APP_DAY: ${PLUMTREE_MAX_SESSIONS_PER_APP_DAY:-50}
-      PLUMTREE_MAX_DEPLOYS_PER_HOUR: ${PLUMTREE_MAX_DEPLOYS_PER_HOUR:-100}
-      PLUMTREE_MAX_CONCURRENT_BUILDS: ${PLUMTREE_MAX_CONCURRENT_BUILDS:-2}
-      PLUMTREE_MAX_QUEUED_BUILDS: ${PLUMTREE_MAX_QUEUED_BUILDS:-8}
-      PLUMTREE_RATE_LIMIT: ${PLUMTREE_RATE_LIMIT:-20}
-      PLUMTREE_RATE_BURST: ${PLUMTREE_RATE_BURST:-40}
     ports:
-      - "8080:8080"
-    volumes:
-      - control-plane-data:/data
-    secrets:
-      - control_plane_state_kek
-    networks: [web, internal]
-    depends_on: [build-worker]
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop: [ALL]
-    cpus: 1.0
-    mem_limit: 768m
-    pids_limit: 256
-
-  ssh-gateway:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.ssh-gateway
-    restart: unless-stopped
-    environment:
-      PLUMTREE_CONTROL_URL: http://control-plane:8080
-      PLUMTREE_GATEWAY_TOKEN: ${PLUMTREE_GATEWAY_TOKEN:?set in .env}
-      PLUMTREE_RUNNER_TOKEN: ${PLUMTREE_RUNNER_TOKEN:?set in .env}
-      # Dangerous opt-in for fully trusted self-hosted apps only.
-      PLUMTREE_ALLOW_HOST_COMMANDS: ${PLUMTREE_ALLOW_HOST_COMMANDS:-false}
-      PLUMTREE_PRODUCTION: "true"
-      PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS: ${PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS:-false}
-      PLUMTREE_MAX_SESSIONS: ${PLUMTREE_MAX_SESSIONS:-64}
-      PLUMTREE_MAX_CONNECTIONS: ${PLUMTREE_MAX_CONNECTIONS:-1024}
-      PLUMTREE_MAX_CONNECTIONS_PER_IP: ${PLUMTREE_MAX_CONNECTIONS_PER_IP:-32}
-      PLUMTREE_SSH_HANDSHAKE_TIMEOUT: ${PLUMTREE_SSH_HANDSHAKE_TIMEOUT:-10s}
-      PLUMTREE_SSH_IDLE_TIMEOUT: ${PLUMTREE_SSH_IDLE_TIMEOUT:-5m}
-    ports:
-      # Use a dedicated app-facing address on port 22 for zero-config clients,
-      # while leaving administrator SSH bound to its management address.
       - "${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}:2222"
     volumes:
-      - ssh-gateway-data:/data
-      - runner-socket:/run/plumtree
-    networks: [web, internal]
-    depends_on: [control-plane, runner-broker]
+      - plumtree-data:/data
+    command:
+      - -database
+      - /data/plumtree.db
+      - -host-key
+      - /data/plumtree_host_key
+      - -ssh-addr
+      - :2222
+      - -product-version
+      - ${PLUMTREE_PRODUCT_VERSION:-dev}
     read_only: true
     tmpfs:
       - /tmp:size=64m
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
-    cpus: 2.0
-    mem_limit: 1536m
-    pids_limit: 512
-
-  runner-broker:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.runner-broker
-    restart: unless-stopped
-    environment:
-      PLUMTREE_RUNNER_TOKEN: ${PLUMTREE_RUNNER_TOKEN:?set in .env}
-      PLUMTREE_MAX_SESSIONS: ${PLUMTREE_MAX_SESSIONS:-64}
-    # A native wazero/host-function escape lands here: no network, no gateway
-    # token, no SSH host key, no KV volume, read-only root, bounded scratch.
-    network_mode: none
-    read_only: true
-    tmpfs:
-      - /scratch:size=256m,mode=0711,uid=0,gid=0
-    volumes:
-      - runner-socket:/run/plumtree
-    security_opt:
-      - no-new-privileges:true
-    cap_drop: [ALL]
-    # The broker uses these only to own the shared socket/scratch, assign a
-    # unique UID per child, terminate it, and clean its private scratch.
-    # setresuid clears them in every worker.
-    cap_add: [SETUID, SETGID, CHOWN, KILL, DAC_OVERRIDE]
     cpus: 2.0
     mem_limit: 1536m
     pids_limit: 256
 
-  build-worker:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.build-worker
-    restart: unless-stopped
-    environment:
-      PLUMTREE_BUILD_TOKEN: ${PLUMTREE_BUILD_TOKEN:?set in .env}
-      PLUMTREE_PRODUCTION: "true"
-      PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS: ${PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS:-false}
-      PLUMTREE_MAX_CONCURRENT_BUILDS: ${PLUMTREE_WORKER_MAX_CONCURRENT_BUILDS:-1}
-      PLUMTREE_MAX_QUEUED_BUILDS: ${PLUMTREE_WORKER_MAX_QUEUED_BUILDS:-8}
-      PLUMTREE_BUILD_TIMEOUT: ${PLUMTREE_BUILD_TIMEOUT:-90s}
-      PLUMTREE_MAX_SOURCE_BYTES: ${PLUMTREE_MAX_SOURCE_BYTES:-8388608}
-      PLUMTREE_MAX_MEMORY_BYTES: ${PLUMTREE_MAX_MEMORY_BYTES:-1610612736}
-    # Untrusted compilation: internal-only network (no route to the internet),
-    # read-only image, sandboxes on a size-capped tmpfs wiped on restart.
-    networks: [internal]
-    read_only: true
-    tmpfs:
-      - /work:size=2g,mode=0770,uid=65532,gid=65532
-      - /tmp:size=64m
-    security_opt:
-      - no-new-privileges:true
-    cap_drop: [ALL]
-    cpus: 2.0
-    mem_limit: 3g
-    pids_limit: 512
-
-networks:
-  web:
-  internal:
-    internal: true
-
 volumes:
-  control-plane-data:
-  ssh-gateway-data:
-  runner-socket:
-
-secrets:
-  # Point this at a managed-secret-agent output in production, or a local file
-  # generated as documented in README. Do not place it in either data volume.
-  control_plane_state_kek:
-    file: ${PLUMTREE_STATE_ENCRYPTION_KEY_FILE:?set in .env}
+  plumtree-data:
