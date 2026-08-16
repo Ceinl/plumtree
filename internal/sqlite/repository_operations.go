@@ -12,6 +12,7 @@ import (
 // AppInput describes an app owned by an author.
 type AppInput struct {
 	ID, AuthorID, Name, Kind, AccessMode string
+	CreatedByDeviceID                    string
 	CreatedAt                            time.Time
 }
 
@@ -112,6 +113,19 @@ func (r *Repository) CreateApp(ctx context.Context, input AppInput) (App, error)
 		} else if err != nil {
 			return err
 		}
+		if input.CreatedByDeviceID != "" {
+			var active int
+			row, rowErr := m.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id=? AND author_id=? AND revoked_at_ns IS NULL`, input.CreatedByDeviceID, app.AuthorID)
+			if rowErr != nil {
+				return rowErr
+			}
+			if err := row.Scan(&active); err != nil {
+				return err
+			}
+			if active == 0 {
+				return ErrNotFound
+			}
+		}
 		var maxApps, appCount int
 		quotaRow, quotaErr := m.QueryRowContext(ctx, `SELECT COALESCE((SELECT max_apps FROM author_quotas WHERE author_id=?),0)`, app.AuthorID)
 		if quotaErr == nil {
@@ -166,6 +180,56 @@ func (r *Repository) ListApps(ctx context.Context, authorID string) ([]App, erro
 	return out, storageError(rows.Err())
 }
 
+// Device returns a device without exposing recovery or enrollment material.
+func (r *Repository) Device(ctx context.Context, deviceID string) (Device, error) {
+	if err := validateID(deviceID); err != nil {
+		return Device{}, err
+	}
+	var d Device
+	var created, revoked sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `SELECT id,author_id,name,public_key,fingerprint,created_at_ns,revoked_at_ns FROM devices WHERE id=?`, deviceID).Scan(&d.ID, &d.AuthorID, &d.Name, &d.PublicKey, &d.Fingerprint, &created, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	if err != nil {
+		return Device{}, storageError(err)
+	}
+	d.CreatedAt = time.Unix(0, created.Int64)
+	if revoked.Valid {
+		value := time.Unix(0, revoked.Int64)
+		d.RevokedAt = &value
+	}
+	return d, nil
+}
+
+// ListDevices lists all devices for an author, including revoked records, so
+// local audit and recovery tooling can explain the complete lifecycle.
+func (r *Repository) ListDevices(ctx context.Context, authorID string) ([]Device, error) {
+	if err := validateID(authorID); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id,author_id,name,public_key,fingerprint,created_at_ns,revoked_at_ns FROM devices WHERE author_id=? ORDER BY created_at_ns,id`, authorID)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	defer rows.Close()
+	var result []Device
+	for rows.Next() {
+		var d Device
+		var created, revoked sql.NullInt64
+		if err := rows.Scan(&d.ID, &d.AuthorID, &d.Name, &d.PublicKey, &d.Fingerprint, &created, &revoked); err != nil {
+			return nil, storageError(err)
+		}
+		d.CreatedAt = time.Unix(0, created.Int64)
+		if revoked.Valid {
+			value := time.Unix(0, revoked.Int64)
+			d.RevokedAt = &value
+		}
+		result = append(result, d)
+	}
+	return result, storageError(rows.Err())
+}
+
 func (r *Repository) AddAccessKey(ctx context.Context, input AccessKeyInput) (AccessKey, error) {
 	for _, v := range []string{input.ID, input.AppID, input.Name, input.PublicKey, input.Fingerprint, input.AddedByDeviceID} {
 		if err := validateID(v); err != nil {
@@ -191,9 +255,72 @@ func (r *Repository) AddAccessKey(ctx context.Context, input AccessKeyInput) (Ac
 			return ErrNotFound
 		}
 		_, err = m.ExecContext(ctx, `INSERT INTO app_access_keys(id,app_id,name,public_key,fingerprint,added_by_device_id,created_at_ns) VALUES(?,?,?,?,?,?,?)`, key.ID, key.AppID, key.Name, key.PublicKey, key.Fingerprint, key.AddedByDeviceID, ns)
-		return mapConstraint(err)
+		if err := mapConstraint(err); err != nil {
+			return err
+		}
+		var authorID string
+		authorRow, authorErr := m.QueryRowContext(ctx, `SELECT author_id FROM apps WHERE id=?`, key.AppID)
+		if authorErr != nil {
+			return authorErr
+		}
+		if err := authorRow.Scan(&authorID); err != nil {
+			return err
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + key.ID, ScopeAuthorID: authorID, ActorKind: "device", ActorAuthorID: authorID, ActorDeviceID: key.AddedByDeviceID, Action: "app.access.add", TargetKind: "access_key", TargetID: key.ID, ActorSnapshot: key.AddedByDeviceID, TargetSnapshot: key.AppID})
 	})
 	return key, err
+}
+
+// ListAccessKeys returns only public-key metadata for an author's app.
+func (r *Repository) ListAccessKeys(ctx context.Context, authorID, appID string) ([]AccessKey, error) {
+	for _, value := range []string{authorID, appID} {
+		if err := validateID(value); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT k.id,k.app_id,k.name,k.public_key,k.fingerprint,k.added_by_device_id,k.created_at_ns FROM app_access_keys k JOIN apps a ON a.id=k.app_id WHERE a.id=? AND a.author_id=? ORDER BY k.created_at_ns,k.id`, appID, authorID)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	defer rows.Close()
+	var result []AccessKey
+	for rows.Next() {
+		var key AccessKey
+		var created int64
+		if err := rows.Scan(&key.ID, &key.AppID, &key.Name, &key.PublicKey, &key.Fingerprint, &key.AddedByDeviceID, &created); err != nil {
+			return nil, storageError(err)
+		}
+		key.CreatedAt = time.Unix(0, created)
+		result = append(result, key)
+	}
+	return result, storageError(rows.Err())
+}
+
+// RemoveAccessKey authorizes the actor and removes one app-scoped key in the
+// same transaction, returning not-found for another author's key.
+func (r *Repository) RemoveAccessKey(ctx context.Context, authorID, appID, keyID, actorDeviceID string) error {
+	for _, value := range []string{authorID, appID, keyID, actorDeviceID} {
+		if err := validateID(value); err != nil {
+			return err
+		}
+	}
+	return r.mutate(ctx, "access-key-remove", CommitEvent{Operation: "access-key-remove", Kind: "access-key", ID: keyID}, func(m *MutationTx) error {
+		var n int
+		row, err := m.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_access_keys k JOIN apps a ON a.id=k.app_id JOIN devices d ON d.author_id=a.author_id WHERE k.id=? AND k.app_id=? AND a.author_id=? AND d.id=? AND d.revoked_at_ns IS NULL`, keyID, appID, authorID, actorDeviceID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		if _, err := m.ExecContext(ctx, `DELETE FROM app_access_keys WHERE id=? AND app_id=?`, keyID, appID); err != nil {
+			return err
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + keyID + "_remove", ScopeAuthorID: authorID, ActorKind: "device", ActorAuthorID: authorID, ActorDeviceID: actorDeviceID, Action: "app.access.remove", TargetKind: "access_key", TargetID: keyID, ActorSnapshot: actorDeviceID, TargetSnapshot: appID})
+	})
 }
 
 func (r *Repository) CreateDeployment(ctx context.Context, input DeploymentInput) (Deployment, error) {
@@ -694,8 +821,64 @@ func (r *Repository) RenameAuthor(ctx context.Context, authorID, newHandle strin
 		if _, err := m.ExecContext(ctx, `INSERT INTO author_handle_tombstones(handle,former_author_id,reason,reserved_at_ns,available_after_ns) VALUES(?,?,?, ?,?)`, oldHandle, authorID, "renamed", now, available); err != nil {
 			return mapConstraint(err)
 		}
-		_, err := m.ExecContext(ctx, `UPDATE authors SET handle=?,updated_at_ns=? WHERE id=?`, newHandle, now, authorID)
-		return mapConstraint(err)
+		if _, err := m.ExecContext(ctx, `UPDATE authors SET handle=?,updated_at_ns=? WHERE id=?`, newHandle, now, authorID); err != nil {
+			return mapConstraint(err)
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + authorID + "_rename_" + fmt.Sprint(now), ScopeAuthorID: authorID, ActorKind: "recovery", ActorAuthorID: authorID, Action: "author.rename", TargetKind: "author", TargetID: authorID, ActorSnapshot: "recovery", TargetSnapshot: newHandle})
+	})
+}
+
+// RetireAuthor removes an author and cascades owned state while retaining a
+// delayed handle tombstone. A non-empty verifier is required for recovery;
+// the local operator form intentionally passes nil and is not network-exposed.
+func (r *Repository) RetireAuthor(ctx context.Context, authorID string, verifier []byte, reserveUntil time.Time) error {
+	if err := validateID(authorID); err != nil {
+		return err
+	}
+	now := r.now()
+	return r.mutate(ctx, "author-retire", CommitEvent{Operation: "author-retire", Kind: "author", ID: authorID}, func(m *MutationTx) error {
+		var handle string
+		row, err := m.QueryRowContext(ctx, `SELECT handle FROM authors WHERE id=?`, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&handle); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if len(verifier) > 0 {
+			var stored []byte
+			row, rowErr := m.QueryRowContext(ctx, `SELECT verifier FROM author_recovery WHERE author_id=?`, authorID)
+			if rowErr != nil {
+				return rowErr
+			}
+			if err := row.Scan(&stored); errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			} else if err != nil {
+				return err
+			} else if !bytesEqual(stored, verifier) {
+				return ErrConflict
+			}
+		}
+		available := reserveUntil.UnixNano()
+		if available <= now.UnixNano() {
+			available = now.Add(24 * time.Hour).UnixNano()
+		}
+		if _, err := m.ExecContext(ctx, `INSERT INTO author_handle_tombstones(handle,former_author_id,reason,reserved_at_ns,available_after_ns) VALUES(?,?,?,?,?)`, handle, authorID, "removed", now.UnixNano(), available); err != nil {
+			return mapConstraint(err)
+		}
+		actorKind := "operator"
+		actorSnapshot := "operator"
+		if len(verifier) > 0 {
+			actorKind = "recovery"
+			actorSnapshot = "recovery"
+		}
+		if err := m.audit(ctx, AuditInput{ID: "audit_" + authorID + "_retire", ScopeAuthorID: authorID, ActorKind: actorKind, ActorAuthorID: authorID, Action: "author.retire", TargetKind: "author", TargetID: authorID, ActorSnapshot: actorSnapshot, TargetSnapshot: handle}); err != nil {
+			return err
+		}
+		_, err = m.ExecContext(ctx, `DELETE FROM authors WHERE id=?`, authorID)
+		return err
 	})
 }
 
@@ -721,7 +904,118 @@ func (r *Repository) RevokeDevice(ctx context.Context, deviceID, byKind, byID st
 		if n == 0 {
 			return ErrNotFound
 		}
-		return nil
+		var authorID string
+		row, rowErr := m.QueryRowContext(ctx, `SELECT author_id FROM devices WHERE id=?`, deviceID)
+		if rowErr != nil {
+			return rowErr
+		}
+		if err := row.Scan(&authorID); err != nil {
+			return err
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + deviceID + "_revoke_" + fmt.Sprint(now), ScopeAuthorID: authorID, ActorKind: byKind, ActorAuthorID: authorID, ActorDeviceID: byID, Action: "device.revoke", TargetKind: "device", TargetID: deviceID, ActorSnapshot: byID, TargetSnapshot: deviceID})
+	})
+}
+
+// RevokeDeviceAuthorized performs equal-device revocation and last-device
+// protection inside one immediate transaction, closing the check-then-act
+// race that a service-side device count would otherwise leave.
+func (r *Repository) RevokeDeviceAuthorized(ctx context.Context, authorID, actorDeviceID, targetDeviceID string) error {
+	for _, value := range []string{authorID, actorDeviceID, targetDeviceID} {
+		if err := validateID(value); err != nil {
+			return err
+		}
+	}
+	now := r.now().UnixNano()
+	return r.mutate(ctx, "device-revoke-authorized", CommitEvent{Operation: "device-revoke", Kind: "device", ID: targetDeviceID}, func(m *MutationTx) error {
+		var n int
+		row, err := m.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id=? AND author_id=? AND revoked_at_ns IS NULL`, actorDeviceID, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		row, err = m.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id=? AND author_id=? AND revoked_at_ns IS NULL`, targetDeviceID, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		row, err = m.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE author_id=? AND revoked_at_ns IS NULL`, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&n); err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrConflict
+		}
+		if _, err := m.ExecContext(ctx, `UPDATE devices SET revoked_at_ns=?,revoked_by_kind='device',revoked_by_id=? WHERE id=? AND revoked_at_ns IS NULL`, now, actorDeviceID, targetDeviceID); err != nil {
+			return err
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + targetDeviceID + "_revoke_" + fmt.Sprint(now), ScopeAuthorID: authorID, ActorKind: "device", ActorAuthorID: authorID, ActorDeviceID: actorDeviceID, Action: "device.revoke", TargetKind: "device", TargetID: targetDeviceID, ActorSnapshot: actorDeviceID, TargetSnapshot: targetDeviceID})
+	})
+}
+
+// RevokeDeviceWithRecovery is the offline recovery equivalent of equal-device
+// revocation. Recovery may revoke a device but cannot remove the last one.
+func (r *Repository) RevokeDeviceWithRecovery(ctx context.Context, authorID string, verifier []byte, targetDeviceID string) error {
+	for _, value := range []string{authorID, targetDeviceID} {
+		if err := validateID(value); err != nil {
+			return err
+		}
+	}
+	if len(verifier) == 0 {
+		return fmt.Errorf("%w: recovery verifier", ErrInvalid)
+	}
+	now := r.now().UnixNano()
+	return r.mutate(ctx, "device-revoke-recovery", CommitEvent{Operation: "device-revoke", Kind: "device", ID: targetDeviceID}, func(m *MutationTx) error {
+		var stored []byte
+		row, err := m.QueryRowContext(ctx, `SELECT verifier FROM author_recovery WHERE author_id=?`, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&stored); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if !bytesEqual(stored, verifier) {
+			return ErrConflict
+		}
+		var n int
+		row, err = m.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id=? AND author_id=? AND revoked_at_ns IS NULL`, targetDeviceID, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		row, err = m.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE author_id=? AND revoked_at_ns IS NULL`, authorID)
+		if err != nil {
+			return err
+		}
+		if err := row.Scan(&n); err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrConflict
+		}
+		if _, err := m.ExecContext(ctx, `UPDATE devices SET revoked_at_ns=?,revoked_by_kind='recovery',revoked_by_id=? WHERE id=? AND revoked_at_ns IS NULL`, now, authorID, targetDeviceID); err != nil {
+			return err
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + targetDeviceID + "_revoke_recovery_" + fmt.Sprint(now), ScopeAuthorID: authorID, ActorKind: "recovery", ActorAuthorID: authorID, Action: "device.revoke", TargetKind: "device", TargetID: targetDeviceID, ActorSnapshot: "recovery", TargetSnapshot: targetDeviceID})
 	})
 }
 
@@ -845,6 +1139,104 @@ func (r *Repository) VerifyEnrollmentToken(ctx context.Context, tokenID string, 
 		return EnrollmentToken{}, ErrConflict
 	}
 	return out, nil
+}
+
+// DeviceEnrollmentInput contains only the public material for the new device;
+// verifier bytes are compared and discarded inside the transaction.
+type DeviceEnrollmentInput struct {
+	TokenID, DeviceID, PublicKey, Fingerprint string
+	Verifier                                  []byte
+}
+
+// CompleteDeviceEnrollment verifies and consumes an add-device token while
+// inserting the device in the same immediate transaction. Failed proofs only
+// advance the bounded attempt counter; they never reveal token ownership.
+func (r *Repository) CompleteDeviceEnrollment(ctx context.Context, input DeviceEnrollmentInput) (Device, error) {
+	for _, value := range []string{input.TokenID, input.DeviceID, input.PublicKey, input.Fingerprint} {
+		if err := validateID(value); err != nil {
+			return Device{}, err
+		}
+	}
+	if len(input.Verifier) == 0 || len(input.Verifier) > 1024 {
+		return Device{}, fmt.Errorf("%w: enrollment verifier", ErrInvalid)
+	}
+	var device Device
+	var verificationFailed bool
+	now := r.now()
+	err := r.mutate(ctx, "device-enrollment", CommitEvent{}, func(m *MutationTx) error {
+		var authorID, purpose, issuedByKind, issuedByDeviceID, intendedName string
+		var stored []byte
+		var failed int
+		var expires, created int64
+		var consumed sql.NullInt64
+		row, rowErr := m.QueryRowContext(ctx, `SELECT author_id,purpose,issued_by_kind,COALESCE(issued_by_device_id,''),intended_device_name,verifier,failed_attempts,created_at_ns,expires_at_ns,consumed_at_ns FROM device_enrollment_tokens WHERE id=?`, input.TokenID)
+		if rowErr != nil {
+			return rowErr
+		}
+		if err := row.Scan(&authorID, &purpose, &issuedByKind, &issuedByDeviceID, &intendedName, &stored, &failed, &created, &expires, &consumed); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if purpose != "add_device" || consumed.Valid || expires <= now.UnixNano() || failed >= 5 {
+			return ErrConflict
+		}
+		if !bytesEqual(stored, input.Verifier) {
+			failed++
+			if _, err := m.ExecContext(ctx, `UPDATE device_enrollment_tokens SET failed_attempts=? WHERE id=?`, failed, input.TokenID); err != nil {
+				return err
+			}
+			verificationFailed = true
+			return nil
+		}
+		if _, err := m.ExecContext(ctx, `INSERT INTO devices(id,author_id,name,public_key,fingerprint,created_at_ns) VALUES(?,?,?,?,?,?)`, input.DeviceID, authorID, intendedName, input.PublicKey, input.Fingerprint, now.UnixNano()); err != nil {
+			return mapConstraint(err)
+		}
+		if _, err := m.ExecContext(ctx, `UPDATE device_enrollment_tokens SET consumed_at_ns=? WHERE id=?`, now.UnixNano(), input.TokenID); err != nil {
+			return err
+		}
+		device = Device{ID: input.DeviceID, AuthorID: authorID, Name: intendedName, PublicKey: input.PublicKey, Fingerprint: input.Fingerprint, CreatedAt: now}
+		return m.audit(ctx, AuditInput{ID: "audit_" + input.DeviceID, ScopeAuthorID: authorID, ActorKind: issuedByKind, ActorAuthorID: authorID, ActorDeviceID: issuedByDeviceID, Action: "device.add", TargetKind: "device", TargetID: input.DeviceID, ActorSnapshot: issuedByDeviceID, TargetSnapshot: intendedName})
+	})
+	if err != nil {
+		return Device{}, err
+	}
+	if verificationFailed {
+		return Device{}, ErrConflict
+	}
+	return device, nil
+}
+
+// RotateRecovery atomically checks the current verifier and replaces recovery
+// material. The verifier itself is never returned or written to audit.
+func (r *Repository) RotateRecovery(ctx context.Context, authorID string, currentVerifier, newSalt, newVerifier []byte) error {
+	if err := validateID(authorID); err != nil {
+		return err
+	}
+	if len(currentVerifier) == 0 || len(newSalt) == 0 || len(newVerifier) == 0 || len(newSalt) > 1024 || len(newVerifier) > 1024 {
+		return fmt.Errorf("%w: recovery verifier", ErrInvalid)
+	}
+	now := r.now()
+	return r.mutate(ctx, "recovery-rotate", CommitEvent{Operation: "recovery-rotate", Kind: "author", ID: authorID}, func(m *MutationTx) error {
+		var stored []byte
+		var generation int
+		row, rowErr := m.QueryRowContext(ctx, `SELECT verifier,generation FROM author_recovery WHERE author_id=?`, authorID)
+		if rowErr != nil {
+			return rowErr
+		}
+		if err := row.Scan(&stored, &generation); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if !bytesEqual(stored, currentVerifier) {
+			return ErrConflict
+		}
+		if _, err := m.ExecContext(ctx, `UPDATE author_recovery SET salt=?,verifier=?,generation=?,rotated_at_ns=? WHERE author_id=?`, newSalt, newVerifier, generation+1, now.UnixNano(), authorID); err != nil {
+			return err
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_recovery_" + authorID + "_" + fmt.Sprint(generation+1), ScopeAuthorID: authorID, ActorKind: "recovery", ActorAuthorID: authorID, Action: "author.recovery.rotate", TargetKind: "author", TargetID: authorID, ActorSnapshot: "recovery", TargetSnapshot: authorID})
+	})
 }
 
 func bytesEqual(a, b []byte) bool {

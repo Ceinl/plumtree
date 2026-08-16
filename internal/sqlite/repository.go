@@ -235,6 +235,39 @@ FROM server_identity WHERE singleton=1`).Scan(&identity.ID, &identity.SSHHostKey
 	return identity, nil
 }
 
+// RecoverySalt returns only the non-secret salt needed to verify caller-held
+// recovery material. The stored verifier is never returned.
+func (r *Repository) RecoverySalt(ctx context.Context, authorID string) ([]byte, error) {
+	if err := validateID(authorID); err != nil {
+		return nil, err
+	}
+	var salt []byte
+	err := r.db.QueryRowContext(ctx, `SELECT salt FROM author_recovery WHERE author_id=?`, authorID).Scan(&salt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	return append([]byte(nil), salt...), nil
+}
+
+// EnrollmentSalt returns only the non-secret salt for an unconsumed token.
+func (r *Repository) EnrollmentSalt(ctx context.Context, tokenID string) ([]byte, error) {
+	if err := validateID(tokenID); err != nil {
+		return nil, err
+	}
+	var salt []byte
+	err := r.db.QueryRowContext(ctx, `SELECT salt FROM device_enrollment_tokens WHERE id=?`, tokenID).Scan(&salt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, storageError(err)
+	}
+	return append([]byte(nil), salt...), nil
+}
+
 // Author, Device, App, ArtifactMetadata, and Runnable are intentionally
 // metadata-oriented DTOs. Runnable is the explicit exception that includes
 // the validated artifact bytes.
@@ -276,6 +309,7 @@ type RegistrationInput struct {
 	DeviceID, DeviceName, PublicKey, Fingerprint string
 	RecoverySalt, RecoveryVerifier               []byte
 	CreatedAt                                    time.Time
+	Quota                                        *Quota
 }
 
 // RegisterAuthor atomically creates author, recovery, first device, and audit
@@ -317,7 +351,19 @@ func (r *Repository) RegisterAuthor(ctx context.Context, input RegistrationInput
 		if _, err := m.ExecContext(ctx, `INSERT INTO devices(id,author_id,name,public_key,fingerprint,created_at_ns) VALUES(?,?,?,?,?,?)`, device.ID, device.AuthorID, device.Name, device.PublicKey, device.Fingerprint, ns); err != nil {
 			return mapConstraint(err)
 		}
-		return m.audit(ctx, AuditInput{ID: "audit_" + input.AuthorID, ActorKind: "public_registration", ActorAuthorID: author.ID, Action: "author.register", TargetKind: "author", TargetID: author.ID, ActorSnapshot: author.ID, TargetSnapshot: author.Handle})
+		if input.Quota != nil {
+			q := input.Quota
+			if q.AuthorID != "" && q.AuthorID != author.ID {
+				return fmt.Errorf("%w: quota author", ErrInvalid)
+			}
+			if q.MaxApps < 0 || q.MaxDeploymentsPerApp < 0 || q.MaxSecretsPerApp < 0 || q.MaxSessions < 0 {
+				return fmt.Errorf("%w: quota", ErrInvalid)
+			}
+			if _, err := m.ExecContext(ctx, `INSERT INTO author_quotas(author_id,max_apps,max_deployments_per_app,max_secrets_per_app,max_sessions) VALUES(?,?,?,?,?)`, author.ID, q.MaxApps, q.MaxDeploymentsPerApp, q.MaxSecretsPerApp, q.MaxSessions); err != nil {
+				return mapConstraint(err)
+			}
+		}
+		return m.audit(ctx, AuditInput{ID: "audit_" + input.AuthorID, ScopeAuthorID: author.ID, ActorKind: "public_registration", ActorAuthorID: author.ID, Action: "author.register", TargetKind: "author", TargetID: author.ID, ActorSnapshot: author.ID, TargetSnapshot: author.Handle})
 	})
 	return author, device, err
 }
@@ -383,6 +429,14 @@ type AuditEvent struct {
 	OccurredAt                                                               time.Time
 }
 
+type AuditFilter struct {
+	ScopeAuthorID string
+	Action        string
+	TargetKind    string
+	Before        time.Time
+	Limit         int
+}
+
 func (r *Repository) ListAudit(ctx context.Context, scopeAuthorID string, limit int) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
@@ -405,6 +459,82 @@ FROM audit_events WHERE scope_author_id=? ORDER BY occurred_at_ns DESC LIMIT ?`
 		result = append(result, event)
 	}
 	return result, storageError(rows.Err())
+}
+
+// ListAuditFiltered keeps filtering in SQL so a caller cannot bypass the
+// scope or accidentally truncate a large author's history in memory.
+func (r *Repository) ListAuditFiltered(ctx context.Context, filter AuditFilter) ([]AuditEvent, error) {
+	if filter.ScopeAuthorID != "" {
+		if err := validateID(filter.ScopeAuthorID); err != nil {
+			return nil, err
+		}
+	}
+	if filter.Action != "" {
+		if err := validateID(filter.Action); err != nil {
+			return nil, err
+		}
+	}
+	if filter.TargetKind != "" {
+		if err := validateID(filter.TargetKind); err != nil {
+			return nil, err
+		}
+	}
+	limit := filter.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	query := `SELECT id,scope_author_id,actor_kind,actor_author_id,actor_device_id,action,target_kind,target_id,actor_snapshot,target_snapshot,details_json,occurred_at_ns FROM audit_events WHERE 1=1`
+	args := make([]any, 0, 4)
+	if filter.ScopeAuthorID != "" {
+		query += ` AND scope_author_id=?`
+		args = append(args, filter.ScopeAuthorID)
+	}
+	if filter.Action != "" {
+		query += ` AND action=?`
+		args = append(args, filter.Action)
+	}
+	if filter.TargetKind != "" {
+		query += ` AND target_kind=?`
+		args = append(args, filter.TargetKind)
+	}
+	if !filter.Before.IsZero() {
+		query += ` AND occurred_at_ns<?`
+		args = append(args, filter.Before.UnixNano())
+	}
+	query += ` ORDER BY occurred_at_ns DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, storageError(err)
+	}
+	defer rows.Close()
+	var result []AuditEvent
+	for rows.Next() {
+		var event AuditEvent
+		var ns int64
+		if err := rows.Scan(&event.ID, &event.ScopeAuthorID, &event.ActorKind, &event.ActorAuthorID, &event.ActorDeviceID, &event.Action, &event.TargetKind, &event.TargetID, &event.ActorSnapshot, &event.TargetSnapshot, &event.DetailsJSON, &ns); err != nil {
+			return nil, storageError(err)
+		}
+		event.OccurredAt = time.Unix(0, ns)
+		result = append(result, event)
+	}
+	return result, storageError(rows.Err())
+}
+
+// PruneAudit removes only audit rows. It deliberately does not invoke the
+// broader repository garbage collector, so audit retention cannot remove
+// sessions or unreferenced artifacts as a side effect.
+func (r *Repository) PruneAudit(ctx context.Context, before time.Time) (int64, error) {
+	var removed int64
+	err := r.mutate(ctx, "audit-prune", CommitEvent{Operation: "audit-prune", Kind: "audit", ID: "repository"}, func(m *MutationTx) error {
+		result, err := m.ExecContext(ctx, `DELETE FROM audit_events WHERE occurred_at_ns<?`, before.UnixNano())
+		if err != nil {
+			return err
+		}
+		removed, _ = result.RowsAffected()
+		return nil
+	})
+	return removed, err
 }
 
 func validateID(value string) error {
