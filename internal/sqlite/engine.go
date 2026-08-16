@@ -29,12 +29,25 @@ var nextDriverID atomic.Uint64
 // Config controls one database handle. Key is a raw 32-byte key; it is copied
 // when the handle is opened and is never included in the DSN.
 type Config struct {
-	Path         string
-	Key          []byte
-	BusyTimeout  time.Duration
-	MaxOpenConns int
-	MaxIdleConns int
+	Path                   string
+	Key                    []byte
+	BusyTimeout            time.Duration
+	MaxOpenConns           int
+	MaxIdleConns           int
+	CacheSizeKB            int
+	WALAutoCheckpointPages int
+	Trace                  TraceFunc
 }
+
+// TraceEvent is deliberately statement-only: expanded SQL is never captured,
+// so bound secrets and artifact values cannot enter qualification logs.
+type TraceEvent struct {
+	Kind      string
+	Statement string
+	Duration  time.Duration
+}
+
+type TraceFunc func(TraceEvent)
 
 // String is intentionally non-diagnostic so configs can be included in
 // structured logs without exposing a raw key or a caller-supplied DSN.
@@ -92,6 +105,18 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 	if cfg.BusyTimeout <= 0 {
 		cfg.BusyTimeout = DefaultBusyTimeout
 	}
+	if cfg.MaxOpenConns <= 0 {
+		cfg.MaxOpenConns = 4
+	}
+	if cfg.MaxIdleConns <= 0 {
+		cfg.MaxIdleConns = cfg.MaxOpenConns
+	}
+	if cfg.CacheSizeKB <= 0 {
+		cfg.CacheSizeKB = 8192
+	}
+	if cfg.WALAutoCheckpointPages <= 0 {
+		cfg.WALAutoCheckpointPages = 1000
+	}
 
 	id := nextDriverID.Add(1)
 	driverName := fmt.Sprintf("plumtree-sqlite-%d", id)
@@ -100,7 +125,7 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 		timeoutMS = 1
 	}
 
-	driver := newSQLiteDriver(key, encrypted, timeoutMS)
+	driver := newSQLiteDriver(key, encrypted, timeoutMS, cfg.CacheSizeKB, cfg.WALAutoCheckpointPages, cfg.Trace)
 	sql.Register(driverName, driver)
 
 	db, err := sql.Open(driverName, sqliteDSN(cfg.Path))
