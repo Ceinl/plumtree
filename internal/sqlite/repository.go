@@ -598,7 +598,9 @@ func (r *Repository) PutArtifact(ctx context.Context, input ArtifactInput) (Arti
 		if err != nil {
 			return err
 		}
-		scanErr := row.Scan(&storedSize)
+		// Read both columns so a repeated content digest can be compared against
+		// the already stored bytes, rather than trusting the client declaration.
+		scanErr := row.Scan(&storedSize, &storedWASM)
 		if scanErr == nil {
 			if storedSize != metadata.SizeBytes || !bytes.Equal(storedWASM, input.WASM) {
 				return ErrConflict
