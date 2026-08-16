@@ -2,48 +2,33 @@
 package main
 
 import (
-	"fmt"
-
-	"github.com/Ceinl/plumtree/sdk"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/components"
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
 type model struct{ n int }
 
 // Update handles input by mutating state.
-func (m *model) Update(ev sdk.Event) {
-	if k, ok := ev.(sdk.KeyMsg); ok {
-		switch k.Key {
-		case sdk.KeyUp, '+':
+func (m *model) Update(event app.Event) app.Command {
+	if key, ok := event.(app.KeyEvent); ok {
+		switch key.Key {
+		case app.KeyUp, '+':
 			m.n++
-		case sdk.KeyDown, '-':
+		case app.KeyDown, '-':
 			m.n--
-		case 'q', sdk.KeyCtrlC:
-			sdk.Quit()
+		case 'q', app.KeyCtrlC:
+			return app.Quit()
 		}
 	}
+	return app.Noop()
 }
 
 // View builds the component tree from state each frame.
-func (m *model) View() tui.Component {
-	root := components.NewDiv()
-	root.SetDirection(tui.Column)
-	root.JustifyContent(tui.JCenter)
-	root.AlignItems(tui.ACenter)
-	root.SetSize(tui.Grow, tui.Grow)
-
-	count := components.NewText(fmt.Sprintf("Count: %d", m.n))
-	count.SetAlign(components.AlignCenter)
-
-	hint := components.NewText("(↑/↓ to change, q to quit)")
-	hint.SetAlign(components.AlignCenter)
-
-	root.AppendChild(count)
-	root.AppendChild(hint)
-	return root
+func (m *model) View() ui.Node {
+	return ui.Column(
+		ui.Textf("Count: %d", m.n),
+		ui.Text("(↑/↓ to change, q to quit)").Role(ui.Muted),
+	).Fill().Gap(1).Align(ui.Center).Justify(ui.Center)
 }
 
-func main() {
-	sdk.RunTUI(&model{}, sdk.Meta{Name: "{{.Name}}", Type: "tui"})
-}
+func main() { app.Run(&model{}) }

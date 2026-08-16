@@ -2,7 +2,7 @@
 
 A small online chat that combines three Plumtree capabilities:
 
-- `sdk.Whoami` identifies a connection by its SSH key.
+- `identity.Whoami` identifies a connection by its SSH key.
 - KV remembers that identity's chosen display name and the room history.
 - Pub/sub pushes new messages to every connected session immediately.
 

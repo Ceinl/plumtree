@@ -12,10 +12,8 @@ import (
 
 	execprotocol "github.com/Ceinl/plumtree/internal/protocol/exec"
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
-	"github.com/Ceinl/plumtree/sdk/tui/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal/keyboard"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -78,7 +76,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			var args []string
 			if req.Type == "exec" {
 				var payload execRequest
-				if len(req.Payload) > 4+abi.ActionMaxCommand || ssh.Unmarshal(req.Payload, &payload) != nil {
+				if len(req.Payload) > 4+64*1024 || ssh.Unmarshal(req.Payload, &payload) != nil {
 					req.Reply(false, nil)
 					continue
 				}
@@ -132,9 +130,9 @@ func parseWindowChange(payload []byte) (windowChange, error) {
 func validateRequestDimensions(columns, rows uint32) error {
 	// Compare as uint32 before converting to int so this remains safe on 32-bit
 	// builds as well as the current 64-bit gateway targets.
-	if columns < tui.MinWidth || columns > tui.MaxWidth ||
-		rows < tui.MinHeight || rows > tui.MaxHeight ||
-		uint64(columns)*uint64(rows) > tui.MaxCells {
+	if columns < terminal.MinWidth || columns > terminal.MaxWidth ||
+		rows < terminal.MinHeight || rows > terminal.MaxHeight ||
+		uint64(columns)*uint64(rows) > terminal.MaxCells {
 		return fmt.Errorf("terminal dimensions %dx%d outside allowed range", columns, rows)
 	}
 	return nil
@@ -236,7 +234,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
 		}
-		if caps.Goodbye != nil && *caps.Goodbye != "" && (len(args) == 0 || args[0] != abi.ActionArgPrefix) {
+		if caps.Goodbye != nil && *caps.Goodbye != "" {
 			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
 		return "", false

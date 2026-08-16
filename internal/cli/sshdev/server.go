@@ -27,9 +27,8 @@ import (
 
 	execprotocol "github.com/Ceinl/plumtree/internal/protocol/exec"
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/sdk/tui/keyboard"
-	"github.com/Ceinl/plumtree/sdk/tui/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal/keyboard"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -161,7 +160,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			var args []string
 			if req.Type == "exec" {
 				var payload execRequest
-				if len(req.Payload) > 4+abi.ActionMaxCommand || ssh.Unmarshal(req.Payload, &payload) != nil {
+				if len(req.Payload) > 4+64*1024 || ssh.Unmarshal(req.Payload, &payload) != nil {
 					req.Reply(false, nil)
 					continue
 				}
@@ -211,7 +210,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch); err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
-		if *caps.Goodbye != "" && (len(args) == 0 || args[0] != abi.ActionArgPrefix) {
+		if *caps.Goodbye != "" {
 			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
 		return

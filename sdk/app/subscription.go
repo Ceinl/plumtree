@@ -21,6 +21,7 @@ type SubscriptionSpec struct {
 	Definition string
 	Timer      *TimerSpec
 	Start      func(context.Context, func(Event))
+	Filter     func(Event) (Event, bool)
 }
 
 // TimerSpec is the deterministic timer source used by app.Every.

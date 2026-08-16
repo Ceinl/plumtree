@@ -1,9 +1,9 @@
 // Package bus provides typed live topic operations and app subscriptions.
 // Authority is the app-scoped topic capability; messages live only until
 // delivery and are best-effort notifications, so durable state belongs in kv.
-// Native uses an isolated process-local adapter. Hosted selection waits for
-// the clean ABI event contract and reports ErrUnavailable for subscriptions.
-// The package owns topic validation and copies payloads at both boundaries.
+// Native uses an isolated process-local adapter. Hosted apps use the clean ABI
+// event contract. The package owns topic validation and copies payloads at both
+// boundaries.
 package bus
 
 import (
@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 
-	legacy "github.com/Ceinl/plumtree/sdk"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/app"
 	"github.com/Ceinl/plumtree/sdk/internal/operation"
@@ -75,7 +74,21 @@ func Messages(key app.SubscriptionKey, topic string, mapper func(Message) app.Ev
 			}
 		})
 	}
-	return app.Source(key, definition, messageSource(topic, mapper))
+	registerTopic(topic)
+	subscription := app.Source(key, definition, messageSource(topic, mapper))
+	if mapper == nil {
+		return subscription
+	}
+	return app.Subscription{{
+		Key: key, Definition: definition, Start: messageSource(topic, mapper),
+		Filter: func(event app.Event) (app.Event, bool) {
+			message, ok := event.(app.MessageEvent)
+			if !ok || message.Topic != topic {
+				return nil, false
+			}
+			return mapper(Message{Topic: message.Topic, Data: append([]byte(nil), message.Data...)}), true
+		},
+	}}
 }
 
 func validate(topic string, data []byte) error {
@@ -91,12 +104,6 @@ func validate(topic string, data []byte) error {
 func normalize(err error) error {
 	if err == nil {
 		return nil
-	}
-	if errors.Is(err, legacy.ErrBusTooLarge) {
-		return fmt.Errorf("%w: %v", ErrTooLarge, err)
-	}
-	if errors.Is(err, legacy.ErrBusUnavailable) {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	return err
 }

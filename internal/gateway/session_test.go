@@ -13,9 +13,7 @@ import (
 	"testing"
 
 	"github.com/Ceinl/plumtree/internal/runner"
-	"github.com/Ceinl/plumtree/sdk/abi"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -26,12 +24,12 @@ func TestParseTerminalDimensions(t *testing.T) {
 		rows    uint32
 		valid   bool
 	}{
-		{"minimum", tui.MinWidth, tui.MinHeight, true},
-		{"maximum", tui.MaxWidth, tui.MaxHeight, true},
+		{"minimum", terminal.MinWidth, terminal.MinHeight, true},
+		{"maximum", terminal.MaxWidth, terminal.MaxHeight, true},
 		{"zero columns", 0, 24, false},
 		{"zero rows", 80, 0, false},
-		{"too wide", tui.MaxWidth + 1, 24, false},
-		{"too tall", 80, tui.MaxHeight + 1, false},
+		{"too wide", terminal.MaxWidth + 1, 24, false},
+		{"too tall", 80, terminal.MaxHeight + 1, false},
 		{"uint32 maximum", ^uint32(0), ^uint32(0), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,7 +103,7 @@ func TestRunSessionTUIEnablesAndDisablesMouse(t *testing.T) {
 	}
 }
 
-func TestRunSessionActionUsesCLIForTUIApp(t *testing.T) {
+func TestRunSessionCleanCLIUsesCLIForTUIApp(t *testing.T) {
 	wasmPath := buildTestBinary(t, "../../examples/agentboard/app", ".", []string{"GOOS=wasip1", "GOARCH=wasm"})
 	wasm, err := os.ReadFile(wasmPath)
 	if err != nil {
@@ -116,12 +114,12 @@ func TestRunSessionActionUsesCLIForTUIApp(t *testing.T) {
 		KV: runner.NewMemStore(0, 0), Bus: runner.NewMemBus(),
 		Auth: runner.StaticAuth{Identity: runner.Identity{User: "SHA256:owner-key-0123456789012345", Kind: runner.IdentitySSHKey, OwnsApp: true}},
 	}
-	goodbye := "must not corrupt the JSON action envelope"
+	goodbye := "clean CLI complete"
 	caps.Goodbye = &goodbye
 	s := &Server{Runner: runner.New()}
-	s.runSessionArgs(context.Background(), ch, wasm, "tui", caps, nil, nil, []string{abi.ActionArgPrefix, "get_identity", `{}`})
-	if got := ch.String(); !strings.Contains(got, `"ok":true`) || strings.Contains(got, terminal.OPEN_ALT) || strings.Contains(got, goodbye) {
-		t.Fatalf("action output = %q", got)
+	s.runSessionArgs(context.Background(), ch, wasm, "tui", caps, nil, nil, []string{"get_identity"})
+	if got := ch.String(); !strings.Contains(got, "authenticated=false") || strings.Contains(got, terminal.OPEN_ALT) || !strings.Contains(got, goodbye) {
+		t.Fatalf("clean CLI output = %q", got)
 	}
 }
 

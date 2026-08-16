@@ -72,3 +72,10 @@ type PasteEvent struct{ Text string }
 
 // ResizeEvent reports a terminal size in cells.
 type ResizeEvent struct{ Width, Height int }
+
+// MessageEvent is a clean ABI pub/sub notification. Capability packages may
+// consume it through a subscription filter without coupling app to bus.
+type MessageEvent struct {
+	Topic string
+	Data  []byte
+}

@@ -44,15 +44,14 @@ simple:
 ssh counter@plumtree.dev
 ```
 
-Action-enabled apps also accept the production-compatible exec form:
+CLI-enabled apps also accept the production-compatible exec form:
 
 ```bash
-ssh counter@plumtree.dev 'action get_identity {}'
+ssh counter@plumtree.dev 'get_identity'
 ```
 
-The action name is a single token and everything after it is passed unchanged
-as the JSON request. Responses are a single JSON line and the SSH exit status
-is non-zero only when the session itself cannot be started.
+The command is parsed as bounded CLI argv without invoking a shell. Output and
+exit status use the same clean CLI contract as local development.
 
 Use `--host <name>` to pick a different local alias:
 
