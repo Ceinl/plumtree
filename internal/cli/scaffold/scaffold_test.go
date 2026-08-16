@@ -41,8 +41,8 @@ func TestNewTUIWritesLayout(t *testing.T) {
 	if !strings.Contains(main, `app.Run(&model{})`) || !strings.Contains(main, `github.com/Ceinl/plumtree/sdk/ui`) {
 		t.Errorf("main.go not a TUI app for counter:\n%s", main)
 	}
-	if gi := read(t, proj, ".gitignore"); !strings.Contains(gi, ".env.plumtree.server.local") {
-		t.Errorf(".gitignore missing secret file: %s", gi)
+	if gi := read(t, proj, ".gitignore"); strings.Contains(gi, ".env.") || !strings.Contains(gi, ".plumtree/") {
+		t.Errorf(".gitignore has stale secret shim or misses local state: %s", gi)
 	}
 	if mf := read(t, proj, "plumtree.json"); !strings.Contains(mf, `"type": "tui"`) {
 		t.Errorf("manifest missing type: %s", mf)

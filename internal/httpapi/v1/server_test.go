@@ -106,6 +106,38 @@ func TestExactMultipartDeploymentDerivesArtifactAndProblems(t *testing.T) {
 	}
 }
 
+func TestSecretAndEgressRoutesDoNotExposeSecretValues(t *testing.T) {
+	server, principal, repo := newTestServer(t)
+	if _, err := repo.CreateApp(context.Background(), sqlite.AppInput{ID: "app-1", AuthorID: principal.AuthorID, Name: "counter", Kind: "cli", AccessMode: "public", CreatedByDeviceID: principal.DeviceID}); err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set(ProductVersionHeader, "devel+test")
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(WithPrincipal(req.Context(), principal))
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	secret := request(http.MethodPut, "/api/v1/apps/app-1/secrets/API_KEY", `{"value":"do-not-return"}`)
+	if secret.Code != http.StatusOK || strings.Contains(secret.Body.String(), "do-not-return") {
+		t.Fatalf("secret write status=%d body=%s", secret.Code, secret.Body)
+	}
+	listed := request(http.MethodGet, "/api/v1/apps/app-1/secrets", "")
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), "do-not-return") || !strings.Contains(listed.Body.String(), "API_KEY") {
+		t.Fatalf("secret list status=%d body=%s", listed.Code, listed.Body)
+	}
+	egress := request(http.MethodPost, "/api/v1/apps/app-1/egress", `{"host":"api.example.com"}`)
+	if egress.Code != http.StatusOK || !strings.Contains(egress.Body.String(), "api.example.com") {
+		t.Fatalf("egress write status=%d body=%s", egress.Code, egress.Body)
+	}
+	listedEgress := request(http.MethodGet, "/api/v1/apps/app-1/egress", "")
+	if listedEgress.Code != http.StatusOK || !strings.Contains(listedEgress.Body.String(), "api.example.com") {
+		t.Fatalf("egress list status=%d body=%s", listedEgress.Code, listedEgress.Body)
+	}
+}
+
 type countingReader struct{ reads int }
 
 func (r *countingReader) Read([]byte) (int, error) { r.reads++; return 0, context.Canceled }

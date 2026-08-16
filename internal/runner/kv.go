@@ -359,7 +359,7 @@ func (s *MemStore) snapshot() map[string][]byte {
 
 // FileStore is a MemStore that persists its contents to a JSON file after every
 // mutation, so the data survives across sessions and processes — this is what
-// lets two `pt dev --ssh` connections to the same app share state. Keys are
+// lets two local development sessions for the same app share state. Keys are
 // expected to be UTF-8 (JSON object keys); values may be arbitrary bytes.
 type FileStore struct {
 	*MemStore

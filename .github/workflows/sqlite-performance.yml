@@ -4,7 +4,8 @@ on:
   pull_request:
     paths:
       - 'internal/sqlite/**'
-      - 'third_party/mattn/go-sqlite3/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/sqlite-performance.yml'
   schedule:
     - cron: '17 3 * * *'

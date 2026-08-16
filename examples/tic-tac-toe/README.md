@@ -9,10 +9,10 @@ A mouse-driven, shared Plumtree game:
 - Heartbeat leases reclaim seats after abrupt SSH disconnects.
 
 ```bash
-pt dev --ssh
-# or, after deployment
-ssh <owner>/tic-tac-toe@plumtree.app
+pt dev
 ```
+
+Hosted SSH access requires a paired server and a live qualification fixture.
 
 Click an empty square when it is your turn. After a win or draw, either player
 can click the board to begin another round. Press `q`, `Esc`, or `Ctrl-C` to
