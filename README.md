@@ -143,9 +143,12 @@ needed to *run* apps (that's `ssh`).
 
 ```
 pt new <name> --tui|--cli --access public|restricted  # scaffold the app shape
-pt dev                      # compile to WASM + run locally in wazero
+pt new --cli --access restricted <name>                # flags can also come first
+pt dev [args...]            # compile and run; TUI apps use the current terminal
+pt dev --headless           # run a deterministic scripted TUI session
+pt dev --ssh                # serve the app through loopback SSH
 pt build                    # compile to a typed WASM artifact
-pt deploy                   # build server-side + deploy
+pt deploy                   # build locally and deploy the artifact
 
 pt status                   # server and app state
 pt audit                    # audit records
@@ -153,6 +156,14 @@ pt access                   # typed access-key workflow
 
 pt logs <app>               # session logs
 ```
+
+Use `--` before app arguments that start with `-`. Headless development accepts
+`--script`, `-w`, `-h`, `--mem-pages`, `--frame-timeout`, and `--max-fps`.
+Development SSH listens on `127.0.0.1:2222` by default. Use `--addr` to select a
+different loopback address.
+
+Deploy and destructive `secret rm`, `egress rm`, and `access rm` operations ask
+for confirmation in a terminal. Use `--yes` for a non-interactive command.
 
 Author and device identity are represented by the paired SSH workflow and
 persistent root SQLite repository. First-run pairing remains a release gate;
