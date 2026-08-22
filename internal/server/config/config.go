@@ -99,6 +99,10 @@ type Runtime struct {
 	Production                 bool   `json:"production"`
 	AcknowledgeUnlimitedLimits bool   `json:"acknowledgeUnlimitedLimits"`
 	ShutdownTimeout            string `json:"shutdownTimeout"`
+	RunnerEndpoint             string `json:"runnerEndpoint,omitempty"`
+	RunnerWorker               string `json:"runnerWorker,omitempty"`
+	RunnerScratchRoot          string `json:"runnerScratchRoot,omitempty"`
+	WorkerUIDBase              int    `json:"workerUIDBase,omitempty"`
 }
 
 // Secret references are paths only. Secret bytes are read by a role only when
@@ -113,7 +117,7 @@ func Default() Config {
 	return Config{Version: FormatVersion,
 		Storage:  Storage{DatabasePath: "plumtree.db", KVRoot: "plumtree-data", SSHIdentity: "plumtree_host_key"},
 		Exposure: Exposure{SSH: ExposureGate{Enabled: true, Address: ":2222"}},
-		Roles:    Roles{Control: true},
+		Roles:    Roles{Control: true, Gateway: true},
 		Runtime:  Runtime{ShutdownTimeout: "30s"},
 		Limits: Limits{
 			MaxSessions: 64, MaxConnections: 1024, MaxConnectionsPerIP: 32, MaxFPS: 60,
@@ -171,6 +175,9 @@ func (c Config) Validate() error {
 	if c.Resources.MemoryLimitBytes < 0 {
 		return fmt.Errorf("%w: memoryLimitBytes", ErrInvalid)
 	}
+	if c.Runtime.WorkerUIDBase < 0 {
+		return fmt.Errorf("%w: workerUIDBase", ErrInvalid)
+	}
 	if c.Resources.Capacity.MaxSessions < 0 || c.Resources.Capacity.MaxWorkers < 0 || c.Resources.Capacity.MaxBuilds < 0 {
 		return fmt.Errorf("%w: capacity", ErrInvalid)
 	}
@@ -198,7 +205,24 @@ func (c Config) ValidateProduction() error {
 	if !c.Runtime.Production {
 		return nil
 	}
-	if strings.TrimSpace(c.Secrets.DatabaseKeyFile) == "" {
+	if c.Roles.Gateway && strings.TrimSpace(c.Runtime.RunnerEndpoint) == "" {
+		return fmt.Errorf("%w: production gateway requires runtime.runnerEndpoint", ErrInvalid)
+	}
+	if c.Roles.Gateway && !strings.HasPrefix(c.Runtime.RunnerEndpoint, "unix://") {
+		return fmt.Errorf("%w: production gateway runner endpoint must use a Unix socket", ErrInvalid)
+	}
+	if c.Roles.Gateway && strings.TrimSpace(c.Secrets.GatewayTokenFile) == "" {
+		return fmt.Errorf("%w: production gateway requires secrets.gatewayTokenFile", ErrInvalid)
+	}
+	if c.Roles.Runner {
+		if c.Roles.Control || c.Roles.Gateway {
+			return fmt.Errorf("%w: production runner must use an isolated role", ErrInvalid)
+		}
+		if strings.TrimSpace(c.Runtime.RunnerEndpoint) == "" || strings.TrimSpace(c.Runtime.RunnerWorker) == "" || strings.TrimSpace(c.Secrets.RunnerTokenFile) == "" {
+			return fmt.Errorf("%w: production runner requires endpoint, worker, and token", ErrInvalid)
+		}
+	}
+	if c.Roles.Control && strings.TrimSpace(c.Secrets.DatabaseKeyFile) == "" {
 		return fmt.Errorf("%w: production requires secrets.databaseKeyFile", ErrInvalid)
 	}
 	if c.Runtime.AcknowledgeUnlimitedLimits {
@@ -635,6 +659,18 @@ func (c Config) Set(field, value string) (Config, error) {
 		next.Runtime.AcknowledgeUnlimitedLimits = v
 	case "runtime.shutdownTimeout":
 		next.Runtime.ShutdownTimeout = value
+	case "runtime.runnerEndpoint":
+		next.Runtime.RunnerEndpoint = value
+	case "runtime.runnerWorker":
+		next.Runtime.RunnerWorker = value
+	case "runtime.runnerScratchRoot":
+		next.Runtime.RunnerScratchRoot = value
+	case "runtime.workerUIDBase":
+		v, e := strconv.Atoi(value)
+		if e != nil || v < 0 {
+			return c, fmt.Errorf("%w: workerUIDBase", ErrInvalid)
+		}
+		next.Runtime.WorkerUIDBase = v
 	case "exposure.http.enabled":
 		v, e := strconv.ParseBool(value)
 		if e != nil {
@@ -738,6 +774,14 @@ func (c Config) Unset(field string) (Config, error) {
 		c.Runtime.AcknowledgeUnlimitedLimits = d.Runtime.AcknowledgeUnlimitedLimits
 	case "runtime.shutdownTimeout":
 		c.Runtime.ShutdownTimeout = d.Runtime.ShutdownTimeout
+	case "runtime.runnerEndpoint":
+		c.Runtime.RunnerEndpoint = d.Runtime.RunnerEndpoint
+	case "runtime.runnerWorker":
+		c.Runtime.RunnerWorker = d.Runtime.RunnerWorker
+	case "runtime.runnerScratchRoot":
+		c.Runtime.RunnerScratchRoot = d.Runtime.RunnerScratchRoot
+	case "runtime.workerUIDBase":
+		c.Runtime.WorkerUIDBase = d.Runtime.WorkerUIDBase
 	default:
 		return c, fmt.Errorf("%w: unknown setting %q", ErrInvalid, field)
 	}
