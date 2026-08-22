@@ -22,13 +22,13 @@ type RoleProjection struct {
 }
 
 func NewControlRole(c Config) (RoleProjection, error) {
-	return newRole(RoleControl, c, []string{"storage", "control"})
+	return newRole(RoleControl, c, readinessFor(RoleControl))
 }
 func NewGatewayRole(c Config) (RoleProjection, error) {
-	return newRole(RoleGateway, c, []string{"runner", "gateway"})
+	return newRole(RoleGateway, c, readinessFor(RoleGateway))
 }
 func NewRunnerRole(c Config) (RoleProjection, error) {
-	return newRole(RoleRunner, c, []string{"runner"})
+	return newRole(RoleRunner, c, readinessFor(RoleRunner))
 }
 
 func newRole(name RoleName, c Config, readiness []string) (RoleProjection, error) {

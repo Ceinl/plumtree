@@ -16,9 +16,10 @@ type connectionAdmission struct {
 
 type activityConn struct {
 	net.Conn
-	idle time.Duration
-	mu   sync.Mutex
-	on   bool
+	idle        time.Duration
+	mu          sync.Mutex
+	on          bool
+	nextRefresh time.Time
 }
 
 func newActivityConn(connection net.Conn, idle time.Duration) *activityConn {
@@ -58,7 +59,12 @@ func (c *activityConn) refreshDeadline() {
 		_ = c.Conn.SetDeadline(time.Time{})
 		return
 	}
-	_ = c.Conn.SetDeadline(time.Now().Add(c.idle))
+	now := time.Now()
+	if now.Before(c.nextRefresh) {
+		return
+	}
+	c.nextRefresh = now.Add(c.idle / 2)
+	_ = c.Conn.SetDeadline(now.Add(c.idle))
 }
 
 func newConnectionAdmission(maxTotal, maxPerIP int) *connectionAdmission {

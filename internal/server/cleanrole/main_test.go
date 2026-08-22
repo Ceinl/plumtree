@@ -125,7 +125,7 @@ func TestProductionRepositoryUsesConfiguredKey(t *testing.T) {
 	}
 	repo, err := openRepository(projection)
 	if errors.Is(err, sqlite.ErrSQLCipherUnavailable) {
-		return
+		t.Skip("SQLCipher is not available in this build")
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -139,5 +139,24 @@ func TestProductionRepositoryUsesConfiguredKey(t *testing.T) {
 	}
 	if bytes.HasPrefix(header, []byte("SQLite format 3")) {
 		t.Fatal("production repository was created as plaintext SQLite")
+	}
+}
+
+func TestControlStopReturnsWhenConnectionDoesNotDrain(t *testing.T) {
+	component := &controlComponent{}
+	component.wg.Add(1)
+	t.Cleanup(component.wg.Done)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- component.Stop(ctx) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("stop error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stop waited for a stuck connection after its deadline")
 	}
 }

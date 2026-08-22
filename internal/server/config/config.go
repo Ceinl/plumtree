@@ -153,6 +153,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%w: %s cannot be negative", ErrInvalid, name)
 		}
 	}
+	if strings.TrimSpace(c.Runtime.ShutdownTimeout) == "" {
+		return fmt.Errorf("%w: shutdownTimeout must be a positive duration", ErrInvalid)
+	}
 	for name, value := range map[string]string{
 		"sessionTimeout": c.Limits.SessionTimeout, "handshakeTimeout": c.Limits.HandshakeTimeout,
 		"idleTimeout": c.Limits.IdleTimeout, "frameTimeout": c.Limits.FrameTimeout,
@@ -211,7 +214,10 @@ func (c Config) ValidateProduction() error {
 		"limits.maxSessionsPerAppDay": c.Limits.MaxSessionsPerAppDay,
 		"limits.maxDeploysPerHour":    c.Limits.MaxDeploysPerHour,
 		"limits.maxConcurrentBuilds":  c.Limits.MaxConcurrentBuilds,
+		"limits.maxQueuedBuilds":      c.Limits.MaxQueuedBuilds,
 		"limits.rateLimitPerSec":      c.Limits.RateLimitPerSec,
+		"limits.rateBurst":            c.Limits.RateBurst,
+		"limits.maxFPS":               c.Limits.MaxFPS,
 		"limits.maxEventsPerSec":      c.Limits.MaxEventsPerSec,
 		"limits.maxFramesPerSec":      c.Limits.MaxFramesPerSec,
 		"limits.memoryPages":          c.Limits.MemoryPages,

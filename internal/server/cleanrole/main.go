@@ -61,7 +61,10 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 	}
 	component := &controlComponent{resolved: resolved, projection: projection, out: out}
 	lifecycle := serverconfig.NewLifecycle(component)
-	shutdownTimeout, _ := time.ParseDuration(resolved.Config.Runtime.ShutdownTimeout)
+	shutdownTimeout, parseErr := time.ParseDuration(resolved.Config.Runtime.ShutdownTimeout)
+	if parseErr != nil || shutdownTimeout <= 0 {
+		shutdownTimeout, _ = time.ParseDuration(serverconfig.Default().Runtime.ShutdownTimeout)
+	}
 	err = lifecycle.RunWithSignals(ctx, shutdownTimeout)
 	if errors.Is(err, context.Canceled) {
 		return nil
@@ -275,7 +278,8 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: API: %w", err)
 	}
-	c.listener, err = net.Listen("tcp", c.resolved.Config.Exposure.SSH.Address)
+	var listenConfig net.ListenConfig
+	c.listener, err = listenConfig.Listen(ctx, "tcp", c.resolved.Config.Exposure.SSH.Address)
 	if err != nil {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: SSH listen: %w", err)
@@ -307,7 +311,6 @@ func (c *controlComponent) Stop(ctx context.Context) error {
 	case <-done:
 	case <-ctx.Done():
 		c.closeConnections()
-		<-done
 		if c.repo != nil {
 			_ = c.repo.Close()
 		}

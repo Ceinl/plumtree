@@ -65,6 +65,36 @@ func TestProductionValidationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestProductionValidationRejectsEveryUnlimitedCriticalLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		zero func(*Config)
+	}{
+		{name: "max queued builds", zero: func(c *Config) { c.Limits.MaxQueuedBuilds = 0 }},
+		{name: "max FPS", zero: func(c *Config) { c.Limits.MaxFPS = 0 }},
+		{name: "rate burst", zero: func(c *Config) { c.Limits.RateBurst = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := Default()
+			c.Runtime.Production = true
+			c.Secrets.DatabaseKeyFile = filepath.Join(t.TempDir(), "database.key")
+			test.zero(&c)
+			if err := c.ValidateProduction(); err == nil {
+				t.Fatal("production accepted an unlimited critical limit")
+			}
+		})
+	}
+}
+
+func TestValidationRequiresShutdownTimeout(t *testing.T) {
+	c := Default()
+	c.Runtime.ShutdownTimeout = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("empty shutdown timeout was accepted")
+	}
+}
+
 func TestControlProjectionDoesNotReadDisabledRoleSecrets(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "database.key")
