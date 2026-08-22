@@ -1,0 +1,103 @@
+package config
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLoadMaterializesFlagEnvironmentConfigDefaultPrecedence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	stored := Default()
+	stored.Storage.DatabasePath = "from-config.db"
+	stored.Limits.MaxSessions = 70
+	if err := Write(path, stored); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(LoadOptions{
+		Path: path,
+		Environment: map[string]string{
+			"PLUMTREE_STORAGE_DATABASE_PATH": "from-environment.db",
+			"PLUMTREE_LIMITS_MAX_SESSIONS":   "71",
+		},
+		Flags: map[string]string{
+			"storage.databasePath": "from-flag.db",
+		},
+		ReadFile:   os.ReadFile,
+		HostMemory: 1 << 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Config.Storage.DatabasePath != "from-flag.db" {
+		t.Fatalf("database path = %q", loaded.Config.Storage.DatabasePath)
+	}
+	if loaded.Sources["storage.databasePath"] != SourceFlag {
+		t.Fatalf("database path source = %q", loaded.Sources["storage.databasePath"])
+	}
+	if loaded.Config.Limits.MaxSessions != 71 || loaded.Sources["limits.maxSessions"] != SourceEnvironment {
+		t.Fatalf("max sessions = %d source=%q", loaded.Config.Limits.MaxSessions, loaded.Sources["limits.maxSessions"])
+	}
+	if loaded.Config.Limits.MaxFPS != Default().Limits.MaxFPS || loaded.Sources["limits.maxFPS"] != SourceConfig {
+		t.Fatalf("max FPS = %d source=%q", loaded.Config.Limits.MaxFPS, loaded.Sources["limits.maxFPS"])
+	}
+	if loaded.Config.Resources.Capacity.MaxWorkers != 8 {
+		t.Fatalf("capacity = %+v", loaded.Config.Resources.Capacity)
+	}
+}
+
+func TestProductionValidationFailsClosed(t *testing.T) {
+	c := Default()
+	c.Runtime.Production = true
+	if err := c.ValidateProduction(); err == nil {
+		t.Fatal("production without a database key was accepted")
+	}
+	c.Secrets.DatabaseKeyFile = filepath.Join(t.TempDir(), "database.key")
+	c.Limits.MaxSessions = 0
+	if err := c.ValidateProduction(); err == nil {
+		t.Fatal("production with an unlimited critical limit was accepted")
+	}
+	c.Runtime.AcknowledgeUnlimitedLimits = true
+	if err := c.ValidateProduction(); err != nil {
+		t.Fatalf("explicit unlimited policy was rejected: %v", err)
+	}
+}
+
+func TestControlProjectionDoesNotReadDisabledRoleSecrets(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "database.key")
+	key := []byte("0123456789abcdef0123456789abcdef")
+	if err := os.WriteFile(keyPath, key, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := Default()
+	c.Roles.Control = true
+	c.Secrets.DatabaseKeyFile = keyPath
+	c.Secrets.GatewayTokenFile = filepath.Join(dir, "missing-gateway-token")
+
+	projection, err := MaterializeRole(c, RoleControl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(projection.Secret()) != string(key) {
+		t.Fatalf("database key = %q", projection.Secret())
+	}
+	if _, err := MaterializeRole(c, RoleGateway); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("disabled gateway error = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidEnvironmentInsteadOfFallingBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Write(path, Default()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(LoadOptions{Path: path, Environment: map[string]string{
+		"PLUMTREE_LIMITS_MAX_SESSIONS": "many",
+	}, HostMemory: 1 << 30})
+	if err == nil {
+		t.Fatal("invalid environment value was accepted")
+	}
+}

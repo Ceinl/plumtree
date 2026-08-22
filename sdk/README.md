@@ -175,14 +175,14 @@ all remaining commands are canceled when the session ends. See the complete
 ## Trusted host commands
 
 `hostexec.Run(name, args...)` executes a local program and returns its exit code,
-stdout, and stderr. Native development always uses the current process context;
-hosted apps receive this capability only when the server operator explicitly
-enables `allowHostCommands`, and only after the app is claimed. For shell
-syntax, invoke a shell explicitly: `hostexec.Run("sh", "-lc", script)`.
+stdout, and stderr. Native development uses the current process context. The
+selected hosted server does not expose this capability. Hosted policy remains
+deny-by-default until the operator allowlist and shell refusal contract is
+implemented.
 
 This capability is intended for trusted apps on private/self-hosted servers,
-including apps that invoke locally installed AI-agent CLIs. It grants the app
-the server process's OS authority; it is not part of the default sandbox.
+including apps that invoke locally installed AI-agent CLIs during development.
+It grants the app the development process's OS authority.
 
 Does not own: platform capability implementations, SSH serving, deploy storage.
 

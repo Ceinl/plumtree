@@ -101,7 +101,6 @@ guest. More trust unlocks more capability:
 | `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
 | `ctx.Env`   | server-side secrets                    | **claimed** apps    |
 | `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
-| `hostexec.Run`  | run a program as the server OS user   | **claimed** apps when operator-enabled |
 
 ### Capability examples
 
@@ -118,23 +117,6 @@ something larger than a single-feature fixture:
 The chat remembers display names only for stable SSH-key identities; anonymous
 session IDs are intentionally ephemeral. Tic-tac-toe gives its first two live
 identities the X and O seats; everyone else watches until a seat is released.
-
-### Trusted self-hosted apps
-
-Private/self-hosted servers can opt into host command execution for claimed
-apps. Set `allowHostCommands` to `true` in the server JSON config, pass
-`-allow-host-commands`, or set `PLUMTREE_ALLOW_HOST_COMMANDS=true`. Apps can
-then invoke installed tools directly:
-
-```go
-result := hostexec.Run("codex", "exec", "summarize the current project").Run(context.Background())
-```
-
-The option is off by default and never applies to unclaimed preview apps. It is
-an intentional trust-boundary change: commands inherit the server process's
-user, working directory, and environment. Enable it only when every claimed app
-and author on that server is trusted. Command output is capped and execution is
-cancelled when the app session ends.
 
 ## The `pt` CLI
 
@@ -185,7 +167,7 @@ tenants, or from the operator.
 
 ## Repository layout
 
-A multi-module Go workspace (`go.work`) with the staged root product module:
+A multi-module Go workspace (`go.work`) with the root product module:
 
 | Path             | Module                                    | Purpose                                                        |
 |------------------|-------------------------------------------|---------------------------------------------------------------|
@@ -194,8 +176,8 @@ A multi-module Go workspace (`go.work`) with the staged root product module:
 | `sdk/app/`       | `github.com/Ceinl/plumtree/sdk/app`       | Additive clean interactive lifecycle, commands, and subscriptions. |
 | `sdk/ui/`        | `github.com/Ceinl/plumtree/sdk/ui`        | Additive declarative UI nodes, themes, focus, and canvas.      |
 | `sdk/plumtest/`  | `github.com/Ceinl/plumtree/sdk/plumtest`  | Deterministic in-process interactive model test harness.      |
-| `cmd/pt/`         | `github.com/Ceinl/plumtree/cmd/pt`        | Root author CLI staging entrypoint.                            |
-| `cmd/plumtree/`   | `github.com/Ceinl/plumtree/cmd/plumtree`  | Root server-role staging entrypoint.                          |
+| `cmd/pt/`         | `github.com/Ceinl/plumtree/cmd/pt`        | Root author CLI entrypoint.                            |
+| `cmd/plumtree/`   | `github.com/Ceinl/plumtree/cmd/plumtree`  | Root server-role entrypoint.                          |
 | `internal/cli/`   | `github.com/Ceinl/plumtree/internal/cli`  | Root-owned author CLI, scaffold, local dev, deploy, and management. |
 | `internal/build/` | `github.com/Ceinl/plumtree/internal/build`| Root-owned local WASM build and source packaging.              |
 | `cmd/runner-worker/` | `github.com/Ceinl/plumtree/cmd/runner-worker` | Root-owned isolated WASM worker boundary. |
@@ -217,6 +199,11 @@ author: pt new → pt dev → pt build → pt deploy
 
 Local server startup persists the SQLite repository and SSH host key. The clean
 transport is SSH-only; there is no public HTTP listener or shared deploy token.
+The first `plumtree serve` creates the strict configuration at the platform
+config path. Operators can use `plumtree config show`,
+`plumtree config set <field> <value>`, and `plumtree config unset <field>`;
+changes take effect after restart. `-config` or `PLUMTREE_CONFIG` selects an
+explicit file.
 
 A locally built app is stored as a typed WASM artifact through `/api/v1`; the
 SDK and ABI suites cover the in-process and isolated runner paths. Native

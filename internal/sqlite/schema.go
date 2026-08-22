@@ -239,7 +239,7 @@ var schemaStatements = []string{
 	`PRAGMA user_version = 1`,
 }
 
-// EnsureSchema creates the unselected clean-break repository schema.
+// EnsureSchema creates the selected repository schema.
 func EnsureSchema(ctx context.Context, db *DB) error {
 	if db == nil || db.DB == nil {
 		return errors.New("sqlite: nil database")

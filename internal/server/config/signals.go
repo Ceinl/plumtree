@@ -16,12 +16,36 @@ func (l *Lifecycle) Run(ctx context.Context, timeout time.Duration) error {
 	if err := l.Start(ctx); err != nil {
 		return err
 	}
-	<-ctx.Done()
+	failures := make(chan error, len(l.started))
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+	for _, component := range l.started {
+		source, ok := component.(interface{ Errors() <-chan error })
+		if !ok || source.Errors() == nil {
+			continue
+		}
+		go func(events <-chan error) {
+			select {
+			case err, open := <-events:
+				if open && err != nil {
+					failures <- err
+				}
+			case <-watchCtx.Done():
+			}
+		}(source.Errors())
+	}
+	var runErr error
+	select {
+	case <-ctx.Done():
+		runErr = ctx.Err()
+	case runErr = <-failures:
+	}
+	cancelWatch()
 	stopErr := StopWithin(l, context.Background(), timeout)
 	if stopErr != nil {
-		return errors.Join(ctx.Err(), stopErr)
+		return errors.Join(runErr, stopErr)
 	}
-	return ctx.Err()
+	return runErr
 }
 
 // RunWithSignals adapts conventional interrupt/termination signals to the

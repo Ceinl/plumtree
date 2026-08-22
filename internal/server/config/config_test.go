@@ -40,6 +40,12 @@ func TestBootstrapStrictPermissionsAndCreateOnly(t *testing.T) {
 	if _, err := Read(path); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("trailing document error=%v", err)
 	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"version":1}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(path); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate field error=%v", err)
+	}
 }
 
 func TestConcurrentAtomicUpdatesAndPrecedence(t *testing.T) {
@@ -174,6 +180,30 @@ func TestLifecycleRunDrainsOnCancellation(t *testing.T) {
 	l := NewLifecycle(testComponent{name: "control", events: &events})
 	cancel()
 	if err := l.Run(ctx, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error=%v", err)
+	}
+	if len(events) == 0 || events[len(events)-1] != "control:stop" {
+		t.Fatalf("events=%v", events)
+	}
+}
+
+type failingComponent struct {
+	testComponent
+	failures chan error
+}
+
+func (c failingComponent) Errors() <-chan error { return c.failures }
+
+func TestLifecycleRunFailsAsOneUnitOnComponentError(t *testing.T) {
+	var events []string
+	failures := make(chan error, 1)
+	failures <- errors.New("listener failed")
+	l := NewLifecycle(failingComponent{
+		testComponent: testComponent{name: "control", events: &events},
+		failures:      failures,
+	})
+	err := l.Run(context.Background(), time.Second)
+	if err == nil || err.Error() != "listener failed" {
 		t.Fatalf("run error=%v", err)
 	}
 	if len(events) == 0 || events[len(events)-1] != "control:stop" {

@@ -1,10 +1,46 @@
 {
-  "publicOrigin": "https://plumtree.dev",
-  "sshHost": "plumtree.dev",
-  "autoClaim": false,
-  "allowHostCommands": false,
-  "deployClaimTtl": "5m",
-  "maxAppsPerOwner": 25,
-  "maxSessionsPerAppPerDay": 100,
-  "maxDeploysPerHour": 100
+  "version": 1,
+  "storage": {
+    "databasePath": "plumtree.db",
+    "kvRoot": "plumtree-data",
+    "sshIdentity": "plumtree_host_key"
+  },
+  "exposure": {
+    "http": { "enabled": false, "address": "" },
+    "ssh": { "enabled": true, "address": ":2222" },
+    "gateway": { "enabled": false, "address": "" }
+  },
+  "limits": {
+    "maxSessions": 64,
+    "maxConnections": 1024,
+    "maxConnectionsPerIP": 32,
+    "maxFPS": 60,
+    "maxApps": 25,
+    "maxDeployments": 100,
+    "maxSessionsPerAppDay": 50,
+    "maxDeploysPerHour": 100,
+    "maxConcurrentBuilds": 2,
+    "maxQueuedBuilds": 8,
+    "rateLimitPerSec": 20,
+    "rateBurst": 40,
+    "maxEventsPerSec": 200,
+    "maxFramesPerSec": 120,
+    "memoryPages": 512,
+    "sessionTimeout": "30m",
+    "handshakeTimeout": "10s",
+    "idleTimeout": "5m",
+    "frameTimeout": "2s"
+  },
+  "resources": {
+    "memoryLimitBytes": 0,
+    "autoCapacity": true,
+    "capacity": { "maxSessions": 0, "maxWorkers": 0, "maxBuilds": 0 }
+  },
+  "roles": { "control": true, "gateway": false, "runner": false },
+  "secrets": {},
+  "runtime": {
+    "production": false,
+    "acknowledgeUnlimitedLimits": false,
+    "shutdownTimeout": "30s"
+  }
 }

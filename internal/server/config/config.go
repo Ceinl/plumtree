@@ -1,5 +1,4 @@
-// Package config contains the additive typed configuration and role-composition
-// foundation. It is not selected by the current server entrypoint yet.
+// Package config owns Plumtree's typed, restart-only server configuration.
 package config
 
 import (
@@ -10,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +35,7 @@ type Config struct {
 	Resources Resources `json:"resources"`
 	Roles     Roles     `json:"roles"`
 	Secrets   Secrets   `json:"secrets"`
+	Runtime   Runtime   `json:"runtime"`
 }
 
 type Storage struct {
@@ -74,7 +75,6 @@ type Limits struct {
 	HandshakeTimeout     string `json:"handshakeTimeout"`
 	IdleTimeout          string `json:"idleTimeout"`
 	FrameTimeout         string `json:"frameTimeout"`
-	DeployClaimTTL       string `json:"deployClaimTtl"`
 }
 
 type Resources struct {
@@ -95,6 +95,12 @@ type Roles struct {
 	Runner  bool `json:"runner"`
 }
 
+type Runtime struct {
+	Production                 bool   `json:"production"`
+	AcknowledgeUnlimitedLimits bool   `json:"acknowledgeUnlimitedLimits"`
+	ShutdownTimeout            string `json:"shutdownTimeout"`
+}
+
 // Secret references are paths only. Secret bytes are read by a role only when
 // that role explicitly needs the corresponding reference.
 type Secrets struct {
@@ -104,15 +110,19 @@ type Secrets struct {
 }
 
 func Default() Config {
-	return Config{Version: FormatVersion, Limits: Limits{
-		MaxSessions: 64, MaxConnections: 1024, MaxConnectionsPerIP: 32, MaxFPS: 60,
-		MaxApps: 25, MaxDeployments: 100, MaxSessionsPerAppDay: 50,
-		MaxDeploysPerHour: 100, MaxConcurrentBuilds: 2, MaxQueuedBuilds: 8,
-		RateLimitPerSec: 20, RateBurst: 40, MaxEventsPerSec: 200,
-		MaxFramesPerSec: 120, MemoryPages: 512, SessionTimeout: "30m",
-		HandshakeTimeout: "10s", IdleTimeout: "5m", FrameTimeout: "2s",
-		DeployClaimTTL: "5m",
-	}, Resources: Resources{AutoCapacity: true}}
+	return Config{Version: FormatVersion,
+		Storage:  Storage{DatabasePath: "plumtree.db", KVRoot: "plumtree-data", SSHIdentity: "plumtree_host_key"},
+		Exposure: Exposure{SSH: ExposureGate{Enabled: true, Address: ":2222"}},
+		Roles:    Roles{Control: true},
+		Runtime:  Runtime{ShutdownTimeout: "30s"},
+		Limits: Limits{
+			MaxSessions: 64, MaxConnections: 1024, MaxConnectionsPerIP: 32, MaxFPS: 60,
+			MaxApps: 25, MaxDeployments: 100, MaxSessionsPerAppDay: 50,
+			MaxDeploysPerHour: 100, MaxConcurrentBuilds: 2, MaxQueuedBuilds: 8,
+			RateLimitPerSec: 20, RateBurst: 40, MaxEventsPerSec: 200,
+			MaxFramesPerSec: 120, MemoryPages: 512, SessionTimeout: "30m",
+			HandshakeTimeout: "10s", IdleTimeout: "5m", FrameTimeout: "2s",
+		}, Resources: Resources{AutoCapacity: true}}
 }
 
 func (c Config) Validate() error {
@@ -146,7 +156,7 @@ func (c Config) Validate() error {
 	for name, value := range map[string]string{
 		"sessionTimeout": c.Limits.SessionTimeout, "handshakeTimeout": c.Limits.HandshakeTimeout,
 		"idleTimeout": c.Limits.IdleTimeout, "frameTimeout": c.Limits.FrameTimeout,
-		"deployClaimTtl": c.Limits.DeployClaimTTL,
+		"shutdownTimeout": c.Runtime.ShutdownTimeout,
 	} {
 		if value != "" {
 			d, err := time.ParseDuration(value)
@@ -175,8 +185,63 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// ValidateProduction enforces the settings whose absence would remove a
+// security or resource boundary. The unlimited-limits acknowledgement is an
+// explicit operator policy; it never permits an unencrypted production store.
+func (c Config) ValidateProduction() error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if !c.Runtime.Production {
+		return nil
+	}
+	if strings.TrimSpace(c.Secrets.DatabaseKeyFile) == "" {
+		return fmt.Errorf("%w: production requires secrets.databaseKeyFile", ErrInvalid)
+	}
+	if c.Runtime.AcknowledgeUnlimitedLimits {
+		return nil
+	}
+	unlimited := make([]string, 0)
+	for name, value := range map[string]int{
+		"limits.maxSessions":          c.Limits.MaxSessions,
+		"limits.maxConnections":       c.Limits.MaxConnections,
+		"limits.maxConnectionsPerIP":  c.Limits.MaxConnectionsPerIP,
+		"limits.maxApps":              c.Limits.MaxApps,
+		"limits.maxDeployments":       c.Limits.MaxDeployments,
+		"limits.maxSessionsPerAppDay": c.Limits.MaxSessionsPerAppDay,
+		"limits.maxDeploysPerHour":    c.Limits.MaxDeploysPerHour,
+		"limits.maxConcurrentBuilds":  c.Limits.MaxConcurrentBuilds,
+		"limits.rateLimitPerSec":      c.Limits.RateLimitPerSec,
+		"limits.maxEventsPerSec":      c.Limits.MaxEventsPerSec,
+		"limits.maxFramesPerSec":      c.Limits.MaxFramesPerSec,
+		"limits.memoryPages":          c.Limits.MemoryPages,
+	} {
+		if value == 0 {
+			unlimited = append(unlimited, name)
+		}
+	}
+	for name, value := range map[string]string{
+		"limits.sessionTimeout":   c.Limits.SessionTimeout,
+		"limits.handshakeTimeout": c.Limits.HandshakeTimeout,
+		"limits.idleTimeout":      c.Limits.IdleTimeout,
+		"limits.frameTimeout":     c.Limits.FrameTimeout,
+	} {
+		if value == "" {
+			unlimited = append(unlimited, name)
+		}
+	}
+	if len(unlimited) > 0 {
+		slices.Sort(unlimited)
+		return fmt.Errorf("%w: production refuses unlimited critical settings: %s", ErrInvalid, strings.Join(unlimited, ", "))
+	}
+	return nil
+}
+
 func decode(data []byte) (Config, error) {
 	var c Config
+	if err := rejectDuplicateFields(data); err != nil {
+		return c, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
@@ -193,6 +258,55 @@ func decode(data []byte) (Config, error) {
 		return c, err
 	}
 	return c, nil
+}
+
+func rejectDuplicateFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := make(map[string]struct{})
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("object key is not a string")
+				}
+				if _, exists := seen[key]; exists {
+					return fmt.Errorf("duplicate field %q", key)
+				}
+				seen[key] = struct{}{}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		default:
+			return fmt.Errorf("unexpected delimiter %q", delimiter)
+		}
+	}
+	return walk()
 }
 
 func Read(path string) (Config, error) {
@@ -468,8 +582,6 @@ func (c Config) Set(field, value string) (Config, error) {
 		next.Limits.IdleTimeout = value
 	case "limits.frameTimeout":
 		next.Limits.FrameTimeout = value
-	case "limits.deployClaimTtl":
-		next.Limits.DeployClaimTTL = value
 	case "exposure.gateway.enabled":
 		v, e := strconv.ParseBool(value)
 		if e != nil {
@@ -484,6 +596,39 @@ func (c Config) Set(field, value string) (Config, error) {
 			return c, fmt.Errorf("%w: auto capacity", ErrInvalid)
 		}
 		next.Resources.AutoCapacity = v
+	case "roles.control", "roles.gateway", "roles.runner":
+		v, e := strconv.ParseBool(value)
+		if e != nil {
+			return c, fmt.Errorf("%w: %s", ErrInvalid, field)
+		}
+		switch field {
+		case "roles.control":
+			next.Roles.Control = v
+		case "roles.gateway":
+			next.Roles.Gateway = v
+		case "roles.runner":
+			next.Roles.Runner = v
+		}
+	case "secrets.databaseKeyFile":
+		next.Secrets.DatabaseKeyFile = value
+	case "secrets.gatewayTokenFile":
+		next.Secrets.GatewayTokenFile = value
+	case "secrets.runnerTokenFile":
+		next.Secrets.RunnerTokenFile = value
+	case "runtime.production":
+		v, e := strconv.ParseBool(value)
+		if e != nil {
+			return c, fmt.Errorf("%w: production", ErrInvalid)
+		}
+		next.Runtime.Production = v
+	case "runtime.acknowledgeUnlimitedLimits":
+		v, e := strconv.ParseBool(value)
+		if e != nil {
+			return c, fmt.Errorf("%w: acknowledge unlimited limits", ErrInvalid)
+		}
+		next.Runtime.AcknowledgeUnlimitedLimits = v
+	case "runtime.shutdownTimeout":
+		next.Runtime.ShutdownTimeout = value
 	case "exposure.http.enabled":
 		v, e := strconv.ParseBool(value)
 		if e != nil {
@@ -555,8 +700,6 @@ func (c Config) Unset(field string) (Config, error) {
 		c.Limits.IdleTimeout = d.Limits.IdleTimeout
 	case "limits.frameTimeout":
 		c.Limits.FrameTimeout = d.Limits.FrameTimeout
-	case "limits.deployClaimTtl":
-		c.Limits.DeployClaimTTL = d.Limits.DeployClaimTTL
 	case "exposure.http.enabled":
 		c.Exposure.HTTP.Enabled = d.Exposure.HTTP.Enabled
 	case "exposure.http.address":
@@ -571,6 +714,24 @@ func (c Config) Unset(field string) (Config, error) {
 		c.Exposure.Gateway.Address = d.Exposure.Gateway.Address
 	case "resources.autoCapacity":
 		c.Resources.AutoCapacity = d.Resources.AutoCapacity
+	case "roles.control":
+		c.Roles.Control = d.Roles.Control
+	case "roles.gateway":
+		c.Roles.Gateway = d.Roles.Gateway
+	case "roles.runner":
+		c.Roles.Runner = d.Roles.Runner
+	case "secrets.databaseKeyFile":
+		c.Secrets.DatabaseKeyFile = d.Secrets.DatabaseKeyFile
+	case "secrets.gatewayTokenFile":
+		c.Secrets.GatewayTokenFile = d.Secrets.GatewayTokenFile
+	case "secrets.runnerTokenFile":
+		c.Secrets.RunnerTokenFile = d.Secrets.RunnerTokenFile
+	case "runtime.production":
+		c.Runtime.Production = d.Runtime.Production
+	case "runtime.acknowledgeUnlimitedLimits":
+		c.Runtime.AcknowledgeUnlimitedLimits = d.Runtime.AcknowledgeUnlimitedLimits
+	case "runtime.shutdownTimeout":
+		c.Runtime.ShutdownTimeout = d.Runtime.ShutdownTimeout
 	default:
 		return c, fmt.Errorf("%w: unknown setting %q", ErrInvalid, field)
 	}

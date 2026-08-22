@@ -11,11 +11,14 @@ services:
     volumes:
       - plumtree-data:/data
     command:
-      - -database
+      - serve
+      - -config
+      - /etc/plumtree/config.json
+      - -storage-database-path
       - /data/plumtree.db
-      - -host-key
+      - -storage-ssh-identity
       - /data/plumtree_host_key
-      - -ssh-addr
+      - -exposure-ssh-address
       - :2222
       - -product-version
       - ${PLUMTREE_PRODUCT_VERSION:-dev}
