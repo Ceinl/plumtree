@@ -1,15 +1,24 @@
 FROM golang:1.26.5-alpine3.24 AS build
 WORKDIR /src
-RUN apk add --no-cache gcc musl-dev
+RUN apk add --no-cache bash gcc musl-dev openssl-dev sqlcipher-dev
 COPY . .
-RUN CGO_ENABLED=1 go build -trimpath -o /out/plumtree ./cmd/plumtree
-RUN CGO_ENABLED=1 go build -trimpath -o /out/runner-worker ./cmd/runner-worker
+ENV PLUMTREE_REAL_CC=gcc \
+    PLUMTREE_SQLCIPHER_INCLUDE=/usr/include/sqlcipher \
+    PLUMTREE_SQLCIPHER_LIBRARY=sqlcipher \
+    SQLCIPHER_PREFIX=/usr \
+    CC=/src/scripts/sqlcipher-cc.sh \
+    CGO_ENABLED=1 \
+    CGO_CFLAGS="-I/usr/include/sqlcipher -I/usr/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown" \
+    CGO_LDFLAGS="-L/usr/lib -lsqlcipher -lcrypto -lssl"
+RUN go build -tags "sqlcipher libsqlite3" -trimpath -o /out/plumtree ./cmd/plumtree
+RUN go build -tags "sqlcipher libsqlite3" -trimpath -o /out/runner-worker ./cmd/runner-worker
 
 FROM alpine:3.24.1
-RUN adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data
+RUN apk add --no-cache sqlcipher-libs && \
+    adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data
 COPY --from=build /out/plumtree /usr/local/bin/plumtree
 COPY --from=build /out/runner-worker /usr/local/bin/runner-worker
-COPY --chown=plumtree:plumtree --chmod=0600 config.example.json /etc/plumtree/config.json
+COPY --chown=plumtree:plumtree --chmod=0600 deploy/config.json /etc/plumtree/config.json
 USER plumtree
 ENV HOME=/data
 VOLUME /data

@@ -100,6 +100,33 @@ jobs:
           PLUMTREE_QUALIFY_SERVER: ${{ github.workspace }}/dist/native/plumtree
         run: go test -tags qualification ./test/qualification -run '^TestNativeReleaseJourney$' -count=1 -v
 
+  compose-release-qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: true
+          cache-dependency-path: |
+            **/go.sum
+      - name: Install target-native SQLCipher toolchain
+        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev libssl-dev openssh-client
+      - name: Build target-native author binary
+        env:
+          CC: gcc
+          OPENSSL_PREFIX: /usr
+          SQLCIPHER_INCLUDE: /usr/include/sqlcipher
+          SQLCIPHER_LIBRARY: sqlcipher
+          SQLCIPHER_PREFIX: /usr
+        run: ./scripts/build-native-release.sh dist/native
+      - name: Run fresh Compose production journey
+        env:
+          PLUMTREE_QUALIFY_PT: ${{ github.workspace }}/dist/native/pt
+          PLUMTREE_QUALIFY_REPOSITORY: ${{ github.workspace }}
+        run: go test -tags qualification ./test/qualification -run '^TestComposeReleaseJourney$' -count=1 -v
+
   release-contract:
     runs-on: ubuntu-latest
     steps:

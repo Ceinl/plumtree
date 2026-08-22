@@ -10,10 +10,11 @@ runner receives no database, KV, SSH, or network access. Only SSH is published.
 cd deploy
 cp .env.example .env
 umask 077
+openssl rand 32 > database.key
 printf '%s' "$(openssl rand -hex 32)" > runner.token
 docker compose build
 docker compose run --rm plumtree bootstrap \
-  -database /data/plumtree.db -handle alice -device laptop
+  --config /etc/plumtree/config.json -handle alice -device laptop
 docker compose up -d --build
 ```
 
@@ -31,11 +32,6 @@ The service command is equivalent to:
 
 ```sh
 plumtree serve --config /etc/plumtree/config.json \
-  -storage-database-path /data/plumtree.db \
-  -storage-ssh-identity /data/plumtree_host_key \
-  -exposure-ssh-address :2222 \
-  -runtime-runner-endpoint unix:///run/plumtree/runner.sock \
-  -secrets-gateway-token-file /run/secrets/runner-token \
   -product-version "$PLUMTREE_PRODUCT_VERSION"
 ```
 
@@ -46,7 +42,8 @@ persisted setting also has a one-run flag and environment form. For example,
 
 ## State and security
 
-- The database and host key are private volume data. Back up both together.
+- The database, KV data, and host key are private volume data. Use the offline
+  `plumtree state backup` and `plumtree state restore` commands on that volume.
 - Production mode requires `secrets.databaseKeyFile`. Startup fails when the
   key is absent or the binary does not contain the qualified SQLCipher engine.
 - The server persists a stable identity and rejects a changed host key for an

@@ -11,27 +11,19 @@ services:
     volumes:
       - plumtree-data:/data
       - runner-socket:/run/plumtree
-      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
+    secrets:
+      - database-key
+      - runner-token
     command:
       - serve
       - -config
       - /etc/plumtree/config.json
-      - -storage-database-path
-      - /data/plumtree.db
-      - -storage-ssh-identity
-      - /data/plumtree_host_key
-      - -exposure-ssh-address
-      - :2222
       - -roles-control
       - "true"
       - -roles-gateway
       - "true"
       - -roles-runner
       - "false"
-      - -runtime-runner-endpoint
-      - unix:///run/plumtree/runner.sock
-      - -secrets-gateway-token-file
-      - /run/secrets/runner-token
       - -product-version
       - ${PLUMTREE_PRODUCT_VERSION:-dev}
     read_only: true
@@ -53,7 +45,8 @@ services:
     volumes:
       - runner-socket:/run/plumtree
       - runner-scratch:/run/plumtree-sessions
-      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
+    secrets:
+      - runner-token
     command:
       - serve
       - -config
@@ -86,3 +79,9 @@ volumes:
   plumtree-data:
   runner-socket:
   runner-scratch:
+
+secrets:
+  database-key:
+    file: ${PLUMTREE_DATABASE_KEY_FILE:-./database.key}
+  runner-token:
+    file: ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}
