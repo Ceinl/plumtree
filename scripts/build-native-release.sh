@@ -26,6 +26,7 @@ export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:--L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_P
 	go generate ./internal/build
 	go build -tags "sqlcipher libsqlite3" -trimpath -o "$output_dir/pt" ./cmd/pt
 	go build -tags "sqlcipher libsqlite3" -trimpath -o "$output_dir/plumtree" ./cmd/plumtree
+	go build -tags "sqlcipher libsqlite3" -trimpath -o "$output_dir/runner-worker" ./cmd/runner-worker
 )
 
 "$workspace_root/scripts/check-sqlcipher-target.sh" "$(go env GOOS)/$(go env GOARCH)"

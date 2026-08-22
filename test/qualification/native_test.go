@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // TestNativeReleaseJourney qualifies only public product seams. The controller
@@ -25,6 +27,7 @@ import (
 func TestNativeReleaseJourney(t *testing.T) {
 	pt := requiredExecutable(t, "PLUMTREE_QUALIFY_PT")
 	plumtree := requiredExecutable(t, "PLUMTREE_QUALIFY_SERVER")
+	runnerWorker := requiredExecutable(t, "PLUMTREE_QUALIFY_RUNNER_WORKER")
 	ssh := requiredTool(t, "ssh")
 	sshKeygen := requiredTool(t, "ssh-keygen")
 
@@ -34,6 +37,13 @@ func TestNativeReleaseJourney(t *testing.T) {
 	kvRoot := filepath.Join(root, "server", "kv")
 	hostKeyPath := filepath.Join(root, "server", "host-key")
 	databaseKeyPath := filepath.Join(root, "server", "database.key")
+	runnerTokenPath := filepath.Join(root, "server", "runner.token")
+	runnerSocketDir, err := os.MkdirTemp("/tmp", "plumtree-q-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runnerSocketDir) })
+	runnerEndpoint := "unix://" + filepath.Join(runnerSocketDir, "runner.sock")
 	serversPath := filepath.Join(root, "author", "servers.json")
 	projects := filepath.Join(root, "projects")
 	if err := os.MkdirAll(filepath.Dir(databaseKeyPath), 0o700); err != nil {
@@ -44,6 +54,9 @@ func TestNativeReleaseJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(databaseKeyPath, databaseKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runnerTokenPath, []byte("qualification-isolated-runner-token"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(projects, 0o700); err != nil {
@@ -58,8 +71,13 @@ func TestNativeReleaseJourney(t *testing.T) {
 	configure("storage.databasePath", databasePath)
 	configure("storage.kvRoot", kvRoot)
 	configure("storage.sshIdentity", hostKeyPath)
-	configure("exposure.ssh.address", "127.0.0.1:0")
+	configure("exposure.ssh.address", availableTCPAddress(t))
 	configure("secrets.databaseKeyFile", databaseKeyPath)
+	configure("secrets.gatewayTokenFile", runnerTokenPath)
+	configure("secrets.runnerTokenFile", runnerTokenPath)
+	configure("runtime.runnerEndpoint", runnerEndpoint)
+	configure("runtime.runnerWorker", runnerWorker)
+	configure("runtime.runnerScratchRoot", filepath.Join(root, "server", "runner-scratch"))
 	configure("runtime.production", "true")
 
 	bootstrapJSON := runOK(t, command{path: plumtree, env: baseEnv, args: []string{"bootstrap", "--config", configPath, "-handle", "alice", "-device", "laptop"}})
@@ -72,7 +90,7 @@ func TestNativeReleaseJourney(t *testing.T) {
 		t.Fatalf("bootstrap returned an incomplete authority: %s", bootstrapJSON)
 	}
 
-	server := startServer(t, plumtree, configPath, baseEnv)
+	server := startServer(t, plumtree, runnerWorker, configPath, baseEnv)
 	t.Cleanup(func() { server.stop(t) })
 	endpoint := server.endpoint
 	pairOut := runOK(t, command{path: pt, env: baseEnv, args: []string{"pair", "--bootstrap", bootstrap.ID, "--secret", bootstrap.Secret, "--next-recovery-secret", "qualification-recovery-secret-000001", "--name", "native", "--device", "laptop", "--yes", "--json", endpoint}})
@@ -103,7 +121,7 @@ func TestNativeReleaseJourney(t *testing.T) {
 
 	cliSSH := runOK(t, command{path: ssh, env: baseEnv, timeout: 15 * time.Second, args: sshArgs(endpoint, deviceKey, "alice/hello-cli", "Dima")})
 	assertContains(t, cliSSH, "Hello Dima")
-	tuiSSH := runOK(t, command{path: ssh, env: baseEnv, input: "q", timeout: 15 * time.Second, args: append([]string{"-tt"}, sshArgs(endpoint, deviceKey, "alice/counter")...)})
+	tuiSSH := runTUISSH(t, endpoint, deviceKey, "alice/counter")
 	assertContains(t, tuiSSH, "Count: 0")
 
 	runManagementJourney(t, pt, sshKeygen, baseEnv, endpoint, root, helloID)
@@ -111,7 +129,7 @@ func TestNativeReleaseJourney(t *testing.T) {
 	assertContains(t, logs, "sessions")
 
 	server.stop(t)
-	server = startServer(t, plumtree, configPath, baseEnv)
+	server = startServer(t, plumtree, runnerWorker, configPath, baseEnv)
 	runOK(t, command{path: pt, env: baseEnv, args: []string{"status", "--json"}})
 	runOK(t, command{path: ssh, env: baseEnv, timeout: 15 * time.Second, args: sshArgs(server.endpoint, deviceKey, "alice/hello-cli", "restart")})
 
@@ -128,11 +146,11 @@ func TestNativeReleaseJourney(t *testing.T) {
 	bundle := filepath.Join(root, "backup")
 	runOK(t, command{path: plumtree, env: baseEnv, args: []string{"state", "backup", "--config", configPath, "--output", bundle}})
 
-	server = startServer(t, plumtree, configPath, baseEnv)
+	server = startServer(t, plumtree, runnerWorker, configPath, baseEnv)
 	runOK(t, command{path: pt, env: baseEnv, args: []string{"secret", "rm", helloID, "API_TOKEN", "--yes"}})
 	server.stop(t)
 	runOK(t, command{path: plumtree, env: baseEnv, args: []string{"state", "restore", "--config", configPath, "--input", bundle, "--yes"}})
-	server = startServer(t, plumtree, configPath, baseEnv)
+	server = startServer(t, plumtree, runnerWorker, configPath, baseEnv)
 	defer server.stop(t)
 	if got := listApps(t, pt, baseEnv); got["counter"] != counterID || got["hello-cli"] != helloID {
 		t.Fatalf("restored apps = %#v, want original IDs", got)
@@ -140,6 +158,48 @@ func TestNativeReleaseJourney(t *testing.T) {
 	secrets := runOK(t, command{path: pt, env: baseEnv, args: []string{"secret", "list", helloID}})
 	assertContains(t, secrets, "API_TOKEN")
 	runOK(t, command{path: ssh, env: baseEnv, timeout: 15 * time.Second, args: sshArgs(server.endpoint, deviceKey, "alice/hello-cli", "restored")})
+}
+
+func runTUISSH(t *testing.T, endpoint, keyPath, user string) string {
+	t.Helper()
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := ssh.Dial("tcp", endpoint, &ssh.ClientConfig{User: user, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("dial TUI leaf: %v", err)
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.RequestPty("xterm", 12, 40, ssh.TerminalModes{}); err != nil {
+		t.Fatalf("request TUI PTY: %v", err)
+	}
+	var output bytes.Buffer
+	session.Stdout, session.Stderr = &output, &output
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Start(""); err != nil {
+		t.Fatalf("start TUI leaf: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, err := stdin.Write([]byte("q")); err != nil {
+		t.Fatalf("quit TUI leaf: %v", err)
+	}
+	if err := session.Wait(); err != nil {
+		t.Fatalf("run TUI leaf: %v\n%s", err, output.String())
+	}
+	return output.String()
 }
 
 func runManagementJourney(t *testing.T, pt, sshKeygen string, env []string, endpoint, root, appID string) {
@@ -264,17 +324,38 @@ func run(item command) (string, string, error) {
 }
 
 type liveServer struct {
-	cmd      *exec.Cmd
+	control  *managedProcess
+	runner   *managedProcess
 	endpoint string
-	stderr   *bytes.Buffer
 	waited   bool
 }
 
-func startServer(t *testing.T, binary, config string, env []string) *liveServer {
+type managedProcess struct {
+	cmd    *exec.Cmd
+	stderr *bytes.Buffer
+	waited bool
+}
+
+func startServer(t *testing.T, binary, runnerWorker, config string, env []string) *liveServer {
+	t.Helper()
+	runner, _ := startReadyProcess(t, binary, []string{"serve", "--config", config, "--roles-control=false", "--roles-gateway=false", "--roles-runner=true", "--runtime-runner-worker", runnerWorker, "--product-version", "qualification"}, env, "plumtree runner ready on ")
+	t.Cleanup(func() { _ = runner.stop() })
+	control, line := startReadyProcess(t, binary, []string{"serve", "--config", config, "--product-version", "qualification"}, env, " ready on ")
+	fields := strings.Fields(line)
+	endpoint := fields[len(fields)-1]
+	if _, _, err := net.SplitHostPort(endpoint); err != nil {
+		_ = control.stop()
+		_ = runner.stop()
+		t.Fatalf("invalid ready endpoint %q: %v", endpoint, err)
+	}
+	return &liveServer{control: control, runner: runner, endpoint: endpoint}
+}
+
+func startReadyProcess(t *testing.T, binary string, args, env []string, readiness string) (*managedProcess, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.Command(binary, "serve", "--config", config, "--product-version", "qualification")
+	cmd := exec.Command(binary, args...)
 	cmd.Env = env
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -288,29 +369,28 @@ func startServer(t *testing.T, binary, config string, env []string) *liveServer 
 	lines := make(chan string, 1)
 	go func() {
 		scanner := bufio.NewScanner(stdout)
-		if scanner.Scan() {
-			lines <- scanner.Text()
+		sent := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !sent && strings.Contains(line, readiness) {
+				lines <- line
+				sent = true
+			}
 		}
 		close(lines)
 	}()
 	select {
 	case line := <-lines:
-		fields := strings.Fields(line)
-		if len(fields) == 0 || !strings.Contains(line, " ready on ") {
+		if line == "" {
 			_ = cmd.Process.Kill()
-			t.Fatalf("server did not announce readiness: %q; stderr: %s", line, stderr)
+			t.Fatalf("process did not announce %q; stderr: %s", readiness, stderr)
 		}
-		endpoint := fields[len(fields)-1]
-		if _, _, err := net.SplitHostPort(endpoint); err != nil {
-			_ = cmd.Process.Kill()
-			t.Fatalf("invalid ready endpoint %q: %v", endpoint, err)
-		}
-		return &liveServer{cmd: cmd, endpoint: endpoint, stderr: stderr}
+		return &managedProcess{cmd: cmd, stderr: stderr}, line
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
-		t.Fatalf("server readiness timed out; stderr: %s", stderr)
+		t.Fatalf("process readiness %q timed out; stderr: %s", readiness, stderr)
 	}
-	return nil
+	return nil, ""
 }
 
 func (s *liveServer) stop(t *testing.T) {
@@ -319,20 +399,33 @@ func (s *liveServer) stop(t *testing.T) {
 		return
 	}
 	s.waited = true
-	if err := s.cmd.Process.Signal(os.Interrupt); err != nil {
-		t.Fatalf("stop server: %v", err)
+	controlErr := s.control.stop()
+	runnerErr := s.runner.stop()
+	if controlErr != nil || runnerErr != nil {
+		t.Fatalf("stop server: control=%v runner=%v", controlErr, runnerErr)
+	}
+}
+
+func (p *managedProcess) stop() error {
+	if p == nil || p.waited {
+		return nil
+	}
+	p.waited = true
+	if err := p.cmd.Process.Signal(os.Interrupt); err != nil {
+		return err
 	}
 	done := make(chan error, 1)
-	go func() { done <- s.cmd.Wait() }()
+	go func() { done <- p.cmd.Wait() }()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("server exit: %v; stderr: %s", err, s.stderr)
+			return fmt.Errorf("process exit: %w; stderr: %s", err, p.stderr)
 		}
 	case <-time.After(10 * time.Second):
-		_ = s.cmd.Process.Kill()
-		t.Fatalf("server did not stop; stderr: %s", s.stderr)
+		_ = p.cmd.Process.Kill()
+		return fmt.Errorf("process did not stop; stderr: %s", p.stderr)
 	}
+	return nil
 }
 
 func listApps(t *testing.T, pt string, env []string) map[string]string {
@@ -374,6 +467,19 @@ func sshArgs(endpoint, key, user string, remote ...string) []string {
 	host, port, _ := net.SplitHostPort(endpoint)
 	args := []string{"-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-i", key, "-p", port, user + "@" + host}
 	return append(args, remote...)
+}
+
+func availableTCPAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return address
 }
 
 func requiredExecutable(t *testing.T, name string) string {

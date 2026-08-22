@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -37,6 +38,24 @@ func TestOpenPlaintextDevelopmentMode(t *testing.T) {
 	}
 	if info.JournalMode != "wal" {
 		t.Fatalf("journal mode = %q, want wal", info.JournalMode)
+	}
+}
+
+func TestDatabaseFileIsCreatedPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private.db")
+	db, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("database mode = %o, want 600", info.Mode().Perm())
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -117,6 +118,10 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 	if cfg.WALAutoCheckpointPages <= 0 {
 		cfg.WALAutoCheckpointPages = 1000
 	}
+	if err := prepareDatabaseFile(cfg.Path); err != nil {
+		zero(key)
+		return nil, err
+	}
 
 	id := nextDriverID.Add(1)
 	driverName := fmt.Sprintf("plumtree-sqlite-%d", id)
@@ -157,6 +162,30 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 		return nil, redactError(err)
 	}
 	return result, nil
+}
+
+func prepareDatabaseFile(path string) error {
+	if path == ":memory:" {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+			return errors.New("sqlite: database file must be a private regular file")
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return prepareDatabaseFile(path)
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func sqliteDSN(path string) string {

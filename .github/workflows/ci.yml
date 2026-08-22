@@ -96,6 +96,7 @@ jobs:
       - name: Run fresh native release journey
         env:
           PLUMTREE_QUALIFY_PT: ${{ github.workspace }}/dist/native/pt
+          PLUMTREE_QUALIFY_RUNNER_WORKER: ${{ github.workspace }}/dist/native/runner-worker
           PLUMTREE_QUALIFY_SERVER: ${{ github.workspace }}/dist/native/plumtree
         run: go test -tags qualification ./test/qualification -run '^TestNativeReleaseJourney$' -count=1 -v
 
