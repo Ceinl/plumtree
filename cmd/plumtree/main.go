@@ -8,5 +8,5 @@ import (
 )
 
 func main() {
-	cleanrole.Run(os.Args[1:])
+	os.Exit(cleanrole.Run(os.Args[1:]))
 }

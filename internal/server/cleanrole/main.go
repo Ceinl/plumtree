@@ -7,18 +7,25 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Ceinl/plumtree/internal/httpapi/v1"
+	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
+	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
+	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
 	"github.com/Ceinl/plumtree/internal/sqlite"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
@@ -29,16 +36,24 @@ const defaultProductVersion = "dev"
 // Run starts the one-process native server. The process exposes no HTTP,
 // gateway, runner, or bearer-token listener; all API traffic is carried over
 // the authenticated plumtree-control-v1 SSH subsystem.
-func Run(args []string) {
+func Run(args []string) int {
 	if err := run(args); err != nil {
 		log.Print(err)
-		if !errors.Is(err, flag.ErrHelp) {
-			return
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
 		}
+		return 1
 	}
+	return 0
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "bootstrap" {
+		return runBootstrap(args[1:], os.Stdout)
+	}
+	if len(args) > 1 && args[0] == "author" && args[1] == "bootstrap" {
+		return runBootstrap(args[2:], os.Stdout)
+	}
 	fs := flag.NewFlagSet("plumtree", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	database := fs.String("database", "plumtree.db", "path to the Plumtree SQLite database")
@@ -53,62 +68,99 @@ func run(args []string) error {
 		return errors.New("clean server: product version is required")
 	}
 
-	ctx := context.Background()
-	repo, err := sqlite.OpenRepository(*database, nil)
+	return Serve(context.Background(), ServeConfig{Database: *database, SSHAddress: *sshAddr, HostKeyPath: *hostKeyPath, ServerID: *serverID, ProductVersion: *productVersion})
+}
+
+func runBootstrap(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("plumtree bootstrap", flag.ContinueOnError)
+	database := fs.String("database", "plumtree.db", "path to the Plumtree SQLite database")
+	handle := fs.String("handle", "", "author handle bound to this authority")
+	device := fs.String("device", "device", "first device name")
+	ttl := fs.Duration("ttl", 10*time.Minute, "one-use authority lifetime")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *handle == "" {
+		return errors.New("usage: plumtree bootstrap -database PATH -handle HANDLE [-device NAME] [-ttl 10m]")
+	}
+	result, err := Bootstrap(context.Background(), BootstrapConfig{Database: *database, Handle: *handle, DeviceName: *device, TTL: *ttl})
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"bootstrapID": result.ID, "handle": result.Handle, "deviceName": result.DeviceName, "secret": string(result.Secret), "expiresAt": result.ExpiresAt})
+}
+
+type ServeConfig struct {
+	Database, SSHAddress, HostKeyPath, ServerID, ProductVersion string
+	Ready                                                       func(string)
+}
+
+// Serve runs the selected native SSH and SQLite assembly until ctx ends.
+func Serve(ctx context.Context, cfg ServeConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(cfg.ProductVersion) == "" {
+		return errors.New("clean server: product version is required")
+	}
+	repo, err := sqlite.OpenRepository(cfg.Database, nil)
 	if err != nil {
 		return fmt.Errorf("clean server: open repository: %w", err)
 	}
 	defer repo.Close()
 
-	signer, hostKeyFingerprint, err := loadOrCreateHostKey(*hostKeyPath)
+	signer, hostKeyFingerprint, err := loadOrCreateHostKey(cfg.HostKeyPath)
 	if err != nil {
 		return fmt.Errorf("clean server: host key: %w", err)
 	}
-	identity, err := ensureIdentity(ctx, repo, *serverID, signer, hostKeyFingerprint)
+	identity, err := ensureIdentity(ctx, repo, cfg.ServerID, signer, hostKeyFingerprint)
 	if err != nil {
 		return fmt.Errorf("clean server: identity: %w", err)
 	}
-	api, err := v1.New(v1.Config{Repository: repo, ProductVersion: *productVersion})
+	identities, err := newIdentityService(repo, cfg.SSHAddress)
+	if err != nil {
+		return fmt.Errorf("clean server: identity service: %w", err)
+	}
+	api, err := v1.New(v1.Config{Repository: repo, Identity: identities, ProductVersion: cfg.ProductVersion})
 	if err != nil {
 		return fmt.Errorf("clean server: API: %w", err)
 	}
-	listener, err := net.Listen("tcp", *sshAddr)
+	listener, err := net.Listen("tcp", cfg.SSHAddress)
 	if err != nil {
 		return fmt.Errorf("clean server: SSH listen: %w", err)
 	}
 	defer listener.Close()
 
 	sshConfig := &ssh.ServerConfig{
-		NoClientAuth: true,
-		PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) {
-			return &ssh.Permissions{}, nil
-		},
-		VerifiedPublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey, permissions *ssh.Permissions, _ string) (*ssh.Permissions, error) {
-			if permissions == nil {
-				return nil, errors.New("clean server: missing SSH permissions")
-			}
-			if permissions.Extensions == nil {
-				permissions.Extensions = make(map[string]string)
-			}
-			permissions.Extensions["plumtree-fingerprint"] = ssh.FingerprintSHA256(key)
-			return permissions, nil
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			return &ssh.Permissions{Extensions: map[string]string{
+				"plumtree-fingerprint": ssh.FingerprintSHA256(key),
+				"plumtree-public-key":  strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))),
+			}}, nil
 		},
 	}
 	sshConfig.AddHostKey(signer)
 	log.Printf("plumtree server %s listening on %s", identity.ID, listener.Addr())
+	if cfg.Ready != nil {
+		cfg.Ready(listener.Addr().String())
+	}
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
+			if errors.Is(err, net.ErrClosed) && ctx.Err() != nil {
 				return nil
 			}
 			return fmt.Errorf("clean server: accept SSH connection: %w", err)
 		}
-		go serveConnection(conn, sshConfig, repo, api, identity, *productVersion)
+		go serveConnection(conn, sshConfig, repo, identities, api, identity, cfg.ProductVersion)
 	}
 }
 
-func serveConnection(raw net.Conn, config *ssh.ServerConfig, repo *sqlite.Repository, api *v1.Server, identity sqlite.ServerIdentity, productVersion string) {
+func serveConnection(raw net.Conn, config *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, identity sqlite.ServerIdentity, productVersion string) {
 	serverConn, channels, requests, err := ssh.NewServerConn(raw, config)
 	if err != nil {
 		_ = raw.Close()
@@ -116,17 +168,21 @@ func serveConnection(raw net.Conn, config *ssh.ServerConfig, repo *sqlite.Reposi
 	}
 	go ssh.DiscardRequests(requests)
 	fingerprint := ""
+	publicKey := ""
 	if serverConn.Permissions != nil && serverConn.Permissions.Extensions != nil {
 		fingerprint = serverConn.Permissions.Extensions["plumtree-fingerprint"]
+		publicKey = serverConn.Permissions.Extensions["plumtree-public-key"]
 	}
 	var principal v1.Principal
 	if fingerprint != "" {
 		device, lookupErr := repo.DeviceByFingerprint(context.Background(), fingerprint)
-		if lookupErr != nil {
+		if lookupErr != nil && !errors.Is(lookupErr, sqlite.ErrNotFound) {
 			_ = serverConn.Close()
 			return
 		}
-		principal = v1.Principal{ServerID: identity.ID, AuthorID: device.AuthorID, DeviceID: device.ID, Fingerprint: device.Fingerprint}
+		if lookupErr == nil {
+			principal = v1.Principal{ServerID: identity.ID, AuthorID: device.AuthorID, DeviceID: device.ID, Fingerprint: device.Fingerprint}
+		}
 	}
 	for channelRequest := range channels {
 		if channelRequest.ChannelType() != "session" {
@@ -137,31 +193,57 @@ func serveConnection(raw net.Conn, config *ssh.ServerConfig, repo *sqlite.Reposi
 		if err != nil {
 			continue
 		}
-		go serveSession(channel, channelRequests, api, principal, productVersion)
+		go serveSession(channel, channelRequests, identities, api, principal, identity, productVersion, base64.RawStdEncoding.EncodeToString(serverConn.SessionID()), publicKey, fingerprint)
 	}
 	_ = serverConn.Close()
 }
 
-func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, api *v1.Server, principal v1.Principal, productVersion string) {
+func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, identities *identityservice.Service, api *v1.Server, principal v1.Principal, identity sqlite.ServerIdentity, productVersion, sessionID, publicKey, fingerprint string) {
 	defer channel.Close()
 	for request := range requests {
 		if request.Type != "subsystem" {
 			_ = request.Reply(false, nil)
 			continue
 		}
-		var subsystem string
-		if err := ssh.Unmarshal(request.Payload, &subsystem); err != nil || subsystem != transport.ControlSubsystem {
+		var subsystemRequest struct{ Name string }
+		if err := ssh.Unmarshal(request.Payload, &subsystemRequest); err != nil {
 			_ = request.Reply(false, nil)
 			continue
 		}
-		_ = request.Reply(true, nil)
-		if principal.DeviceID == "" {
+		subsystem := subsystemRequest.Name
+		switch subsystem {
+		case transport.ControlSubsystem:
+			if principal.DeviceID == "" {
+				_ = request.Reply(false, nil)
+				return
+			}
+			_ = request.Reply(true, nil)
+			handler := httpHandlerWithPrincipal(api.Handler(), principal)
+			_ = transport.ServeHTTPStream(channel, handler, productVersion)
+			return
+		case transport.PairSubsystem:
+			if principal.DeviceID != "" || publicKey == "" || fingerprint == "" {
+				_ = request.Reply(false, nil)
+				return
+			}
+			_ = request.Reply(true, nil)
+			handler := pairingserver.Handler{Identity: identities, ServerID: identity.ID, HostKeyAlgorithm: identity.SSHHostKeyAlgorithm,
+				HostKeyFingerprint: identity.SSHHostKeyFingerprint, ProductVersion: productVersion, SessionID: sessionID,
+				CandidatePublicKey: publicKey, CandidateFingerprint: fingerprint}
+			_ = handler.Serve(channel)
+			return
+		default:
+			_ = request.Reply(false, nil)
 			return
 		}
-		handler := httpHandlerWithPrincipal(api.Handler(), principal)
-		_ = transport.ServeHTTPStream(channel, handler, productVersion)
-		return
 	}
+}
+
+func newIdentityService(repo *sqlite.Repository, sshAddress string) (*identityservice.Service, error) {
+	cfg := serverconfig.Default()
+	cfg.Roles.Control = true
+	cfg.Exposure.SSH = serverconfig.ExposureGate{Enabled: true, Address: sshAddress}
+	return identityservice.New(repo, cfg)
 }
 
 func httpHandlerWithPrincipal(handler http.Handler, principal v1.Principal) http.Handler {

@@ -8,8 +8,8 @@ This is a Plumtree {{.Kind}} app named `{{.Name}}`.
 - Deterministic smoke check: `{{.CheckCommand}}`
 - Hosted SSH execution is qualified through the server-side runner harness;
   `pt dev` is the local deterministic path.
-- Deploy: `pt deploy` after a paired server record has been provisioned by the
-  host integration; the clean client uses the paired SSH transport and does
+- Deploy: `pt deploy` after `pt pair` creates a paired server record; the clean
+  client uses the paired SSH transport and does
   not accept shared deploy-token environment overrides.
 
 ## Project Rules

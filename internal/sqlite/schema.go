@@ -80,6 +80,20 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS device_enrollment_tokens_active_idx
  ON device_enrollment_tokens(author_id, expires_at_ns)
  WHERE consumed_at_ns IS NULL`,
+	`CREATE TABLE IF NOT EXISTS bootstrap_pairing_authorities (
+  id TEXT PRIMARY KEY,
+  handle TEXT NOT NULL,
+  intended_device_name TEXT NOT NULL,
+  salt BLOB NOT NULL,
+  verifier BLOB NOT NULL,
+  failed_attempts INTEGER NOT NULL CHECK (failed_attempts BETWEEN 0 AND 5),
+  created_at_ns INTEGER NOT NULL,
+  expires_at_ns INTEGER NOT NULL CHECK (expires_at_ns > created_at_ns),
+  consumed_at_ns INTEGER
+) STRICT`,
+	`CREATE INDEX IF NOT EXISTS bootstrap_pairing_authorities_active_idx
+ ON bootstrap_pairing_authorities(expires_at_ns)
+ WHERE consumed_at_ns IS NULL`,
 	`CREATE TABLE IF NOT EXISTS apps (
   id TEXT PRIMARY KEY,
   author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,

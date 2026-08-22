@@ -1,11 +1,12 @@
-// Package identity provides the additive paired-author and audit services for
-// the unselected clean-break server assembly.
+// Package identity provides the paired-author and audit services used by the
+// selected SSH server assembly.
 package identity
 
 import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -91,6 +92,38 @@ type EnrollmentChallenge struct {
 	ExpiresAt                time.Time
 }
 
+func (s *Service) CreateBootstrapAuthorityLocal(ctx context.Context, input sqlite.BootstrapAuthorityInput) (sqlite.BootstrapAuthority, error) {
+	return s.repo.CreateBootstrapAuthority(ctx, input)
+}
+
+func (s *Service) BootstrapCredential(ctx context.Context, id string) (sqlite.BootstrapAuthority, error) {
+	return s.repo.BootstrapAuthorityCredential(ctx, id)
+}
+
+func (s *Service) EnrollmentCredential(ctx context.Context, id string) (sqlite.PairingCredential, error) {
+	return s.repo.EnrollmentCredential(ctx, id)
+}
+
+func (s *Service) RecoveryCredential(ctx context.Context, handle string) (sqlite.PairingCredential, error) {
+	return s.repo.RecoveryCredential(ctx, handle)
+}
+
+func (s *Service) CompleteBootstrapRegistration(ctx context.Context, authorityID string, verifier []byte, input sqlite.RegistrationInput) (sqlite.Author, sqlite.Device, error) {
+	return s.repo.CompleteBootstrapRegistration(ctx, authorityID, verifier, input)
+}
+
+func (s *Service) CompleteDeviceAdditionVerifier(ctx context.Context, input sqlite.DeviceEnrollmentInput) (sqlite.Device, error) {
+	return s.repo.CompleteDeviceEnrollment(ctx, input)
+}
+
+func (s *Service) CompleteRecovery(ctx context.Context, input sqlite.RecoveryInput) (sqlite.Device, error) {
+	return s.repo.CompleteRecovery(ctx, input)
+}
+
+func (s *Service) Author(ctx context.Context, id string) (sqlite.Author, error) {
+	return s.repo.Author(ctx, id)
+}
+
 func (s *Service) RegisterAuthor(ctx context.Context, input RegisterInput) (Registration, error) {
 	if err := s.requireGate(GateHTTP); err != nil {
 		return Registration{}, err
@@ -133,10 +166,11 @@ func (s *Service) BeginDeviceAddition(ctx context.Context, authorID, issuingDevi
 }
 
 func (s *Service) beginDeviceAddition(ctx context.Context, authorID, issuingDeviceID, deviceName string) (EnrollmentChallenge, error) {
-	secret, err := randomBytes(32)
+	rawSecret, err := randomBytes(32)
 	if err != nil {
 		return EnrollmentChallenge{}, err
 	}
+	secret := []byte(base64.RawURLEncoding.EncodeToString(rawSecret))
 	salt, err := randomBytes(16)
 	if err != nil {
 		return EnrollmentChallenge{}, err

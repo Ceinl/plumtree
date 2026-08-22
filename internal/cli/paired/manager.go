@@ -24,9 +24,10 @@ type PairInput struct {
 	Purpose        pairing.Purpose
 	Identifier     string
 	Secret         []byte
+	RecoverySecret []byte
 }
 
-type PairExchange func(context.Context, transport.HostPin, ssh.Signer, pairing.Purpose, string, []byte) (PairResult, error)
+type PairExchange func(context.Context, transport.HostPin, ssh.Signer, PairInput) (PairResult, error)
 
 type Manager struct {
 	StorePath string
@@ -51,6 +52,9 @@ func (m Manager) Pair(ctx context.Context, input PairInput, probe transport.Prob
 	}
 	if len(input.Secret) < 16 {
 		return ServerRecord{}, fmt.Errorf("%w: phrase must contain at least 16 bytes", ErrPairing)
+	}
+	if (input.Purpose == pairing.PurposeNewAuthor || input.Purpose == pairing.PurposeOfflineRecovery || input.Purpose == pairing.PurposeOperatorRecovery) && len(input.RecoverySecret) < 16 {
+		return ServerRecord{}, fmt.Errorf("%w: recovery phrase must contain at least 16 bytes", ErrPairing)
 	}
 	endpoint, info, err := transport.Discover(ctx, input.Host, input.Port, probe)
 	if err != nil {
@@ -79,7 +83,8 @@ func (m Manager) Pair(ctx context.Context, input PairInput, probe transport.Prob
 			_ = os.Remove(filepath.Join(m.Keys.Dir, keyRef))
 		}
 	}()
-	result, err := exchange(ctx, pin, signer, input.Purpose, input.Identifier, secret)
+	input.Secret = secret
+	result, err := exchange(ctx, pin, signer, input)
 	if err != nil {
 		return ServerRecord{}, err
 	}

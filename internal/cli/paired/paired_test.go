@@ -110,6 +110,11 @@ func TestPairingExchangeBindsServerNonceAndProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret := []byte("0123456789abcdef-one-use")
+	salt := []byte("pairing-salt-1234")
+	verifier, err := pairing.DeriveVerifier(salt, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
 	serverDone := make(chan error, 1)
 	go func() {
 		frame, err := pairing.ReadFrame(right)
@@ -117,19 +122,19 @@ func TestPairingExchangeBindsServerNonceAndProof(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		var hello pairingHello
+		var hello pairing.ClientHello
 		if err := json.Unmarshal(frame.Payload, &hello); err != nil {
 			serverDone <- err
 			return
 		}
 		hello.Transcript.ServerNonce = []byte("server-nonce-0123456789")
-		proof, err := pairing.ServerProof(secret, hello.Transcript)
+		proof, err := pairing.ServerProof(verifier, hello.Transcript)
 		if err != nil {
 			serverDone <- err
 			return
 		}
-		payload, _ := json.Marshal(pairingProof{ServerNonce: hello.Transcript.ServerNonce, Proof: proof})
-		if err := pairing.WriteFrame(right, pairing.Frame{Type: pairProofFrame, Payload: payload}); err != nil {
+		payload, _ := json.Marshal(pairing.Proof{Salt: salt, ServerNonce: hello.Transcript.ServerNonce, MAC: proof})
+		if err := pairing.WriteFrame(right, pairing.Frame{Type: pairing.FrameServerProof, Payload: payload}); err != nil {
 			serverDone <- err
 			return
 		}
@@ -138,21 +143,21 @@ func TestPairingExchangeBindsServerNonceAndProof(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		var clientProof pairingProof
+		var clientProof pairing.Proof
 		if err := json.Unmarshal(frame.Payload, &clientProof); err != nil {
 			serverDone <- err
 			return
 		}
-		if err := pairing.VerifyClientProof(secret, hello.Transcript, clientProof.Proof); err != nil {
+		if err := pairing.VerifyClientProof(verifier, hello.Transcript, clientProof.MAC); err != nil {
 			serverDone <- err
 			return
 		}
 		result, _ := json.Marshal(PairResult{ServerID: "server", DeviceID: "device"})
-		serverDone <- pairing.WriteFrame(right, pairing.Frame{Type: pairCompleteFrame, Payload: result})
+		serverDone <- pairing.WriteFrame(right, pairing.Frame{Type: pairing.FrameComplete, Payload: result})
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	result, err := ExchangePairing(ctx, left, transcript, secret)
+	result, err := ExchangePairing(ctx, left, transcript, secret, ExchangeOptions{DeviceName: "laptop", RecoverySecret: []byte("next-recovery-secret")})
 	if err != nil || result.ServerID != "server" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
