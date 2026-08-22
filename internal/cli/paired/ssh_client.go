@@ -3,7 +3,9 @@ package paired
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/protocol/control"
+	"github.com/Ceinl/plumtree/internal/protocol/pairing"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
 )
@@ -159,6 +162,9 @@ func dialSubsystem(ctx context.Context, record ServerRecord, cfg DialConfig, sub
 		}
 		return nil, nil, nil, fmt.Errorf("%w: dial: %v", ErrSSHTransport, err)
 	}
+	if cfg.Timeout > 0 {
+		_ = raw.SetDeadline(time.Now().Add(cfg.Timeout))
+	}
 	conn, chans, requests, err := ssh.NewClientConn(raw, address, sshConfig)
 	if err != nil {
 		_ = raw.Close()
@@ -170,6 +176,7 @@ func dialSubsystem(ctx context.Context, record ServerRecord, cfg DialConfig, sub
 		}
 		return nil, nil, nil, fmt.Errorf("%w: handshake: %v", ErrSSHTransport, err)
 	}
+	_ = raw.SetDeadline(time.Time{})
 	client := ssh.NewClient(conn, chans, requests)
 	session, err := client.NewSession()
 	if err != nil {
@@ -202,6 +209,7 @@ type PairingConnection struct {
 	Channel   io.ReadWriteCloser
 	SSH       *ssh.Client
 	SessionID string
+	Info      transport.ServerInfo
 	stream    *sessionStream
 	mu        sync.Once
 }
@@ -226,7 +234,118 @@ func DialPairing(ctx context.Context, record ServerRecord, cfg DialConfig) (*Pai
 	if err != nil {
 		return nil, err
 	}
-	return &PairingConnection{Channel: stream, SSH: client, SessionID: string(client.Conn.SessionID()), stream: stream}, nil
+	hello, err := ReadServerHello(ctx, stream)
+	if err != nil {
+		_ = stream.Close()
+		return nil, err
+	}
+	info := serverInfoFromHello(hello)
+	if err := transport.RequireProtocols(info, record.ProductVersion); err != nil || info.StableID != record.ServerID || info.HostKeyAlgorithm != record.HostKeyAlgorithm || info.HostKeyFingerprint != record.HostKeyFingerprint {
+		_ = stream.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: pairing server identity changed", transport.ErrServerIDChanged)
+	}
+	return &PairingConnection{Channel: stream, SSH: client, SessionID: base64.RawStdEncoding.EncodeToString(client.Conn.SessionID()), Info: info, stream: stream}, nil
+}
+
+// LiveExchange connects the manager's confirmed pin and generated device key
+// to the bounded pairing subsystem.
+func LiveExchange(ctx context.Context, pin transport.HostPin, signer ssh.Signer, input PairInput) (PairResult, error) {
+	record := ServerRecord{Name: "pairing", ServerID: pin.StableID, Host: pin.Endpoint.Host, Port: pin.Endpoint.Port,
+		HostKeyAlgorithm: pin.Algorithm, HostKeyFingerprint: pin.Fingerprint, ProductVersion: pin.ProductVersion, KeyRef: "unused"}
+	connection, err := DialPairing(ctx, record, DialConfig{Signer: signer, Timeout: 15 * time.Second})
+	if err != nil {
+		return PairResult{}, err
+	}
+	defer connection.Close()
+	transcript, err := NewTranscript(connection.SessionID, pin, signer, input.Purpose, input.Identifier)
+	if err != nil {
+		return PairResult{}, err
+	}
+	return ExchangePairing(ctx, connection.Channel, transcript, input.Secret, ExchangeOptions{DeviceName: input.DeviceName, RecoverySecret: input.RecoverySecret})
+}
+
+// ProbeEndpoint proves that an endpoint is a Plumtree SSH listener by opening
+// only the pairing subsystem and comparing its greeting with the negotiated
+// host key. The temporary probe key is never persisted or enrolled.
+func ProbeEndpoint(ctx context.Context, endpoint transport.Endpoint, timeout time.Duration) (transport.ServerInfo, error) {
+	_, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return transport.ServerInfo{}, err
+	}
+	signer, err := ssh.NewSignerFromKey(private)
+	if err != nil {
+		return transport.ServerInfo{}, err
+	}
+	var observedAlgorithm, observedFingerprint string
+	config := &ssh.ClientConfig{User: "plumtree", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, Timeout: timeout,
+		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
+			observedAlgorithm, observedFingerprint = key.Type(), ssh.FingerprintSHA256(key)
+			return nil
+		}}
+	dialer := net.Dialer{Timeout: timeout}
+	raw, err := dialer.DialContext(ctx, "tcp", endpoint.String())
+	if err != nil {
+		return transport.ServerInfo{}, err
+	}
+	if timeout > 0 {
+		_ = raw.SetDeadline(time.Now().Add(timeout))
+	}
+	conn, channels, requests, err := ssh.NewClientConn(raw, endpoint.String(), config)
+	if err != nil {
+		_ = raw.Close()
+		return transport.ServerInfo{}, fmt.Errorf("%w: probe handshake: %v", ErrSSHTransport, err)
+	}
+	client := ssh.NewClient(conn, channels, requests)
+	session, err := client.NewSession()
+	if err != nil {
+		_ = client.Close()
+		return transport.ServerInfo{}, fmt.Errorf("%w: probe session: %v", ErrSSHTransport, err)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = client.Close()
+		return transport.ServerInfo{}, err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		_ = client.Close()
+		return transport.ServerInfo{}, err
+	}
+	if err := session.RequestSubsystem(transport.PairSubsystem); err != nil {
+		_ = session.Close()
+		_ = client.Close()
+		return transport.ServerInfo{}, fmt.Errorf("%w: pairing subsystem: %v", transport.ErrWrongService, err)
+	}
+	stream := &sessionStream{in: stdin, out: stdout, sess: session, client: client}
+	hello, err := ReadServerHello(ctx, stream)
+	_ = stream.Close()
+	if err != nil {
+		return transport.ServerInfo{}, err
+	}
+	info := serverInfoFromHello(hello)
+	if info.HostKeyAlgorithm != observedAlgorithm || info.HostKeyFingerprint != observedFingerprint {
+		return transport.ServerInfo{}, transport.ErrHostKeyChanged
+	}
+	if !info.Supports(transport.PairSubsystem) || !info.Supports(transport.ControlSubsystem) {
+		return transport.ServerInfo{}, transport.ErrWrongService
+	}
+	return info, nil
+}
+
+func NewProbe(timeout time.Duration) transport.Probe {
+	return func(ctx context.Context, endpoint transport.Endpoint) (transport.ServerInfo, error) {
+		return ProbeEndpoint(ctx, endpoint, timeout)
+	}
+}
+
+func serverInfoFromHello(hello pairing.ServerHello) transport.ServerInfo {
+	return transport.ServerInfo{StableID: hello.ServerID, HostKeyAlgorithm: hello.HostKeyAlgorithm, HostKeyFingerprint: hello.HostKeyFingerprint,
+		ProductVersion: hello.ProductVersion, Protocols: append([]string(nil), hello.Protocols...)}
 }
 
 func pinnedHostKey(record ServerRecord) ssh.HostKeyCallback {
@@ -253,10 +372,11 @@ func equalString(a, b string) bool {
 }
 
 type VersionInfo struct {
-	Product    string `json:"product"`
-	Version    string `json:"version"`
-	APIVersion int    `json:"apiVersion"`
-	ABIVersion int    `json:"abiVersion"`
+	Product    string           `json:"product"`
+	Version    string           `json:"version"`
+	APIVersion int              `json:"apiVersion"`
+	ABIVersion int              `json:"abiVersion"`
+	Limits     map[string]int64 `json:"limits"`
 }
 
 // Preflight calls the version endpoint before any state-changing operation.

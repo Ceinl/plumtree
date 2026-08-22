@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -121,6 +122,65 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 func TestSSHInstructionRejectsTerminalInjection(t *testing.T) {
 	if _, err := SSHInstruction(testServerRecord(), "owner/app\nmalicious"); err == nil {
 		t.Fatal("unsafe handle accepted")
+	}
+}
+
+func TestPairedServerCommandsListSwitchRenameAndForget(t *testing.T) {
+	dir := t.TempDir()
+	storePath, keyDir := filepath.Join(dir, "servers.json"), filepath.Join(dir, "keys")
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store := paired.NewStore()
+	alpha, beta := testServerRecord(), testServerRecord()
+	alpha.Name, alpha.ServerID, alpha.KeyRef = "alpha", "server-a", "a.ed25519"
+	beta.Name, beta.ServerID, beta.KeyRef = "beta", "server-b", "b.ed25519"
+	if err := store.Add(alpha); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(beta); err != nil {
+		t.Fatal(err)
+	}
+	if err := paired.Save(storePath, store); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{alpha.KeyRef, beta.KeyRef} {
+		if err := os.WriteFile(filepath.Join(keyDir, name), []byte("private"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out bytes.Buffer
+	runner := Runner{Out: &out, StorePath: storePath, KeyDir: keyDir}
+	if err := runner.Run([]string{"server", "list"}); err != nil || !strings.Contains(out.String(), `"current": "alpha"`) {
+		t.Fatalf("list output=%s err=%v", out.String(), err)
+	}
+	if err := runner.Run([]string{"server", "use", "beta"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run([]string{"server", "rename", "beta", "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runner.Run([]string{"server", "current"}); err != nil || !strings.Contains(out.String(), `"name": "prod"`) {
+		t.Fatalf("current output=%s err=%v", out.String(), err)
+	}
+	if err := runner.Run([]string{"server", "forget", "prod", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := paired.Load(storePath)
+	if err != nil || len(loaded.Servers) != 1 || loaded.Current != "alpha" {
+		t.Fatalf("store=%+v err=%v", loaded, err)
+	}
+	if _, err := os.Stat(filepath.Join(keyDir, beta.KeyRef)); !os.IsNotExist(err) {
+		t.Fatalf("forgotten key still exists: %v", err)
+	}
+}
+
+func TestRemoteCommandExplainsHowToPairWhenStoreIsEmpty(t *testing.T) {
+	runner := Runner{StorePath: filepath.Join(t.TempDir(), "servers.json")}
+	err := runner.Run([]string{"status"})
+	if err == nil || !strings.Contains(err.Error(), "run `pt pair") {
+		t.Fatalf("error=%v", err)
 	}
 }
 

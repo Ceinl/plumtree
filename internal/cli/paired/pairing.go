@@ -13,38 +13,41 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const (
-	pairHelloFrame    = 1
-	pairProofFrame    = 2
-	pairReplyFrame    = 3
-	pairCompleteFrame = 4
-)
-
 var (
 	ErrPairing      = errors.New("paired: pairing failed")
 	ErrPairingFrame = errors.New("paired: invalid pairing frame")
 )
 
-type pairingHello struct {
-	Transcript pairing.Transcript `json:"transcript"`
+type PairResult = pairing.Complete
+
+type ExchangeOptions struct {
+	DeviceName       string
+	RecoverySecret   []byte
+	RevokeOldDevices bool
 }
 
-type pairingProof struct {
-	ServerNonce []byte `json:"serverNonce,omitempty"`
-	Proof       []byte `json:"proof"`
-}
-
-type PairResult struct {
-	ServerID     string `json:"serverID"`
-	AuthorID     string `json:"authorID"`
-	AuthorHandle string `json:"authorHandle,omitempty"`
-	DeviceID     string `json:"deviceID"`
+func ReadServerHello(ctx context.Context, channel io.ReadWriteCloser) (pairing.ServerHello, error) {
+	frame, err := readPairFrame(ctx, channel)
+	if err != nil {
+		return pairing.ServerHello{}, fmt.Errorf("%w: server hello: %v", ErrPairing, err)
+	}
+	if frame.Type != pairing.FrameServerHello {
+		return pairing.ServerHello{}, fmt.Errorf("%w: expected server hello", ErrPairingFrame)
+	}
+	var hello pairing.ServerHello
+	if err := decodePairPayload(frame.Payload, &hello); err != nil {
+		return pairing.ServerHello{}, err
+	}
+	if hello.ServerID == "" || hello.HostKeyAlgorithm == "" || hello.HostKeyFingerprint == "" || hello.ProductVersion == "" {
+		return pairing.ServerHello{}, fmt.Errorf("%w: incomplete server hello", ErrPairingFrame)
+	}
+	return hello, nil
 }
 
 // ExchangePairing runs the proof-only exchange on an already-authenticated
 // plumtree-pair-v1 channel. The phrase is used only to derive MAC keys and is
 // never serialized, persisted, or included in errors.
-func ExchangePairing(ctx context.Context, channel io.ReadWriteCloser, transcript pairing.Transcript, secret []byte) (PairResult, error) {
+func ExchangePairing(ctx context.Context, channel io.ReadWriteCloser, transcript pairing.Transcript, secret []byte, options ...ExchangeOptions) (PairResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -54,21 +57,43 @@ func ExchangePairing(ctx context.Context, channel io.ReadWriteCloser, transcript
 	if err := transcript.Validate(); err != nil {
 		return PairResult{}, fmt.Errorf("%w: %v", ErrPairing, err)
 	}
-	hello, err := json.Marshal(pairingHello{Transcript: transcript})
+	var option ExchangeOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	var recoverySalt, recoveryVerifier []byte
+	if transcript.Purpose == pairing.PurposeNewAuthor || transcript.Purpose == pairing.PurposeOfflineRecovery || transcript.Purpose == pairing.PurposeOperatorRecovery {
+		if len(option.RecoverySecret) < 16 {
+			return PairResult{}, fmt.Errorf("%w: next recovery phrase is required", ErrPairing)
+		}
+		recoverySalt = make([]byte, 16)
+		if _, err := rand.Read(recoverySalt); err != nil {
+			return PairResult{}, fmt.Errorf("%w: recovery salt: %v", ErrPairing, err)
+		}
+		var err error
+		recoveryVerifier, err = pairing.DeriveVerifier(recoverySalt, option.RecoverySecret)
+		if err != nil {
+			return PairResult{}, fmt.Errorf("%w: recovery verifier: %v", ErrPairing, err)
+		}
+	}
+	hello, err := json.Marshal(pairing.ClientHello{Transcript: transcript, DeviceName: option.DeviceName, RecoverySalt: recoverySalt, RecoveryVerifier: recoveryVerifier})
 	if err != nil {
 		return PairResult{}, fmt.Errorf("%w: hello: %v", ErrPairing, err)
 	}
-	if err := pairing.WriteFrame(channel, pairing.Frame{Type: pairHelloFrame, Payload: hello}); err != nil {
+	if err := pairing.WriteFrame(channel, pairing.Frame{Type: pairing.FrameClientHello, Payload: hello}); err != nil {
 		return PairResult{}, fmt.Errorf("%w: send hello: %v", ErrPairing, err)
 	}
 	frame, err := readPairFrame(ctx, channel)
 	if err != nil {
 		return PairResult{}, fmt.Errorf("%w: receive proof: %v", ErrPairing, err)
 	}
-	if frame.Type != pairProofFrame {
+	if frame.Type == pairing.FrameProblem {
+		return PairResult{}, decodePairProblem(frame.Payload)
+	}
+	if frame.Type != pairing.FrameServerProof {
 		return PairResult{}, fmt.Errorf("%w: expected server proof", ErrPairingFrame)
 	}
-	var proof pairingProof
+	var proof pairing.Proof
 	if err := decodePairPayload(frame.Payload, &proof); err != nil {
 		return PairResult{}, err
 	}
@@ -79,25 +104,32 @@ func ExchangePairing(ctx context.Context, channel io.ReadWriteCloser, transcript
 	if err := transcript.Validate(); err != nil {
 		return PairResult{}, fmt.Errorf("%w: server transcript: %v", ErrPairing, err)
 	}
-	if err := pairing.VerifyServerProof(secret, transcript, proof.Proof); err != nil {
+	verifier, err := pairing.DeriveVerifier(proof.Salt, secret)
+	if err != nil {
+		return PairResult{}, fmt.Errorf("%w: proof verifier: %v", ErrPairing, err)
+	}
+	if err := pairing.VerifyServerProof(verifier, transcript, proof.MAC); err != nil {
 		return PairResult{}, fmt.Errorf("%w: server proof: %v", ErrPairing, err)
 	}
-	clientProof, err := pairing.ClientProof(secret, transcript)
+	clientProof, err := pairing.ClientProof(verifier, transcript)
 	if err != nil {
 		return PairResult{}, fmt.Errorf("%w: client proof: %v", ErrPairing, err)
 	}
-	payload, err := json.Marshal(pairingProof{Proof: clientProof})
+	payload, err := json.Marshal(pairing.Proof{MAC: clientProof})
 	if err != nil {
 		return PairResult{}, fmt.Errorf("%w: encode client proof: %v", ErrPairing, err)
 	}
-	if err := pairing.WriteFrame(channel, pairing.Frame{Type: pairReplyFrame, Payload: payload}); err != nil {
+	if err := pairing.WriteFrame(channel, pairing.Frame{Type: pairing.FrameClientProof, Payload: payload}); err != nil {
 		return PairResult{}, fmt.Errorf("%w: send client proof: %v", ErrPairing, err)
 	}
 	frame, err = readPairFrame(ctx, channel)
 	if err != nil {
 		return PairResult{}, fmt.Errorf("%w: receive result: %v", ErrPairing, err)
 	}
-	if frame.Type != pairCompleteFrame {
+	if frame.Type == pairing.FrameProblem {
+		return PairResult{}, decodePairProblem(frame.Payload)
+	}
+	if frame.Type != pairing.FrameComplete {
 		return PairResult{}, fmt.Errorf("%w: expected completion", ErrPairingFrame)
 	}
 	var result PairResult
@@ -108,6 +140,17 @@ func ExchangePairing(ctx context.Context, channel io.ReadWriteCloser, transcript
 		return PairResult{}, fmt.Errorf("%w: incomplete result", ErrPairing)
 	}
 	return result, nil
+}
+
+func decodePairProblem(data []byte) error {
+	var problem pairing.Problem
+	if err := decodePairPayload(data, &problem); err != nil {
+		return err
+	}
+	if problem.Code == "" {
+		problem.Code = "pairing_failed"
+	}
+	return fmt.Errorf("%w: %s: %s", ErrPairing, problem.Code, problem.Detail)
 }
 
 func decodePairPayload(data []byte, target any) error {
