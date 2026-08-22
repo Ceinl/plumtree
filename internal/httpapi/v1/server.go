@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Ceinl/plumtree/internal/protocol/control"
+	"github.com/Ceinl/plumtree/internal/server/identity"
 	"github.com/Ceinl/plumtree/internal/sqlite"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/tetratelabs/wazero"
@@ -63,6 +64,7 @@ type ArtifactValidator func(context.Context, []byte, int) error
 
 type Config struct {
 	Repository       *sqlite.Repository
+	Identity         *identity.Service
 	ProductVersion   string
 	ABIVersion       uint8
 	ArtifactLimit    int64
@@ -72,6 +74,7 @@ type Config struct {
 
 type Server struct {
 	repo             *sqlite.Repository
+	identity         *identity.Service
 	product          string
 	abi              uint8
 	artifactMax      int64
@@ -80,8 +83,8 @@ type Server struct {
 }
 
 func New(cfg Config) (*Server, error) {
-	if cfg.Repository == nil {
-		return nil, fmt.Errorf("%w: repository is required", errForbidden)
+	if cfg.Repository == nil || cfg.Identity == nil {
+		return nil, fmt.Errorf("%w: repository and identity service are required", errForbidden)
 	}
 	if strings.TrimSpace(cfg.ProductVersion) == "" {
 		return nil, fmt.Errorf("%w: product version is required", errVersion)
@@ -100,7 +103,7 @@ func New(cfg Config) (*Server, error) {
 	if abiVersion == 0 {
 		abiVersion = abi.Version
 	}
-	return &Server{repo: cfg.Repository, product: cfg.ProductVersion, abi: abiVersion, artifactMax: artifactMax, metadataMax: metadataMax, validateArtifact: cfg.ValidateArtifact}, nil
+	return &Server{repo: cfg.Repository, identity: cfg.Identity, product: cfg.ProductVersion, abi: abiVersion, artifactMax: artifactMax, metadataMax: metadataMax, validateArtifact: cfg.ValidateArtifact}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s }
@@ -195,7 +198,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request, p Principal, part
 		return
 	}
 	if len(parts) == 1 && parts[0] == "devices" && r.Method == http.MethodGet {
-		devices, err := s.repo.ListDevices(r.Context(), p.AuthorID)
+		devices, err := s.identity.Devices(r.Context(), p.AuthorID)
 		if err != nil {
 			s.problemForError(w, err)
 			return
@@ -203,13 +206,23 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request, p Principal, part
 		s.writeJSON(w, http.StatusOK, map[string]any{"devices": devices})
 		return
 	}
-	if len(parts) == 2 && parts[0] == "devices" && r.Method == http.MethodDelete {
-		device, err := s.repo.Device(r.Context(), parts[1])
-		if err != nil || device.AuthorID != p.AuthorID {
-			s.problemForError(w, sqlite.ErrNotFound)
+	if len(parts) == 1 && parts[0] == "devices" && r.Method == http.MethodPost {
+		var req struct {
+			DeviceName string `json:"deviceName"`
+		}
+		if !s.readJSON(w, r, &req) {
 			return
 		}
-		if err := s.repo.RevokeDeviceAuthorized(r.Context(), p.AuthorID, p.DeviceID, parts[1]); err != nil {
+		challenge, err := s.identity.BeginDeviceAddition(r.Context(), p.AuthorID, p.DeviceID, req.DeviceName)
+		if err != nil {
+			s.problemForError(w, err)
+			return
+		}
+		s.writeJSON(w, http.StatusCreated, map[string]any{"invitation": map[string]any{"id": challenge.ID, "secret": string(challenge.Secret), "deviceName": challenge.DeviceName, "expiresAt": challenge.ExpiresAt}})
+		return
+	}
+	if len(parts) == 2 && parts[0] == "devices" && r.Method == http.MethodDelete {
+		if err := s.identity.RevokeDevice(r.Context(), p.AuthorID, p.DeviceID, parts[1]); err != nil {
 			s.problemForError(w, err)
 			return
 		}
