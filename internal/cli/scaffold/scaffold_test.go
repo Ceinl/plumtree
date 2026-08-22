@@ -49,6 +49,8 @@ func TestNewTUIWritesLayout(t *testing.T) {
 	}
 	if readme := read(t, proj, "README.md"); !strings.Contains(readme, "pt dev --headless") {
 		t.Errorf("README missing deterministic TUI check: %s", readme)
+	} else if !strings.Contains(readme, "pt dev --ssh") {
+		t.Errorf("README missing local SSH mode: %s", readme)
 	}
 	agents := read(t, proj, "AGENTS.md")
 	if !strings.Contains(agents, "This is a Plumtree tui app named `counter`") ||
@@ -62,11 +64,13 @@ func TestNewCLIWritesCLIMain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if main := read(t, proj, "app/main.go"); !strings.Contains(main, "app.WithCommands") || !strings.Contains(main, "github.com/Ceinl/plumtree/sdk/cli") {
+	if main := read(t, proj, "app/main.go"); !strings.Contains(main, "app.WithCommands") || !strings.Contains(main, "github.com/Ceinl/plumtree/sdk/cli") || !strings.Contains(main, "WithArgs(cli.AnyArgs())") {
 		t.Errorf("CLI main.go missing clean command app:\n%s", main)
 	}
 	if readme := read(t, proj, "README.md"); !strings.Contains(readme, "pt dev Alice") {
 		t.Errorf("CLI README missing CLI run command:\n%s", readme)
+	} else if !strings.Contains(readme, "pt dev --ssh") {
+		t.Errorf("CLI README missing local SSH mode: %s", readme)
 	}
 	if agents := read(t, proj, "AGENTS.md"); !strings.Contains(agents, "return typed output through `sdk/cli`") {
 		t.Errorf("CLI AGENTS.md missing CLI guidance:\n%s", agents)

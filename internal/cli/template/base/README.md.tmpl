@@ -21,6 +21,17 @@ Plumtree {{.Kind}} app.
 {{.CheckCommand}}
 ```
 
+## Run Over Local SSH
+
+Start a loopback-only development server:
+
+```bash
+pt dev --ssh
+```
+
+Use the printed `ssh` command in another terminal. For CLI apps, add the app
+arguments to that command.
+
 ## Deploy
 
 Deploy through a paired server record created with `pt pair`:
