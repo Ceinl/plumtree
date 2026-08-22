@@ -23,7 +23,7 @@ Plumtree {{.Kind}} app.
 
 ## Deploy
 
-Deploy through a paired server record provisioned by the host integration:
+Deploy through a paired server record created with `pt pair`:
 
 ```bash
 pt deploy
@@ -31,5 +31,4 @@ pt deploy
 
 The clean client authenticates through the paired SSH transport and the
 versioned `/api/v1` control surface; it does not use a shared deploy token or a
-legacy claim route. Pairing and server-record provisioning are host-integration
-operations, and must be completed before `pt deploy` can open its target.
+legacy claim route. Complete pairing before `pt deploy` opens its target.

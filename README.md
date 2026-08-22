@@ -14,6 +14,8 @@ own servers, and streams the rendered terminal to the user.
 ssh <owner>/<app>@plumtree.app
 
 # ship your own
+plumtree bootstrap -handle alice -device laptop
+pt pair --bootstrap <id> --yes localhost
 pt new myapp --tui --access public
 pt dev
 pt deploy
@@ -130,15 +132,22 @@ pt build                    # compile to a typed WASM artifact
 pt deploy                   # build server-side + deploy
 
 pt status                   # server and app state
+pt server list              # paired servers and current selection
+pt server use <name>        # select a paired server
+pt device invite <name>     # create a one-use second-device invitation
+pt device list              # list active and revoked author devices
 pt audit                    # audit records
 pt access                   # typed access-key workflow
 
 pt logs <app>               # session logs
 ```
 
-Author and device identity are represented by the paired SSH workflow and
-persistent root SQLite repository. First-run pairing remains a release gate;
-no browser claim, dashboard, or bearer token is part of the clean API contract.
+Author and device identity use dedicated per-server Ed25519 keys over the
+`plumtree-pair-v1` SSH subsystem. A local operator creates a one-use bootstrap
+authority before the first author pairs. Later devices use an invitation from
+an active device, and offline recovery rotates the recovery phrase and revokes
+lost devices. No browser claim, dashboard, or bearer token is part of the
+clean API contract.
 
 ## Security model
 
@@ -190,11 +199,12 @@ A multi-module Go workspace (`go.work`) with the root product module:
 
 ## Status
 
-The end-to-end author loop works against a local control plane:
+The end-to-end author loop works against a fresh local control plane:
 
 ```
-server: go run ./cmd/plumtree
-author: pt new → pt dev → pt build → pt deploy
+operator: plumtree bootstrap -handle alice -device laptop
+server:   go run ./cmd/plumtree
+author:   pt pair → pt status → pt new → pt dev → pt build → pt deploy
 ```
 
 Local server startup persists the SQLite repository and SSH host key. The clean
