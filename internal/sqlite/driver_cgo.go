@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"runtime"
 	"strings"
 	"time"
@@ -17,24 +18,38 @@ import (
 )
 
 func newSQLiteDriver(key []byte, encrypted bool, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages int, trace TraceFunc) driver.Driver {
-	base := &sqlite3.SQLiteDriver{
+	base := driver.Driver(&sqlite3.SQLiteDriver{
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-			// The upstream driver applies only connection-local defaults before
-			// ConnectHook. Apply the SQLCipher key before Plumtree performs any
-			// schema read or pager-changing PRAGMA.
-			if err := keyConnection(conn, key, encrypted); err != nil {
-				return err
-			}
 			if err := configureConnection(conn, encrypted, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages); err != nil {
 				return err
 			}
 			return nil
 		},
+	})
+	if encrypted {
+		// go-sqlite3 applies connection PRAGMAs before ConnectHook. SQLCipher
+		// must receive its URI key during sqlite3_open so an existing encrypted
+		// schema is never touched first. database/sql retains only the clean DSN;
+		// this wrapper adds the key for the immediate driver.Open call.
+		base = keyedDriver{Driver: base, key: key}
 	}
 	if trace == nil {
 		return base
 	}
 	return &tracingDriver{Driver: base, trace: trace}
+}
+
+type keyedDriver struct {
+	driver.Driver
+	key []byte
+}
+
+func (d keyedDriver) Open(name string) (driver.Conn, error) {
+	separator := "?"
+	if strings.Contains(name, "?") {
+		separator = "&"
+	}
+	return d.Driver.Open(name + separator + "key=" + url.QueryEscape("x'"+hex.EncodeToString(d.key)+"'"))
 }
 
 // tracingDriver keeps query observability in Plumtree instead of patching the
@@ -93,7 +108,7 @@ func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS
 	}
 
 	if compiledSQLCipher {
-		if _, err := pragmaValue(conn, "cipher_version"); err != nil {
+		if version, err := pragmaValue(conn, "cipher_version"); err != nil || strings.TrimSpace(version) == "" {
 			return ErrSQLCipherUnavailable
 		}
 	} else if encrypted {
@@ -101,19 +116,6 @@ func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS
 	}
 
 	return configurePragmas(conn, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages)
-}
-
-func keyConnection(conn *sqlite3.SQLiteConn, key []byte, encrypted bool) error {
-	if encrypted {
-		statement := `PRAGMA key = "x'` + hex.EncodeToString(key) + `'";`
-		if _, err := conn.Exec(statement, nil); err != nil {
-			return ErrKeyRejected
-		}
-		if value, err := pragmaValue(conn, "cipher_status"); err != nil || value != "1" {
-			return ErrKeyRejected
-		}
-	}
-	return nil
 }
 
 func configurePragmas(conn *sqlite3.SQLiteConn, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages int) error {

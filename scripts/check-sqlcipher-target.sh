@@ -15,12 +15,18 @@ fi
 : "${OPENSSL_PREFIX:?set OPENSSL_PREFIX to the pinned OpenSSL prefix}"
 : "${CC:?set CC to the target-native C compiler}"
 
-default_cflags="-I${SQLCIPHER_PREFIX}/include -I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
-default_ldflags="-L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -lsqlite3 -lcrypto -lssl"
+sqlcipher_include=${SQLCIPHER_INCLUDE:-"$SQLCIPHER_PREFIX/include"}
+sqlcipher_library=${SQLCIPHER_LIBRARY:-sqlite3}
+default_cflags="-I${sqlcipher_include} -I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
+default_ldflags="-L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -l${sqlcipher_library} -lcrypto -lssl"
 
 export CGO_ENABLED=1
 export CGO_CFLAGS="${SQLCIPHER_CFLAGS:-$default_cflags}"
 export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:-$default_ldflags}"
+export PLUMTREE_REAL_CC=${PLUMTREE_REAL_CC:-$CC}
+export PLUMTREE_SQLCIPHER_INCLUDE=${PLUMTREE_SQLCIPHER_INCLUDE:-$sqlcipher_include}
+export PLUMTREE_SQLCIPHER_LIBRARY=${PLUMTREE_SQLCIPHER_LIBRARY:-$sqlcipher_library}
+export CC="$workspace_root/scripts/sqlcipher-cc.sh"
 
 cd "$workspace_root"
 tags="sqlcipher libsqlite3"
@@ -32,7 +38,7 @@ else
   output_dir=${TMPDIR:-/tmp}/plumtree-sqlcipher-target
   mkdir -p "$output_dir"
   output="$output_dir/sqlite-${target_os}-${target_arch}.test"
-  GOOS="$target_os" GOARCH="$target_arch" CC="$CC" \
+  GOOS="$target_os" GOARCH="$target_arch" \
     go test -tags "$tags" -c ./internal/sqlite -o "$output"
   go tool nm "$output" | grep -E '(^|[[:space:]])(_?sqlite3_key|_?sqlcipher_version)([[:space:]]|$)'
 fi

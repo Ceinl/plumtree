@@ -12,10 +12,16 @@ output_dir=$(cd "$output_dir" && pwd)
 : "${CC:?set CC to the target-native C compiler (or a target-dispatching wrapper)}"
 
 export CGO_ENABLED=1
-default_cflags="-I${SQLCIPHER_PREFIX}/include -I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
-default_ldflags="-L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -lsqlite3 -lcrypto -lssl"
+sqlcipher_include=${SQLCIPHER_INCLUDE:-"$SQLCIPHER_PREFIX/include"}
+sqlcipher_library=${SQLCIPHER_LIBRARY:-sqlite3}
+default_cflags="-I${sqlcipher_include} -I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
+default_ldflags="-L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -l${sqlcipher_library} -lcrypto -lssl"
 export CGO_CFLAGS="${SQLCIPHER_CFLAGS:-$default_cflags}"
 export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:-$default_ldflags}"
+export PLUMTREE_REAL_CC=$CC
+export PLUMTREE_SQLCIPHER_INCLUDE=$sqlcipher_include
+export PLUMTREE_SQLCIPHER_LIBRARY=$sqlcipher_library
+export CC="$workspace_root/scripts/sqlcipher-cc.sh"
 build_tags="sqlcipher libsqlite3"
 
 # Regenerate the server's hermetic build bundle so every release contains the
@@ -47,14 +53,14 @@ for target in "${targets[@]}"; do
   echo "==> build pt $target"
   (
     cd "$workspace_root"
-    GOOS="$target_os" GOARCH="$target_arch" CC="$CC" \
+    GOOS="$target_os" GOARCH="$target_arch" \
       go build -tags "$build_tags" -trimpath -ldflags="-s -w" -o "$pt_output" ./cmd/pt
   )
 
   echo "==> build plumtree $target"
   (
     cd "$workspace_root"
-    GOOS="$target_os" GOARCH="$target_arch" CC="$CC" \
+    GOOS="$target_os" GOARCH="$target_arch" \
       go build -tags "$build_tags" -trimpath -ldflags="-s -w" -o "$server_output" ./cmd/plumtree
   )
 done

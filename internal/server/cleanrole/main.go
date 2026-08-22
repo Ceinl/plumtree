@@ -53,10 +53,13 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		return executeConfig(args[1:], environment, out)
 	}
 	if len(args) > 0 && args[0] == "bootstrap" {
-		return runBootstrap(args[1:], out)
+		return runBootstrapWithEnvironment(args[1:], environment, out)
 	}
 	if len(args) > 1 && args[0] == "author" && args[1] == "bootstrap" {
-		return runBootstrap(args[2:], out)
+		return runBootstrapWithEnvironment(args[2:], environment, out)
+	}
+	if len(args) > 0 && args[0] == "state" {
+		return executeState(ctx, args[1:], environment, out)
 	}
 	resolved, err := ResolveServe(args, environment, 0)
 	if err != nil {
@@ -188,9 +191,15 @@ func executeConfig(args, environment []string, out io.Writer) error {
 }
 
 func runBootstrap(args []string, out io.Writer) error {
+	return runBootstrapWithEnvironment(args, os.Environ(), out)
+}
+
+func runBootstrapWithEnvironment(args, environment []string, out io.Writer) error {
 	fs := flag.NewFlagSet("plumtree bootstrap", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", "", "typed config file path")
 	database := fs.String("database", "plumtree.db", "path to the Plumtree SQLite database")
+	keyFile := fs.String("key-file", "", "private database key file")
 	handle := fs.String("handle", "", "author handle bound to this authority")
 	device := fs.String("device", "device", "first device name")
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-use authority lifetime")
@@ -198,9 +207,31 @@ func runBootstrap(args []string, out io.Writer) error {
 		return err
 	}
 	if fs.NArg() != 0 || *handle == "" {
-		return errors.New("usage: plumtree bootstrap -database PATH -handle HANDLE [-device NAME] [-ttl 10m]")
+		return errors.New("usage: plumtree bootstrap [--config PATH | -database PATH [-key-file PATH]] -handle HANDLE [-device NAME] [-ttl 10m]")
 	}
-	result, err := Bootstrap(context.Background(), BootstrapConfig{Database: *database, Handle: *handle, DeviceName: *device, TTL: *ttl})
+	var key []byte
+	if *configPath != "" {
+		if *database != "plumtree.db" || *keyFile != "" {
+			return errors.New("plumtree bootstrap: --config cannot be combined with -database or -key-file")
+		}
+		resolved, err := ResolveServe([]string{"serve", "--config", *configPath}, environment, 0)
+		if err != nil {
+			return err
+		}
+		projection, err := serverconfig.MaterializeRole(resolved.Config, serverconfig.RoleControl)
+		if err != nil {
+			return fmt.Errorf("clean server: bootstrap configuration: %w", err)
+		}
+		*database = resolved.Config.Storage.DatabasePath
+		key = projection.Secret()
+	} else if *keyFile != "" {
+		var err error
+		key, err = serverconfig.ReadSecretFile(*keyFile)
+		if err != nil {
+			return fmt.Errorf("clean server: bootstrap database key: %w", err)
+		}
+	}
+	result, err := Bootstrap(context.Background(), BootstrapConfig{Database: *database, DatabaseKey: key, Handle: *handle, DeviceName: *device, TTL: *ttl})
 	if err != nil {
 		return err
 	}
@@ -295,6 +326,10 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		return fmt.Errorf("clean server: open repository: %w", err)
 	}
 	c.repo = repo
+	if err := ensureKVRoot(c.resolved.Config.Storage.KVRoot); err != nil {
+		_ = repo.Close()
+		return fmt.Errorf("clean server: create KV root: %w", err)
+	}
 	signer, fingerprint, err := loadOrCreateHostKey(c.resolved.Config.Storage.SSHIdentity)
 	if err != nil {
 		_ = repo.Close()

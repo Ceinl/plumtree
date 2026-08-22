@@ -62,11 +62,28 @@ func (b LocalBuilder) Build(ctx context.Context, project Project) (Artifact, err
 	env := append([]string{}, os.Environ()...)
 	env = replaceEnv(env, "GOOS", "wasip1")
 	env = replaceEnv(env, "GOARCH", "wasm")
+	configuredWorkspace := false
 	if b.WorkspaceRoot != "" {
 		if work, workCleanup, ok := developmentWorkspace(project.Root, b.WorkspaceRoot); ok {
 			defer workCleanup()
 			env = replaceEnv(env, "GOWORK", work)
+			configuredWorkspace = true
 		}
+	}
+	if !configuredWorkspace {
+		bundle, err := Extract()
+		if err != nil {
+			return Artifact{}, fmt.Errorf("build app: extract embedded SDK: %w", err)
+		}
+		defer bundle.Cleanup()
+		work, workCleanup, err := releaseWorkspace(project.Root, bundle.WorkspaceModules)
+		if err != nil {
+			return Artifact{}, fmt.Errorf("build app: create embedded SDK workspace: %w", err)
+		}
+		defer workCleanup()
+		env = replaceEnv(env, "GOWORK", work)
+		env = replaceEnv(env, "GOPROXY", bundle.GoProxy)
+		env = replaceEnv(env, "GOSUMDB", "off")
 	}
 
 	cmd := exec.CommandContext(ctx, goBin, "build", "-o", outPath, "./app")
@@ -88,21 +105,51 @@ func developmentWorkspace(projectRoot, plumtreeRoot string) (string, func(), boo
 	if !isDir(sdk) {
 		return "", func() {}, false
 	}
+	work, cleanup, err := releaseWorkspace(projectRoot, []string{sdk})
+	return work, cleanup, err == nil
+}
+
+func releaseWorkspace(projectRoot string, modules []string) (string, func(), error) {
+	projectRoot, err := canonicalPath(projectRoot)
+	if err != nil {
+		return "", func() {}, err
+	}
+	for i := range modules {
+		modules[i], err = canonicalPath(modules[i])
+		if err != nil {
+			return "", func() {}, err
+		}
+	}
 	file, err := os.CreateTemp("", "pt-dev-*.work")
 	if err != nil {
-		return "", func() {}, false
+		return "", func() {}, err
 	}
-	content := fmt.Sprintf("go 1.26.5\n\nuse (\n\t%s\n\t%s\n)\n", projectRoot, sdk)
-	if _, err := file.WriteString(content); err != nil {
+	var content strings.Builder
+	content.WriteString("go 1.26.5\n\nuse (\n\t")
+	content.WriteString(projectRoot)
+	for _, module := range modules {
+		content.WriteString("\n\t")
+		content.WriteString(module)
+	}
+	content.WriteString("\n)\n")
+	if _, err := file.WriteString(content.String()); err != nil {
 		_ = file.Close()
 		_ = os.Remove(file.Name())
-		return "", func() {}, false
+		return "", func() {}, err
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(file.Name())
-		return "", func() {}, false
+		return "", func() {}, err
 	}
-	return file.Name(), func() { _ = os.Remove(file.Name()) }, true
+	return file.Name(), func() { _ = os.Remove(file.Name()) }, nil
+}
+
+func canonicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
 
 func isDir(path string) bool {
