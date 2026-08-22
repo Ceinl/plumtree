@@ -8,6 +8,10 @@ import (
 const rootHelp = `pt — Plumtree author CLI
 
 Usage:
+  pt pair [--bootstrap ID|--token ID] [--secret PHRASE] [--yes] HOST
+  pt recover --author HANDLE [--secret PHRASE] [--yes] HOST
+  pt server list|current|use|rename|unpair|forget
+  pt device list|invite|revoke
   pt new NAME --tui|--cli --access public|restricted
   pt dev [flags] [--] [args...]
   pt build [--json]
@@ -48,6 +52,14 @@ func (r Runner) writeHelp(command string) error {
 	help := rootHelp
 	switch strings.TrimSpace(command) {
 	case "":
+	case "pair":
+		help = "Usage:\n  pt pair [--bootstrap ID|--token ID] [--secret PHRASE] [--yes] HOST\n"
+	case "recover":
+		help = "Usage:\n  pt recover --author HANDLE [--secret PHRASE] [--yes] HOST\n"
+	case "server":
+		help = "Usage:\n  pt server list|current|use|rename|unpair|forget\n"
+	case "device":
+		help = "Usage:\n  pt device list|invite|revoke\n"
 	case "new":
 		help = newHelp
 	case "dev":

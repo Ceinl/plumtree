@@ -62,3 +62,24 @@ func main() { app.Run(&model{}) }
 		t.Fatal("build did not return a WebAssembly module")
 	}
 }
+
+func TestDevelopmentBuilderUsesCheckoutSDK(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module checkout-app\n\ngo 1.26.5\n\nrequire github.com/Ceinl/plumtree/sdk v0.0.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(project, "app")
+	if err := os.Mkdir(appDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "main.go"), []byte("package main\nimport _ \"github.com/Ceinl/plumtree/sdk/abi\"\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (LocalBuilder{WorkspaceRoot: repoRoot}).Build(context.Background(), Project{Root: project}); err != nil {
+		t.Fatalf("build with checkout SDK: %v", err)
+	}
+}

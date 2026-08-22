@@ -24,6 +24,18 @@ func (w channelWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+func TestExecuteHelpListsSelectedOperatorCommands(t *testing.T) {
+	var out bytes.Buffer
+	if err := Execute(context.Background(), []string{"--help"}, nil, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("help: %v", err)
+	}
+	for _, command := range []string{"serve", "bootstrap", "config", "state backup", "state restore"} {
+		if !strings.Contains(out.String(), command) {
+			t.Fatalf("help does not contain %q:\n%s", command, out.String())
+		}
+	}
+}
+
 func TestConfigCommandChangesTheNextSelectedRuntime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if _, _, err := serverconfig.Bootstrap(path); err != nil {

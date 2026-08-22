@@ -32,6 +32,18 @@ import (
 
 const defaultProductVersion = "dev"
 
+const rootHelp = `plumtree — Plumtree server operator CLI
+
+Usage:
+  plumtree serve [flags]
+  plumtree bootstrap [--config PATH] -handle HANDLE [-device NAME]
+  plumtree config show|set|unset [--config PATH]
+  plumtree state inventory --config PATH
+  plumtree state backup --config PATH --output DIRECTORY
+  plumtree state restore --config PATH --input DIRECTORY --yes
+  plumtree state recover --config PATH --yes
+`
+
 // ResolvedServe is the immutable selected input for server role constructors.
 // Gateway and runner components can consume the same Config after their data
 // plane is selected.
@@ -49,6 +61,10 @@ func Run(args []string) error {
 
 // Execute runs a local config command or the selected control role.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
+		_, err := io.WriteString(out, rootHelp)
+		return err
+	}
 	if len(args) > 0 && args[0] == "config" {
 		return executeConfig(args[1:], environment, out)
 	}

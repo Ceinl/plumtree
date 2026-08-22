@@ -39,6 +39,10 @@ func (b LocalBuilder) Build(ctx context.Context, project Project) (Artifact, err
 	if project.Root == "" {
 		return Artifact{}, errors.New("build app: project root is required")
 	}
+	buildRoot, err := canonicalPath(project.Root)
+	if err != nil {
+		return Artifact{}, fmt.Errorf("build app: resolve project root: %w", err)
+	}
 	goBin := b.GoBin
 	if goBin == "" {
 		goBin = "go"
@@ -62,11 +66,14 @@ func (b LocalBuilder) Build(ctx context.Context, project Project) (Artifact, err
 	env := append([]string{}, os.Environ()...)
 	env = replaceEnv(env, "GOOS", "wasip1")
 	env = replaceEnv(env, "GOARCH", "wasm")
+	env = replaceEnv(env, "PWD", buildRoot)
 	configuredWorkspace := false
+	workPath := ""
 	if b.WorkspaceRoot != "" {
-		if work, workCleanup, ok := developmentWorkspace(project.Root, b.WorkspaceRoot); ok {
+		if work, workCleanup, ok := developmentWorkspace(buildRoot, b.WorkspaceRoot); ok {
 			defer workCleanup()
 			env = replaceEnv(env, "GOWORK", work)
+			workPath = work
 			configuredWorkspace = true
 		}
 	}
@@ -76,22 +83,23 @@ func (b LocalBuilder) Build(ctx context.Context, project Project) (Artifact, err
 			return Artifact{}, fmt.Errorf("build app: extract embedded SDK: %w", err)
 		}
 		defer bundle.Cleanup()
-		work, workCleanup, err := releaseWorkspace(project.Root, bundle.WorkspaceModules)
+		work, workCleanup, err := releaseWorkspace(buildRoot, bundle.WorkspaceModules)
 		if err != nil {
 			return Artifact{}, fmt.Errorf("build app: create embedded SDK workspace: %w", err)
 		}
 		defer workCleanup()
 		env = replaceEnv(env, "GOWORK", work)
+		workPath = work
 		env = replaceEnv(env, "GOPROXY", bundle.GoProxy)
 		env = replaceEnv(env, "GOSUMDB", "off")
 	}
 
 	cmd := exec.CommandContext(ctx, goBin, "build", "-o", outPath, "./app")
-	cmd.Dir = project.Root
+	cmd.Dir = buildRoot
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return Artifact{}, fmt.Errorf("compiling ./app to WASM: %w", err)
+		return Artifact{}, fmt.Errorf("compiling ./app to WASM in %s with workspace %s: %w", buildRoot, workPath, err)
 	}
 	wasm, err := os.ReadFile(outPath)
 	if err != nil {
