@@ -19,16 +19,23 @@ The default endpoint is `0.0.0.0:2222`. Set
 The service command is equivalent to:
 
 ```sh
-plumtree -database /data/plumtree.db \
-  -host-key /data/plumtree_host_key \
-  -ssh-addr :2222 \
+plumtree serve --config /etc/plumtree/config.json \
+  -storage-database-path /data/plumtree.db \
+  -storage-ssh-identity /data/plumtree_host_key \
+  -exposure-ssh-address :2222 \
   -product-version "$PLUMTREE_PRODUCT_VERSION"
 ```
 
+Native and Compose startup use the same typed configuration loader. Every
+persisted setting also has a one-run flag and environment form. For example,
+`limits.maxSessions` maps to `-limits-max-sessions` and
+`PLUMTREE_LIMITS_MAX_SESSIONS`.
+
 ## State and security
 
-- The database and host key are private volume data. Back up both together and
-  protect the backup with the operator's existing storage encryption.
+- The database and host key are private volume data. Back up both together.
+- Production mode requires `secrets.databaseKeyFile`. Startup fails when the
+  key is absent or the binary does not contain the qualified SQLCipher engine.
 - The server persists a stable identity and rejects a changed host key for an
   existing database.
 - Only authenticated device public keys may use the control API subsystem.

@@ -18,16 +18,17 @@ type RoleProjection struct {
 	name      RoleName
 	config    Config
 	readiness []string
+	secret    []byte
 }
 
 func NewControlRole(c Config) (RoleProjection, error) {
-	return newRole(RoleControl, c, []string{"storage", "control"})
+	return newRole(RoleControl, c, readinessFor(RoleControl))
 }
 func NewGatewayRole(c Config) (RoleProjection, error) {
-	return newRole(RoleGateway, c, []string{"runner", "gateway"})
+	return newRole(RoleGateway, c, readinessFor(RoleGateway))
 }
 func NewRunnerRole(c Config) (RoleProjection, error) {
-	return newRole(RoleRunner, c, []string{"runner"})
+	return newRole(RoleRunner, c, readinessFor(RoleRunner))
 }
 
 func newRole(name RoleName, c Config, readiness []string) (RoleProjection, error) {
@@ -56,6 +57,36 @@ func newRole(name RoleName, c Config, readiness []string) (RoleProjection, error
 func (r RoleProjection) Name() RoleName      { return r.name }
 func (r RoleProjection) Config() Config      { return r.config }
 func (r RoleProjection) Readiness() []string { return append([]string(nil), r.readiness...) }
+func (r RoleProjection) Secret() []byte      { return append([]byte(nil), r.secret...) }
+
+// MaterializeRole validates one enabled role and opens only that role's
+// credential. It is the handoff from shared non-secret configuration to a
+// least-privilege role constructor.
+func MaterializeRole(c Config, name RoleName) (RoleProjection, error) {
+	projection, err := newRole(name, c, readinessFor(name))
+	if err != nil {
+		return RoleProjection{}, err
+	}
+	secret, err := SecretForRole(c, name)
+	if err != nil {
+		return RoleProjection{}, err
+	}
+	projection.secret = append([]byte(nil), secret...)
+	return projection, nil
+}
+
+func readinessFor(name RoleName) []string {
+	switch name {
+	case RoleControl:
+		return []string{"storage", "control"}
+	case RoleGateway:
+		return []string{"runner", "gateway"}
+	case RoleRunner:
+		return []string{"runner"}
+	default:
+		return nil
+	}
+}
 
 type Composition struct{ control, gateway, runner RoleProjection }
 

@@ -8,6 +8,7 @@ SSH_ADDR ?= 127.0.0.1:2222
 DATABASE ?= $(CURDIR)/plumtree.db
 HOST_KEY ?= $(CURDIR)/plumtree_host_key
 PRODUCT_VERSION ?= dev
+CONFIG ?= $(CURDIR)/config.local.json
 
 # Public and local pt builds are generic. `make pt-local` supplies temporary
 # address/token overrides matching run-server without changing user config.
@@ -29,10 +30,10 @@ test-root:
 	GOCACHE=$(GOCACHE) $(GO) test ./...
 
 run-server:
-	$(GO) run ./cmd/plumtree -database "$(DATABASE)" -host-key "$(HOST_KEY)" -product-version "$(PRODUCT_VERSION)" -ssh-addr "$(SSH_ADDR)"
+	$(GO) run ./cmd/plumtree serve -config "$(CONFIG)" -storage-database-path "$(DATABASE)" -storage-ssh-identity "$(HOST_KEY)" -product-version "$(PRODUCT_VERSION)" -exposure-ssh-address "$(SSH_ADDR)"
 
 clear-server:
-	rm -f "$(DATABASE)" "$(HOST_KEY)"
+	rm -f "$(DATABASE)" "$(HOST_KEY)" "$(CONFIG)" "$(CONFIG).lock"
 
 build-pt:
 	GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(abspath $(CURDIR))/pt-bin" ./cmd/pt

@@ -33,7 +33,7 @@ type Faults struct {
 	Commit    func(operation string) error
 }
 
-// RepositoryOption configures the unselected SQLite repository.
+// RepositoryOption configures the SQLite repository.
 type RepositoryOption func(*Repository)
 
 func WithRepositoryClock(now func() time.Time) RepositoryOption {
@@ -73,8 +73,7 @@ type Repository struct {
 	mu        sync.RWMutex
 }
 
-// OpenRepository opens the configured engine, initializes schema v1, and
-// leaves the current server's JSON/envelope store untouched.
+// OpenRepository opens the configured engine and initializes schema v1.
 func OpenRepository(path string, key []byte, options ...RepositoryOption) (*Repository, error) {
 	db, err := Open(path, key)
 	if err != nil {

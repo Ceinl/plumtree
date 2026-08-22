@@ -1,6 +1,5 @@
-// Package v1 implements the clean, authenticated control and artifact API.
-// It is additive while the legacy HTTP journey remains selected by the server
-// assembly; callers mount Handler at the private control transport boundary.
+// Package v1 implements the authenticated control and artifact API. Callers
+// mount Handler at the private control transport boundary.
 package v1
 
 import (

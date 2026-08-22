@@ -1,5 +1,4 @@
-// Package identity provides the additive paired-author and audit services for
-// the unselected clean-break server assembly.
+// Package identity provides paired-author and audit services for the server.
 package identity
 
 import (
