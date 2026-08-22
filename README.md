@@ -33,9 +33,8 @@ the outside world through typed operation packages.
    WASM and runs it locally in [wazero](https://wazero.io) over a real PTY.
 2. **Deploy** — `pt build` compiles the app locally to WASM and the clean API
    stores the typed artifact and metadata.
-3. **Run** — the root server exposes the authenticated SSH control subsystem.
-   Hosted leaf execution remains a release qualification gate and is not
-   claimed here until a live fixture passes.
+3. **Run** — `ssh <author>/<app>@<host>` starts the active deployment. A shell
+   runs the TUI path; SSH exec passes bounded arguments to the finite CLI path.
 
 The connecting user runs **nothing locally** — only `ssh` and a terminal. The
 app's code never reaches their machine, so a malicious app can't touch their
@@ -46,6 +45,10 @@ is why every app is sandboxed by default.
 author ── pt build/deploy ──▶ plumtree (SQLite repository)
                                   │
                        SSH control subsystem ──▶ /api/v1
+                                  │
+                       public/restricted leaf session
+                                  │
+                      isolated runner-worker process
                                   │
                        ctx: kv · pubsub · auth · env · fetch
 ```
@@ -101,8 +104,8 @@ guest. More trust unlocks more capability:
 | `ctx.KV`    | durable per-app key/value state        | all apps            |
 | pub/sub     | live cross-session messaging (no poll) | all apps            |
 | `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
-| `ctx.Env`   | server-side secrets                    | **claimed** apps    |
-| `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
+| `ctx.Env`   | server-side secrets                    | paired-author apps  |
+| `ctx.Fetch` | gated, default-deny egress allowlist   | paired-author apps  |
 
 ### Capability examples
 
@@ -158,15 +161,13 @@ RCE is the product, not a bug — every app is hostile by default, so the goal i
   with no ambient filesystem, env, args, or network — it can only call the host
   functions we import. Production runners are separate worker processes from the
   control plane.
-- **Progressive trust = capability.** Unclaimed apps run in the tightest
-  sandbox (KV only, no secrets, no egress). Claiming unlocks `ctx.Env` and gated
-  `ctx.Fetch`.
+- **App-scoped capability.** Secrets and egress are loaded only for the app
+  selected for that session. Egress stays default-deny.
 - **No raw-ANSI escape path.** The guest returns structured cells (`rune + RGB +
   decor`); the host renders them and sanitizes every rune, so apps can't attack
   the viewer's terminal.
-- **Build is sandboxed too.** Compiling untrusted Go runs code before run-time,
-  so builds happen in isolated workers — no secrets, no default network, bounded
-  CPU/memory/disk, isolated module cache, checksum + module policy enforcement.
+- **Build is local.** `pt build` compiles the author's project before the typed
+  artifact is uploaded. The server never runs uploaded source or build tools.
 - **Hard limits everywhere** — per-frame wall-clock deadlines, memory page caps,
   output/input rate, storage quotas, per-author concurrency caps, deploy rate
   limits, and kill switches. **Deploy is gated harder than run.**
@@ -215,13 +216,15 @@ config path. Operators can use `plumtree config show`,
 changes take effect after restart. `-config` or `PLUMTREE_CONFIG` selects an
 explicit file.
 
-A locally built app is stored as a typed WASM artifact through `/api/v1`; the
-SDK and ABI suites cover the in-process and isolated runner paths. Native
-SQLCipher release linkage and live hosted-leaf execution remain qualification
-gates for a product tag.
+A locally built app is stored as a typed WASM artifact through `/api/v1`.
+Public leaf sessions admit anonymous and proved-key visitors. Restricted leaf
+sessions admit only the owner devices and app access keys. Native development
+can run in process; production configuration requires the authenticated Unix
+runner boundary.
 
-Compose uses one root-owned service with a read-only root filesystem, bounded
-resources, a persistent state volume, and only the SSH control transport.
+Compose uses a combined control/gateway service and a networkless runner
+service. They share only an authenticated Unix socket. Both use read-only root
+filesystems and bounded resources, and only SSH is published.
 
 **Next up:** moderation & per-author quotas at scale, richer scoped storage
 (`ctx.DB`), and content-addressed artifact caching on the gateway.
@@ -238,7 +241,6 @@ existing terminal apps.
 - **ctx** — the capability object (host functions) handed to an app: kv, pubsub,
   auth, env, fetch, io.
 - **Sandbox** — the wazero WASM instance an app runs in, server-side.
-- **Claim** — authenticating ownership to unlock higher-trust capabilities.
 - **Deploy** — publish an app via `pt` (the privileged author action).
 - **Run** — connect to an app with plain `ssh`; the platform executes it.
 

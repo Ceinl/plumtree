@@ -1,14 +1,16 @@
 # Deploying Plumtree
 
-Compose runs the root-owned `plumtree` binary as one service. It persists the
-SQLite database and SSH host key in one volume and publishes only the SSH
-control transport; there is no public HTTP listener or shared bearer token.
+Compose runs a combined control/gateway service and a networkless runner
+service. The first service persists SQLite, KV, and the SSH host key. The
+runner receives no database, KV, SSH, or network access. Only SSH is published.
 
 ## Quick start
 
 ```sh
 cd deploy
 cp .env.example .env
+umask 077
+printf '%s' "$(openssl rand -hex 32)" > runner.token
 docker compose build
 docker compose run --rm plumtree bootstrap \
   -database /data/plumtree.db -handle alice -device laptop
@@ -32,6 +34,8 @@ plumtree serve --config /etc/plumtree/config.json \
   -storage-database-path /data/plumtree.db \
   -storage-ssh-identity /data/plumtree_host_key \
   -exposure-ssh-address :2222 \
+  -runtime-runner-endpoint unix:///run/plumtree/runner.sock \
+  -secrets-gateway-token-file /run/secrets/runner-token \
   -product-version "$PLUMTREE_PRODUCT_VERSION"
 ```
 
@@ -47,10 +51,13 @@ persisted setting also has a one-run flag and environment form. For example,
   key is absent or the binary does not contain the qualified SQLCipher engine.
 - The server persists a stable identity and rejects a changed host key for an
   existing database.
-- Unknown device keys may use only the bounded pairing subsystem. Only active,
-  enrolled device keys may use the control API subsystem.
-- Compose drops all Linux capabilities, uses a read-only root filesystem, and
-  bounds temporary storage and process resources.
+- Unknown keys cannot use the private control subsystem. They can use bounded
+  pairing and the public or app-key leaf paths allowed by the selected app.
+- Public and restricted leaf sessions share the SSH listener. The SQLite
+  access policy is checked before artifact bytes enter a session.
+- The gateway forwards hosted execution through an authenticated Unix socket.
+  The runner is networkless, starts one disposable worker per session, drops
+  all Linux capabilities, and has no control service credentials.
 
 ## Qualification status
 
@@ -60,5 +67,5 @@ toolchain is required before producing release binaries for each OS/architecture
 The current qualification environment may not have those prefixes or cross
 compilers; in that case the release gate must remain red.
 
-Fresh native and Compose volumes use the same bootstrap, pairing, and control
-journey. Deployed leaf serving remains a separate live-fixture release gate.
+Fresh native and Compose volumes use the same bootstrap, pairing, deploy, and
+direct SSH journey. Compose runs each hosted leaf through the isolated runner.

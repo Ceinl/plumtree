@@ -1,5 +1,5 @@
-# Native Compose deployment: one root-owned Plumtree process and one
-# persistent SQLite volume. Only the SSH control transport is published.
+# Compose deployment: control and gateway share the public SSH process. Hosted
+# WASM runs behind an authenticated Unix socket in a networkless runner.
 services:
   plumtree:
     build:
@@ -10,6 +10,8 @@ services:
       - "${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}:2222"
     volumes:
       - plumtree-data:/data
+      - runner-socket:/run/plumtree
+      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
     command:
       - serve
       - -config
@@ -20,6 +22,16 @@ services:
       - /data/plumtree_host_key
       - -exposure-ssh-address
       - :2222
+      - -roles-control
+      - "true"
+      - -roles-gateway
+      - "true"
+      - -roles-runner
+      - "false"
+      - -runtime-runner-endpoint
+      - unix:///run/plumtree/runner.sock
+      - -secrets-gateway-token-file
+      - /run/secrets/runner-token
       - -product-version
       - ${PLUMTREE_PRODUCT_VERSION:-dev}
     read_only: true
@@ -32,5 +44,45 @@ services:
     mem_limit: 1536m
     pids_limit: 256
 
+  runner:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.plumtree
+    restart: unless-stopped
+    network_mode: none
+    volumes:
+      - runner-socket:/run/plumtree
+      - runner-scratch:/run/plumtree-sessions
+      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
+    command:
+      - serve
+      - -config
+      - /etc/plumtree/config.json
+      - -roles-control
+      - "false"
+      - -roles-gateway
+      - "false"
+      - -roles-runner
+      - "true"
+      - -runtime-runner-endpoint
+      - unix:///run/plumtree/runner.sock
+      - -runtime-runner-worker
+      - /usr/local/bin/runner-worker
+      - -runtime-runner-scratch-root
+      - /run/plumtree-sessions
+      - -secrets-runner-token-file
+      - /run/secrets/runner-token
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cpus: 2.0
+    mem_limit: 1024m
+    pids_limit: 256
+
 volumes:
   plumtree-data:
+  runner-socket:
+  runner-scratch:

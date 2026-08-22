@@ -50,6 +50,7 @@ func TestLoadMaterializesFlagEnvironmentConfigDefaultPrecedence(t *testing.T) {
 
 func TestProductionValidationFailsClosed(t *testing.T) {
 	c := Default()
+	c.Roles.Gateway = false
 	c.Runtime.Production = true
 	if err := c.ValidateProduction(); err == nil {
 		t.Fatal("production without a database key was accepted")
@@ -89,6 +90,7 @@ func TestProductionValidationRejectsEveryUnlimitedCriticalLimit(t *testing.T) {
 
 func TestValidationRequiresShutdownTimeout(t *testing.T) {
 	c := Default()
+	c.Roles.Gateway = false
 	c.Runtime.ShutdownTimeout = ""
 	if err := c.Validate(); err == nil {
 		t.Fatal("empty shutdown timeout was accepted")
@@ -104,6 +106,7 @@ func TestControlProjectionDoesNotReadDisabledRoleSecrets(t *testing.T) {
 	}
 	c := Default()
 	c.Roles.Control = true
+	c.Roles.Gateway = false
 	c.Secrets.DatabaseKeyFile = keyPath
 	c.Secrets.GatewayTokenFile = filepath.Join(dir, "missing-gateway-token")
 

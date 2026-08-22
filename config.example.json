@@ -36,7 +36,7 @@
     "autoCapacity": true,
     "capacity": { "maxSessions": 0, "maxWorkers": 0, "maxBuilds": 0 }
   },
-  "roles": { "control": true, "gateway": false, "runner": false },
+  "roles": { "control": true, "gateway": true, "runner": false },
   "secrets": {},
   "runtime": {
     "production": false,

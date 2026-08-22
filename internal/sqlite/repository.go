@@ -56,6 +56,17 @@ func WithCommitListener(listener func(CommitEvent) error) RepositoryOption {
 	}
 }
 
+// AddCommitListener attaches a post-commit observer to an open repository.
+// Listeners run after durable commit and can never roll back the mutation.
+func (r *Repository) AddCommitListener(listener func(CommitEvent) error) {
+	if listener == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listeners = append(r.listeners, listener)
+}
+
 // CommitEvent is published only after the corresponding transaction commits.
 type CommitEvent struct {
 	Operation string
@@ -63,8 +74,7 @@ type CommitEvent struct {
 	ID        string
 }
 
-// Repository is a concrete local repository. It is deliberately not wired to
-// the current control server until the later clean-break cutover.
+// Repository is the selected local control and leaf-session store.
 type Repository struct {
 	db        *DB
 	now       func() time.Time
@@ -301,6 +311,48 @@ type Runnable struct {
 	DeploymentID string
 	Artifact     ArtifactMetadata
 	WASM         []byte
+}
+
+// ResolveLeafRunnable resolves an author/app SSH handle and applies the app's
+// public or restricted key policy before returning artifact bytes.
+func (r *Repository) ResolveLeafRunnable(ctx context.Context, authorHandle, appName, fingerprint, identityAuthorID string) (Runnable, error) {
+	if err := validateHandle(authorHandle); err != nil {
+		return Runnable{}, err
+	}
+	if err := validateID(appName); err != nil || appName == "" {
+		return Runnable{}, fmt.Errorf("%w: app name", ErrInvalid)
+	}
+	var authorID string
+	var suspended int
+	err := r.db.QueryRowContext(ctx, `SELECT id,suspended FROM authors WHERE handle=?`, authorHandle).Scan(&authorID, &suspended)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Runnable{}, ErrNotFound
+	}
+	if err != nil {
+		return Runnable{}, storageError(err)
+	}
+	if suspended != 0 {
+		return Runnable{}, ErrSuspended
+	}
+	runnable, err := r.ResolveRunnable(ctx, authorID, appName)
+	if err != nil {
+		return Runnable{}, err
+	}
+	if runnable.App.AccessMode == "public" || identityAuthorID == authorID {
+		return runnable, nil
+	}
+	if strings.TrimSpace(fingerprint) == "" {
+		return Runnable{}, ErrNotFound
+	}
+	var allowed int
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_access_keys WHERE app_id=? AND fingerprint=?`, runnable.App.ID, fingerprint).Scan(&allowed)
+	if err != nil {
+		return Runnable{}, storageError(err)
+	}
+	if allowed == 0 {
+		return Runnable{}, ErrNotFound
+	}
+	return runnable, nil
 }
 
 type RegistrationInput struct {

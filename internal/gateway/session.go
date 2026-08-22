@@ -155,7 +155,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	// Artifact resolution can materialize a large WASM blob. Do it only after
 	// runner capacity is reserved, and keep the result scoped to this session
 	// rather than to the longer-lived SSH connection.
-	run, err := s.Backend.ResolveRunnable(handle)
+	run, err := s.resolveRunnable(handle, identity)
 	if err != nil {
 		s.logf("resolve %q failed: %v", handle, err)
 		msg := fmt.Sprintf("app %q is not available", handle)
@@ -169,7 +169,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	}
 	identity = appRelativeIdentity(identity, run.OwnerID)
 
-	sessionID, err := s.Backend.StartSession(run.AppID, run.DeployID)
+	sessionID, err := s.startAccountedSession(run, identity)
 	if err != nil {
 		s.logf("start session %q: %v", run.AppName, err)
 		msg := "session unavailable; try again later"
@@ -195,7 +195,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 
 	caps := s.capsFor(run.AppID, run.OwnerID)
 	caps.Auth = runner.StaticAuth{Identity: identity}
-	log, truncated := s.runSessionArgs(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
+	log, truncated, exitStatus := s.runSessionArgsStatus(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
 	sessionDuration := time.Since(startedAt)
 	if err := s.Backend.RecordSessionLog(sessionID, log, truncated); err != nil {
 		s.logf("record session log %q: %v", sessionID, err)
@@ -204,7 +204,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 		s.logf("end session %q: %v", sessionID, err)
 	}
 	s.logf("session end id=%s app=%q duration=%s log=%dB truncated=%t", sessionID, run.AppName, sessionDuration.Round(time.Millisecond), len(log), truncated)
-	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitStatus}))
 	ch.Close()
 	cancel()
 }
@@ -220,16 +220,23 @@ func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, ap
 }
 
 func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool) {
+	log, truncated, _ := s.runSessionArgsStatus(ctx, ch, wasm, appType, caps, size, winch, args)
+	return log, truncated
+}
+
+func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool, uint32) {
 	lim := s.Limits
 	if lim.MemoryPages == 0 {
 		lim = runner.DefaultLimits
 	}
 	if appType == "cli" || len(args) > 0 {
+		logs := newCapWriter(maxSessionLogBytes)
+		output := io.MultiWriter(ch, logs)
 		var err error
 		if isolated := s.isolatedRunner(); isolated != nil {
-			err = isolated.RunCLI(ctx, wasm, lim, caps, args, ch)
+			err = isolated.RunCLI(ctx, wasm, lim, caps, args, output)
 		} else {
-			err = s.Runner.RunCLI(ctx, wasm, lim, caps, args, ch)
+			err = s.Runner.RunCLI(ctx, wasm, lim, caps, args, output)
 		}
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
@@ -237,7 +244,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 		if caps.Goodbye != nil && *caps.Goodbye != "" {
 			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
-		return "", false
+		return logs.String(), logs.truncated, runner.ExitStatus(err)
 	}
 
 	w, h := size()
@@ -275,7 +282,22 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 	default:
 		s.logf("session error: %v", err)
 	}
-	return logs.String(), logs.truncated
+	return logs.String(), logs.truncated, runner.ExitStatus(err)
+}
+
+func (s *Server) resolveRunnable(handle string, identity runner.Identity) (Runnable, error) {
+	if backend, ok := s.Backend.(IdentityAwareBackend); ok {
+		return backend.ResolveRunnableFor(handle, identity)
+	}
+	return s.Backend.ResolveRunnable(handle)
+}
+
+func (s *Server) startAccountedSession(run Runnable, identity runner.Identity) (string, error) {
+	if backend, ok := s.Backend.(AccountedBackend); ok {
+		summary, _ := json.Marshal(map[string]any{"user": identity.User, "kind": identity.Kind, "authenticated": identity.Authenticated, "ownsApp": identity.OwnsApp})
+		return backend.StartAccountedSession(run.AppID, run.DeployID, run.ArtifactDigest, string(summary))
+	}
+	return s.Backend.StartSession(run.AppID, run.DeployID)
 }
 
 func (s *Server) isolatedRunner() *runner.ProcessRunner {
