@@ -205,6 +205,17 @@ type AccessResult struct {
 type AuditResult struct {
 	Events []json.RawMessage `json:"events"`
 }
+type Device struct {
+	ID, AuthorID, Name, PublicKey, Fingerprint string
+	RevokedAt                                  *time.Time
+}
+type DevicesResult struct {
+	Devices []Device `json:"devices"`
+}
+type Invitation struct {
+	ID, Secret, DeviceName string
+	ExpiresAt              time.Time
+}
 
 func (a *API) Apps(ctx context.Context) (AppsResult, error) {
 	var out AppsResult
@@ -241,6 +252,23 @@ func (a *API) RemoveAccess(ctx context.Context, appID, keyID string) error {
 func (a *API) Audit(ctx context.Context) (AuditResult, error) {
 	var out AuditResult
 	return out, a.do(ctx, http.MethodGet, control.APIPrefix+"/audit", nil, "", &out)
+}
+
+func (a *API) Devices(ctx context.Context) (DevicesResult, error) {
+	var out DevicesResult
+	return out, a.do(ctx, http.MethodGet, control.APIPrefix+"/devices", nil, "", &out)
+}
+
+func (a *API) InviteDevice(ctx context.Context, deviceName string) (Invitation, error) {
+	var out struct {
+		Invitation Invitation `json:"invitation"`
+	}
+	err := a.writeJSON(ctx, http.MethodPost, "/devices", map[string]string{"deviceName": deviceName}, &out)
+	return out.Invitation, err
+}
+
+func (a *API) RevokeDevice(ctx context.Context, deviceID string) error {
+	return a.do(ctx, http.MethodDelete, control.APIPrefix+"/devices/"+url.PathEscape(deviceID), nil, "", nil)
 }
 
 func (a *API) SetSecret(ctx context.Context, appID, key, value string) error {

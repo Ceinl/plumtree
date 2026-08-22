@@ -16,6 +16,8 @@ import (
 	plumbuild "github.com/Ceinl/plumtree/internal/build"
 	"github.com/Ceinl/plumtree/internal/cli/paired"
 	"github.com/Ceinl/plumtree/internal/cli/scaffold"
+	"github.com/Ceinl/plumtree/internal/protocol/pairing"
+	"github.com/Ceinl/plumtree/internal/transport"
 	"github.com/Ceinl/plumtree/sdk/abi"
 	xterm "golang.org/x/term"
 )
@@ -36,6 +38,8 @@ type Runner struct {
 	Workspace string
 	Open      OpenFunc
 	Confirm   ConfirmFunc
+	Probe     transport.Probe
+	Pair      paired.PairExchange
 }
 
 func (r Runner) context() context.Context {
@@ -61,7 +65,7 @@ func (r Runner) streams() (io.Reader, io.Writer, io.Writer) {
 
 func (r Runner) Run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: pt <new|dev|build|deploy|status|app|logs|secret|egress|access|audit|ssh>")
+		return errors.New("usage: pt <pair|recover|server|device|new|dev|build|deploy|status|app|logs|secret|egress|access|audit|ssh>")
 	}
 	if isHelp(args[0]) {
 		return r.writeHelp("")
@@ -80,6 +84,14 @@ func (r Runner) Run(args []string) error {
 		return r.writeHelp(args[0])
 	}
 	switch args[0] {
+	case "pair":
+		return r.pairServer(args[1:], pairing.PurposeNewAuthor)
+	case "recover":
+		return r.pairServer(args[1:], pairing.PurposeOfflineRecovery)
+	case "server":
+		return r.server(args[1:])
+	case "device":
+		return r.device(args[1:])
 	case "new":
 		return r.newProject(args[1:])
 	case "build":
@@ -176,6 +188,9 @@ func (r Runner) openTarget(ctx context.Context, name string) (*API, paired.Serve
 	}
 	target, err := store.ResolveTarget(name, nil)
 	if err != nil {
+		if errors.Is(err, paired.ErrCurrentServer) {
+			return nil, paired.ServerRecord{}, errors.New("no paired server; run `pt pair [flags] HOST` after the server operator creates a bootstrap authority")
+		}
 		return nil, paired.ServerRecord{}, fmt.Errorf("%w: %v", ErrTarget, err)
 	}
 	record, err := store.Get(target.Name)

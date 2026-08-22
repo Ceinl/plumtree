@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -21,6 +23,8 @@ import (
 
 	"github.com/Ceinl/plumtree/internal/httpapi/v1"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
+	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
+	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
 	"github.com/Ceinl/plumtree/internal/sqlite"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
@@ -43,10 +47,16 @@ func Run(args []string) error {
 	return Execute(context.Background(), args, os.Environ(), os.Stdout, os.Stderr)
 }
 
-// Execute runs a local config command or the selected control role.
+// Execute runs a local config or bootstrap command or the selected control role.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "config" {
 		return executeConfig(args[1:], environment, out)
+	}
+	if len(args) > 0 && args[0] == "bootstrap" {
+		return runBootstrap(args[1:], out)
+	}
+	if len(args) > 1 && args[0] == "author" && args[1] == "bootstrap" {
+		return runBootstrap(args[2:], out)
 	}
 	resolved, err := ResolveServe(args, environment, 0)
 	if err != nil {
@@ -70,6 +80,25 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		return nil
 	}
 	return err
+}
+
+func runBootstrap(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("plumtree bootstrap", flag.ContinueOnError)
+	database := fs.String("database", "plumtree.db", "path to the Plumtree SQLite database")
+	handle := fs.String("handle", "", "author handle bound to this authority")
+	device := fs.String("device", "device", "first device name")
+	ttl := fs.Duration("ttl", 10*time.Minute, "one-use authority lifetime")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *handle == "" {
+		return errors.New("usage: plumtree bootstrap -database PATH -handle HANDLE [-device NAME] [-ttl 10m]")
+	}
+	result, err := Bootstrap(context.Background(), BootstrapConfig{Database: *database, Handle: *handle, DeviceName: *device, TTL: *ttl})
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"bootstrapID": result.ID, "handle": result.Handle, "deviceName": result.DeviceName, "secret": string(result.Secret), "expiresAt": result.ExpiresAt})
 }
 
 // ResolveServe bootstraps and resolves the exact startup configuration. Precedence
@@ -246,6 +275,7 @@ type controlComponent struct {
 	listener      net.Listener
 	sshConfig     *ssh.ServerConfig
 	api           *v1.Server
+	identities    *identityservice.Service
 	identity      sqlite.ServerIdentity
 	errors        chan error
 	wg            sync.WaitGroup
@@ -273,7 +303,12 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: identity: %w", err)
 	}
-	c.api, err = v1.New(v1.Config{Repository: repo, ProductVersion: c.resolved.ProductVersion})
+	c.identities, err = newIdentityService(repo, c.resolved.Config.Exposure.SSH.Address)
+	if err != nil {
+		_ = repo.Close()
+		return fmt.Errorf("clean server: identity service: %w", err)
+	}
+	c.api, err = v1.New(v1.Config{Repository: repo, Identity: c.identities, ProductVersion: c.resolved.ProductVersion})
 	if err != nil {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: API: %w", err)
@@ -352,7 +387,7 @@ func (c *controlComponent) accept() {
 				delete(c.connections, conn)
 				c.connectionsMu.Unlock()
 			}()
-			serveConnection(conn, c.sshConfig, c.repo, c.api, c.identity, c.resolved.ProductVersion, c.resolved.Config)
+			serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.identity, c.resolved.ProductVersion, c.resolved.Config)
 		}()
 	}
 }
@@ -371,7 +406,6 @@ func openRepository(projection serverconfig.RoleProjection) (*sqlite.Repository,
 
 func authenticatedSSHConfig(signer ssh.Signer) *ssh.ServerConfig {
 	configuration := &ssh.ServerConfig{
-		NoClientAuth: true,
 		PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) {
 			return &ssh.Permissions{}, nil
 		},
@@ -383,6 +417,7 @@ func authenticatedSSHConfig(signer ssh.Signer) *ssh.ServerConfig {
 				permissions.Extensions = make(map[string]string)
 			}
 			permissions.Extensions["plumtree-fingerprint"] = ssh.FingerprintSHA256(key)
+			permissions.Extensions["plumtree-public-key"] = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 			return permissions, nil
 		},
 	}
@@ -390,7 +425,7 @@ func authenticatedSSHConfig(signer ssh.Signer) *ssh.ServerConfig {
 	return configuration
 }
 
-func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, api *v1.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config) {
+func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config) {
 	defer raw.Close()
 	idleTimeout, _ := time.ParseDuration(cfg.Limits.IdleTimeout)
 	connection := newActivityConn(raw, idleTimeout)
@@ -405,16 +440,20 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 	defer serverConn.Close()
 	go ssh.DiscardRequests(requests)
 	fingerprint := ""
+	publicKey := ""
 	if serverConn.Permissions != nil && serverConn.Permissions.Extensions != nil {
 		fingerprint = serverConn.Permissions.Extensions["plumtree-fingerprint"]
+		publicKey = serverConn.Permissions.Extensions["plumtree-public-key"]
 	}
 	var principal v1.Principal
 	if fingerprint != "" {
 		device, lookupErr := repo.DeviceByFingerprint(context.Background(), fingerprint)
-		if lookupErr != nil {
+		if lookupErr != nil && !errors.Is(lookupErr, sqlite.ErrNotFound) {
 			return
 		}
-		principal = v1.Principal{ServerID: identity.ID, AuthorID: device.AuthorID, DeviceID: device.ID, Fingerprint: device.Fingerprint}
+		if lookupErr == nil {
+			principal = v1.Principal{ServerID: identity.ID, AuthorID: device.AuthorID, DeviceID: device.ID, Fingerprint: device.Fingerprint}
+		}
 	}
 	for request := range channels {
 		if request.ChannelType() != "session" {
@@ -425,30 +464,103 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 		if err != nil {
 			continue
 		}
-		go serveSession(channel, channelRequests, api, principal, productVersion)
+		go serveSession(channel, channelRequests, identities, api, principal, identity, productVersion, base64.RawStdEncoding.EncodeToString(serverConn.SessionID()), publicKey, fingerprint)
 	}
 }
 
-func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, api *v1.Server, principal v1.Principal, productVersion string) {
+func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, identities *identityservice.Service, api *v1.Server, principal v1.Principal, identity sqlite.ServerIdentity, productVersion, sessionID, publicKey, fingerprint string) {
 	defer channel.Close()
 	for request := range requests {
 		if request.Type != "subsystem" {
 			_ = request.Reply(false, nil)
 			continue
 		}
-		var subsystem string
-		if err := ssh.Unmarshal(request.Payload, &subsystem); err != nil || subsystem != transport.ControlSubsystem {
+		var subsystemRequest struct{ Name string }
+		if err := ssh.Unmarshal(request.Payload, &subsystemRequest); err != nil {
 			_ = request.Reply(false, nil)
 			continue
 		}
-		_ = request.Reply(true, nil)
-		if principal.DeviceID == "" {
+		subsystem := subsystemRequest.Name
+		switch subsystem {
+		case transport.ControlSubsystem:
+			if principal.DeviceID == "" {
+				_ = request.Reply(false, nil)
+				return
+			}
+			_ = request.Reply(true, nil)
+			handler := httpHandlerWithPrincipal(api.Handler(), principal)
+			_ = transport.ServeHTTPStream(channel, handler, productVersion)
+			return
+		case transport.PairSubsystem:
+			if principal.DeviceID != "" || publicKey == "" || fingerprint == "" {
+				_ = request.Reply(false, nil)
+				return
+			}
+			_ = request.Reply(true, nil)
+			handler := pairingserver.Handler{Identity: identities, ServerID: identity.ID, HostKeyAlgorithm: identity.SSHHostKeyAlgorithm,
+				HostKeyFingerprint: identity.SSHHostKeyFingerprint, ProductVersion: productVersion, SessionID: sessionID,
+				CandidatePublicKey: publicKey, CandidateFingerprint: fingerprint}
+			_ = handler.Serve(channel)
+			return
+		default:
+			_ = request.Reply(false, nil)
 			return
 		}
-		handler := httpHandlerWithPrincipal(api.Handler(), principal)
-		_ = transport.ServeHTTPStream(channel, handler, productVersion)
-		return
 	}
+}
+
+func newIdentityService(repo *sqlite.Repository, sshAddress string) (*identityservice.Service, error) {
+	cfg := serverconfig.Default()
+	cfg.Roles.Control = true
+	cfg.Exposure.SSH = serverconfig.ExposureGate{Enabled: true, Address: sshAddress}
+	return identityservice.New(repo, cfg)
+}
+
+type ServeConfig struct {
+	Database, SSHAddress, HostKeyPath, ServerID, ProductVersion string
+	Ready                                                       func(string)
+}
+
+// Serve runs the selected native SSH and SQLite assembly until ctx ends. It is
+// the programmatic entry used by tests and embedding callers; the process path
+// goes through Execute and typed configuration files.
+func Serve(ctx context.Context, cfg ServeConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(cfg.ProductVersion) == "" {
+		return errors.New("clean server: product version is required")
+	}
+	config := serverconfig.Default()
+	config.Roles.Control = true
+	config.Storage.DatabasePath = cfg.Database
+	config.Storage.SSHIdentity = cfg.HostKeyPath
+	config.Exposure.SSH = serverconfig.ExposureGate{Enabled: true, Address: cfg.SSHAddress}
+	projection, err := serverconfig.MaterializeRole(config, serverconfig.RoleControl)
+	if err != nil {
+		return fmt.Errorf("clean server: control configuration: %w", err)
+	}
+	resolved := ResolvedServe{Loaded: serverconfig.Loaded{Config: config}, ProductVersion: cfg.ProductVersion, ServerID: cfg.ServerID}
+	component := &controlComponent{resolved: resolved, projection: projection, out: io.Discard}
+	if err := component.Start(ctx); err != nil {
+		return err
+	}
+	if cfg.Ready != nil {
+		cfg.Ready(component.listener.Addr().String())
+	}
+	err = func() error {
+		select {
+		case <-ctx.Done():
+			return nil
+		case acceptErr := <-component.Errors():
+			return acceptErr
+		}
+	}()
+	component.closeConnections()
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), time.Second)
+	defer cancelStop()
+	_ = component.Stop(stopCtx)
+	return err
 }
 
 func httpHandlerWithPrincipal(handler http.Handler, principal v1.Principal) http.Handler {

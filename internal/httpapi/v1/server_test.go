@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
+	"github.com/Ceinl/plumtree/internal/server/identity"
 	"github.com/Ceinl/plumtree/internal/sqlite"
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
@@ -29,7 +31,14 @@ func newTestServer(t *testing.T) (*Server, Principal, *sqlite.Repository) {
 	if err != nil || author.ID == "" || device.ID == "" {
 		t.Fatalf("registration=%+v %+v err=%v", author, device, err)
 	}
-	server, err := New(Config{Repository: repo, ProductVersion: "devel+test", ABIVersion: abi.Version})
+	cfg := serverconfig.Default()
+	cfg.Roles.Control = true
+	cfg.Exposure.SSH = serverconfig.ExposureGate{Enabled: true, Address: "local"}
+	identities, err := identity.New(repo, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := New(Config{Repository: repo, Identity: identities, ProductVersion: "devel+test", ABIVersion: abi.Version})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +68,34 @@ func TestVersionAndAuthenticationBeforeBody(t *testing.T) {
 	server.ServeHTTP(badRec, bad)
 	if badRec.Code != http.StatusUnauthorized || read.reads != 0 {
 		t.Fatalf("unauthenticated status=%d body=%s bodyReads=%d", badRec.Code, badRec.Body, read.reads)
+	}
+}
+
+func TestDeviceInvitationIsBoundAndSecretIsReturnedOnce(t *testing.T) {
+	server, principal, repo := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices", strings.NewReader(`{"deviceName":"phone"}`))
+	req.Header.Set(ProductVersionHeader, "devel+test")
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(WithPrincipal(req.Context(), principal))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var response struct {
+		Invitation struct {
+			ID, Secret, DeviceName string
+		} `json:"invitation"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Invitation.ID == "" || len(response.Invitation.Secret) < 16 || response.Invitation.DeviceName != "phone" {
+		t.Fatalf("response=%s", rec.Body)
+	}
+	credential, err := repo.EnrollmentCredential(context.Background(), response.Invitation.ID)
+	if err != nil || credential.DeviceName != "phone" || string(credential.Verifier) == response.Invitation.Secret {
+		t.Fatalf("credential=%+v err=%v", credential, err)
 	}
 }
 

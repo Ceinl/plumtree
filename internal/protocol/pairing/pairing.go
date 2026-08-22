@@ -17,6 +17,13 @@ const (
 	ProtocolName  = "plumtree-pair-v1"
 	MaxFrameSize  = 64 << 10
 	MaxSecretSize = 4096
+
+	FrameServerHello byte = 1
+	FrameClientHello byte = 2
+	FrameServerProof byte = 3
+	FrameClientProof byte = 4
+	FrameComplete    byte = 5
+	FrameProblem     byte = 6
 )
 
 var (
@@ -46,6 +53,39 @@ type Transcript struct {
 	DeviceFingerprint  string  `json:"deviceFingerprint"`
 	Purpose            Purpose `json:"purpose"`
 	Identifier         string  `json:"identifier"`
+}
+
+type ServerHello struct {
+	ServerID           string   `json:"serverID"`
+	HostKeyAlgorithm   string   `json:"hostKeyAlgorithm"`
+	HostKeyFingerprint string   `json:"hostKeyFingerprint"`
+	ProductVersion     string   `json:"productVersion"`
+	Protocols          []string `json:"protocols"`
+}
+
+type ClientHello struct {
+	Transcript       Transcript `json:"transcript"`
+	DeviceName       string     `json:"deviceName,omitempty"`
+	RecoverySalt     []byte     `json:"recoverySalt,omitempty"`
+	RecoveryVerifier []byte     `json:"recoveryVerifier,omitempty"`
+}
+
+type Proof struct {
+	Salt        []byte `json:"salt,omitempty"`
+	ServerNonce []byte `json:"serverNonce,omitempty"`
+	MAC         []byte `json:"mac"`
+}
+
+type Complete struct {
+	ServerID     string `json:"serverID"`
+	AuthorID     string `json:"authorID"`
+	AuthorHandle string `json:"authorHandle"`
+	DeviceID     string `json:"deviceID"`
+}
+
+type Problem struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
 }
 
 func (t Transcript) Validate() error {
@@ -84,6 +124,18 @@ func DeriveKey(secret []byte) ([]byte, error) {
 	h := sha256.New()
 	_, _ = h.Write([]byte(ProtocolName))
 	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(secret)
+	return h.Sum(nil), nil
+}
+
+// DeriveVerifier makes a caller-held phrase usable for transcript proofs
+// without placing the phrase itself in SQLite or on the wire.
+func DeriveVerifier(salt, secret []byte) ([]byte, error) {
+	if len(salt) == 0 || len(salt) > 1024 || len(secret) < 16 || len(secret) > MaxSecretSize {
+		return nil, fmt.Errorf("%w: verifier material", ErrInvalid)
+	}
+	h := sha256.New()
+	_, _ = h.Write(salt)
 	_, _ = h.Write(secret)
 	return h.Sum(nil), nil
 }
