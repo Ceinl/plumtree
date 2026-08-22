@@ -16,9 +16,8 @@ import (
 	plumbuild "github.com/Ceinl/plumtree/internal/build"
 	"github.com/Ceinl/plumtree/internal/cli/paired"
 	"github.com/Ceinl/plumtree/internal/cli/scaffold"
-	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/sdk/abi"
-	"golang.org/x/term"
+	xterm "golang.org/x/term"
 )
 
 type OpenFunc func(context.Context, paired.ServerRecord) (*API, error)
@@ -28,6 +27,7 @@ type ConfirmFunc func(string) bool
 // network opening through fields, so tests and JSON/CI callers do not inherit
 // global argv, environment, or stdio mutations.
 type Runner struct {
+	Context   context.Context
 	In        io.Reader
 	Out       io.Writer
 	Err       io.Writer
@@ -36,6 +36,13 @@ type Runner struct {
 	Workspace string
 	Open      OpenFunc
 	Confirm   ConfirmFunc
+}
+
+func (r Runner) context() context.Context {
+	if r.Context != nil {
+		return r.Context
+	}
+	return context.Background()
 }
 
 func (r Runner) streams() (io.Reader, io.Writer, io.Writer) {
@@ -55,6 +62,22 @@ func (r Runner) streams() (io.Reader, io.Writer, io.Writer) {
 func (r Runner) Run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: pt <new|dev|build|deploy|status|app|logs|secret|egress|access|audit|ssh>")
+	}
+	if isHelp(args[0]) {
+		return r.writeHelp("")
+	}
+	if args[0] == "help" {
+		if len(args) > 2 {
+			return errors.New("usage: pt help [command]")
+		}
+		command := ""
+		if len(args) == 2 {
+			command = args[1]
+		}
+		return r.writeHelp(command)
+	}
+	if len(args) == 2 && isHelp(args[1]) {
+		return r.writeHelp(args[0])
 	}
 	switch args[0] {
 	case "new":
@@ -90,7 +113,11 @@ func (r Runner) newProject(args []string) error {
 	fs := flag.NewFlagSet("pt new", flag.ContinueOnError)
 	tui, cli := fs.Bool("tui", false, "scaffold an interactive TUI app"), fs.Bool("cli", false, "scaffold a finite CLI app")
 	access := fs.String("access", "", "required: public or restricted")
-	if err := fs.Parse(args); err != nil {
+	ordered, err := flagsBeforePositionals(args, map[string]bool{"--access": true, "-access": true})
+	if err != nil {
+		return err
+	}
+	if err := fs.Parse(ordered); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 || (*tui == *cli) || *access == "" {
@@ -142,48 +169,6 @@ func (r Runner) buildProject(args []string) error {
 	return nil
 }
 
-func (r Runner) devProject(args []string) error {
-	fs := flag.NewFlagSet("pt dev", flag.ContinueOnError)
-	reset := fs.Bool("reset", false, "reset the persistent local profile")
-	script := fs.String("script", "up,up,down,q", "headless input tokens")
-	jsonOut := fs.Bool("json", false, "emit stable JSON")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return errors.New("usage: pt dev [--reset] [--script TOKENS]")
-	}
-	root, manifest, err := r.project()
-	if err != nil {
-		return err
-	}
-	result, err := Build(context.Background(), root, r.Workspace)
-	if err != nil {
-		return err
-	}
-	caps, cleanup, err := OpenProfile(Profile{Root: root, Reset: *reset})
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	_, out, _ := r.streams()
-	if manifest.Type == string(scaffold.CLI) {
-		err = runner.RunCLI(context.Background(), result.Artifact.WASM, runner.DefaultLimits, caps, fs.Args(), out)
-	} else {
-		src := runner.NewScriptSource(40, 12, splitTokens(*script))
-		src.Echo = out
-		err = runner.Run(context.Background(), result.Artifact.WASM, runner.DefaultLimits, caps, src, runner.TextSink{W: out}, io.Discard)
-	}
-	if err != nil {
-		return err
-	}
-	if *jsonOut {
-		return writeStable(out, map[string]any{"name": manifest.Name, "profile": filepath.Join(root, ".plumtree", "dev"), "reset": *reset})
-	}
-	_, _ = fmt.Fprintf(out, "Dev profile ready for %s\n", manifest.Name)
-	return nil
-}
-
 func (r Runner) openTarget(ctx context.Context, name string) (*API, paired.ServerRecord, error) {
 	store, err := paired.Load(r.StorePath)
 	if err != nil {
@@ -215,7 +200,7 @@ func (r Runner) deployProject(args []string) error {
 		return errors.New("usage: pt deploy [--server NAME] [--yes] [--json]")
 	}
 	if !*yes && !r.confirm("Deploy this artifact to the selected server?") {
-		return ErrConfirm
+		return confirmationRequired()
 	}
 	root, manifest, err := r.project()
 	if err != nil {
@@ -340,6 +325,20 @@ func (r Runner) secret(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: pt secret set|list|rm")
 	}
+	if args[0] == "rm" {
+		positional, yes, err := confirmationArgs(args[1:])
+		if err != nil || len(positional) != 2 {
+			return errors.New("usage: pt secret rm APP_ID KEY [--yes]")
+		}
+		if !yes && !r.confirm("Remove this secret?") {
+			return confirmationRequired()
+		}
+		api, _, err := r.openTarget(context.Background(), "")
+		if err != nil {
+			return err
+		}
+		return api.DeleteSecret(context.Background(), positional[0], positional[1])
+	}
 	api, _, err := r.openTarget(context.Background(), "")
 	if err != nil {
 		return err
@@ -369,14 +368,6 @@ func (r Runner) secret(args []string) error {
 			}
 		}
 		return api.SetSecret(context.Background(), args[1], args[2], value)
-	case "rm":
-		if len(args) != 3 {
-			return errors.New("usage: pt secret rm APP_ID KEY")
-		}
-		if !r.confirm("Remove this secret?") {
-			return ErrConfirm
-		}
-		return api.DeleteSecret(context.Background(), args[1], args[2])
 	default:
 		return fmt.Errorf("unknown secret command %q", args[0])
 	}
@@ -385,6 +376,20 @@ func (r Runner) secret(args []string) error {
 func (r Runner) egress(args []string) error {
 	if len(args) < 2 {
 		return errors.New("usage: pt egress list|add|rm APP_ID [HOST]")
+	}
+	if args[0] == "rm" {
+		positional, yes, err := confirmationArgs(args[1:])
+		if err != nil || len(positional) != 2 {
+			return errors.New("usage: pt egress rm APP_ID HOST [--yes]")
+		}
+		if !yes && !r.confirm("Remove this egress permission?") {
+			return confirmationRequired()
+		}
+		api, _, err := r.openTarget(context.Background(), "")
+		if err != nil {
+			return err
+		}
+		return api.SetEgress(context.Background(), positional[0], positional[1], false)
 	}
 	api, _, err := r.openTarget(context.Background(), "")
 	if err != nil {
@@ -403,14 +408,6 @@ func (r Runner) egress(args []string) error {
 			return errors.New("usage: pt egress add APP_ID HOST")
 		}
 		return api.SetEgress(context.Background(), args[1], args[2], true)
-	case "rm":
-		if len(args) != 3 {
-			return errors.New("usage: pt egress rm APP_ID HOST")
-		}
-		if !r.confirm("Remove this egress permission?") {
-			return ErrConfirm
-		}
-		return api.SetEgress(context.Background(), args[1], args[2], false)
 	default:
 		return fmt.Errorf("unknown egress command %q", args[0])
 	}
@@ -419,6 +416,20 @@ func (r Runner) egress(args []string) error {
 func (r Runner) access(args []string) error {
 	if len(args) < 2 {
 		return errors.New("usage: pt access list|add|rm APP_ID [KEY]")
+	}
+	if args[0] == "rm" {
+		positional, yes, err := confirmationArgs(args[1:])
+		if err != nil || len(positional) != 2 {
+			return errors.New("usage: pt access rm APP_ID KEY_ID [--yes]")
+		}
+		if !yes && !r.confirm("Remove this access key?") {
+			return confirmationRequired()
+		}
+		api, _, err := r.openTarget(context.Background(), "")
+		if err != nil {
+			return err
+		}
+		return api.RemoveAccess(context.Background(), positional[0], positional[1])
 	}
 	api, _, err := r.openTarget(context.Background(), "")
 	if err != nil {
@@ -437,14 +448,6 @@ func (r Runner) access(args []string) error {
 			return errors.New("usage: pt access add APP_ID NAME PUBLIC_KEY FINGERPRINT")
 		}
 		return api.AddAccess(context.Background(), args[1], args[2], args[3], args[4])
-	case "rm":
-		if len(args) != 3 {
-			return errors.New("usage: pt access rm APP_ID KEY_ID")
-		}
-		if !r.confirm("Remove this access key?") {
-			return ErrConfirm
-		}
-		return api.RemoveAccess(context.Background(), args[1], args[2])
 	default:
 		return fmt.Errorf("unknown access command %q", args[0])
 	}
@@ -493,12 +496,65 @@ func (r Runner) confirm(prompt string) bool {
 	}
 	return false
 }
+
+func confirmationRequired() error {
+	return fmt.Errorf("%w: rerun with --yes or use an interactive terminal", ErrConfirm)
+}
+
+// confirmationArgs accepts --yes before or after the destructive target. The
+// remaining values are the command's positional arguments.
+func confirmationArgs(args []string) ([]string, bool, error) {
+	positional := make([]string, 0, len(args))
+	yes := false
+	for _, arg := range args {
+		switch arg {
+		case "--yes":
+			yes = true
+		case "--":
+			// A boundary is optional because --yes is the only supported flag.
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return nil, false, fmt.Errorf("unknown flag %q", arg)
+			}
+			positional = append(positional, arg)
+		}
+	}
+	return positional, yes, nil
+}
+
+// flagsBeforePositionals lets the standard flag parser accept documented
+// git-style forms such as `pt new NAME --tui --access public`.
+func flagsBeforePositionals(args []string, valueFlags map[string]bool) ([]string, error) {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		name, _, hasValue := strings.Cut(arg, "=")
+		if valueFlags[name] && !hasValue {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag needs an argument: %s", name)
+			}
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return append(flags, positionals...), nil
+}
 func readSecret(in io.Reader) (string, error) {
 	if in == nil {
 		return "", errors.New("secret input is required")
 	}
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		value, err := term.ReadPassword(int(file.Fd()))
+	if file, ok := in.(*os.File); ok && xterm.IsTerminal(int(file.Fd())) {
+		value, err := xterm.ReadPassword(int(file.Fd()))
 		if err != nil {
 			return "", fmt.Errorf("read secret: %w", err)
 		}
@@ -531,13 +587,4 @@ func findProjectRoot() (string, error) {
 		}
 		dir = parent
 	}
-}
-func splitTokens(s string) []string {
-	var out []string
-	for _, item := range strings.Split(s, ",") {
-		if item = strings.TrimSpace(item); item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
 }

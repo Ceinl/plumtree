@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/cli/paired"
 	"github.com/Ceinl/plumtree/internal/cli/workflow"
+	"golang.org/x/term"
 )
 
 // DevRoot optionally points local project builds at a Plumtree checkout's SDK.
@@ -30,11 +34,25 @@ func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 			}
 			return workflow.NewAPI(connection)
 		},
-		Confirm: func(string) bool { return false },
+		Confirm: func(prompt string) bool { return interactiveConfirm(prompt, in, out) },
 	}
 	if err := runner.Run(args); err != nil {
 		fmt.Fprintln(errOut, terminalSafeText(err.Error()))
 		return 1
 	}
 	return 0
+}
+
+func interactiveConfirm(prompt string, in io.Reader, out io.Writer) bool {
+	file, ok := in.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return false
+	}
+	_, _ = fmt.Fprintf(out, "%s [y/N] ", prompt)
+	line, err := bufio.NewReader(io.LimitReader(in, 32)).ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }

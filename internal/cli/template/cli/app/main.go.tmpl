@@ -8,14 +8,14 @@ import (
 )
 
 func main() {
-	commands := cli.Root("{{.Name}} commands").WithCommand(
-		cli.New("hello", "write a greeting").WithHandler(func(_ cli.Context, args []string) (cli.Output, error) {
+	commands := cli.Root("write a greeting").WithArgs(cli.AnyArgs()).WithHandler(
+		func(_ cli.Context, args []string) (cli.Output, error) {
 			name := "world"
 			if len(args) > 0 {
 				name = args[0]
 			}
 			return cli.Value("Hello " + name), nil
-		}),
+		},
 	)
 	app.Run(&model{}, app.WithCommands(commands))
 }
