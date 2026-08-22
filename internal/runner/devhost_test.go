@@ -154,6 +154,17 @@ func TestTTYSinkFlushesLastRateLimitedFrame(t *testing.T) {
 	t.Fatal("rate-limited frame was not flushed")
 }
 
+func TestTTYSinkCloseFlushesBeforeTerminalCleanup(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewTTYSinkWriter(1, 1, 1, &buf)
+	sink.Present(abi.Frame{W: 1, H: 1, Cells: []abi.Cell{{Ch: 'A'}}})
+	sink.Present(abi.Frame{W: 1, H: 1, Cells: []abi.Cell{{Ch: 'B'}}})
+	sink.Close()
+	if got := buf.String(); !strings.Contains(got, "B") {
+		t.Fatalf("close did not flush the last frame: %q", got)
+	}
+}
+
 func TestWatchdogFiresAfterTimeout(t *testing.T) {
 	var fired atomic.Bool
 	wd := &watchdog{timeout: 30 * time.Millisecond, cancel: func() { fired.Store(true) }}

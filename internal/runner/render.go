@@ -119,6 +119,22 @@ func (s *TTYSink) Present(f abi.Frame) {
 	}
 }
 
+// Close flushes the last coalesced frame and stops its timer. Call it before
+// the host restores the terminal so no delayed paint can reach the normal
+// screen after cleanup.
+func (s *TTYSink) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	if s.dirty {
+		s.dirty = false
+		s.scr.Flush()
+	}
+}
+
 func fgSGR(c abi.RGB) string {
 	if c == (abi.RGB{}) {
 		return terminal.DefaultFg

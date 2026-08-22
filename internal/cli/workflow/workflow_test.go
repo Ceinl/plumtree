@@ -1,19 +1,263 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Ceinl/plumtree/internal/cli/paired"
 	"github.com/Ceinl/plumtree/internal/cli/scaffold"
+	"golang.org/x/crypto/ssh"
 )
+
+func TestNewAcceptsNameBeforeOrAfterFlags(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	var out bytes.Buffer
+	r := Runner{Out: &out}
+	if err := r.Run([]string{"new", "first", "--tui", "--access", "public"}); err != nil {
+		t.Fatalf("name before flags: %v", err)
+	}
+	if err := r.Run([]string{"new", "--cli", "--access", "restricted", "second"}); err != nil {
+		t.Fatalf("name after flags: %v", err)
+	}
+	for _, project := range []string{"first", "second"} {
+		if _, err := ReadManifest(filepath.Join(root, project)); err != nil {
+			t.Fatalf("read %s manifest: %v", project, err)
+		}
+	}
+}
+
+func TestDevPassesCLIArguments(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project, err := NewScaffold(root, "greeter", scaffold.CLI, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	var out bytes.Buffer
+	r := Runner{Out: &out, Workspace: repoRoot}
+	if err := r.Run([]string{"dev", "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Hello Alice") {
+		t.Fatalf("dev output = %q", out.String())
+	}
+}
+
+func TestDevHeadlessAcceptsExplicitRuntimeControls(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project, err := NewScaffold(root, "counter", scaffold.TUI, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	var out bytes.Buffer
+	r := Runner{Out: &out, Workspace: repoRoot}
+	if err := r.Run([]string{"dev", "--headless", "--script", "q", "--w", "18", "--h", "6", "--mem-pages", "256", "--frame-timeout", "1s", "--max-fps", "30"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "18x6") || !strings.Contains(got, "256 pages") || !strings.Contains(got, "1s") {
+		t.Fatalf("headless summary = %q", got)
+	}
+}
+
+func TestDevTUIRequiresRealTerminalOrExplicitAlternateMode(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project, err := NewScaffold(root, "counter", scaffold.TUI, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	r := Runner{In: strings.NewReader("q"), Workspace: repoRoot}
+	err = r.Run([]string{"dev"})
+	if err == nil || !strings.Contains(err.Error(), "--headless") || !strings.Contains(err.Error(), "--ssh") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project, err := NewScaffold(root, "greeter", scaffold.CLI, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out lockedBuffer
+	done := make(chan error, 1)
+	go func() {
+		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--addr", "127.0.0.1:0"})
+	}()
+
+	addressPattern := regexp.MustCompile(`127\.0\.0\.1:[0-9]+`)
+	deadline := time.Now().Add(30 * time.Second)
+	var address string
+	for time.Now().Before(deadline) {
+		address = addressPattern.FindString(out.String())
+		if address != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if address == "" {
+		t.Fatalf("SSH server did not become ready: %q", out.String())
+	}
+
+	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: "greeter", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := client.NewSession()
+	if err != nil {
+		client.Close()
+		t.Fatal(err)
+	}
+	result, err := session.Output("Alice")
+	client.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result), "Hello Alice") {
+		t.Fatalf("SSH CLI output = %q", result)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SSH server shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SSH server did not stop after cancellation")
+	}
+}
+
+func TestDevSSHRejectsNonLoopbackListener(t *testing.T) {
+	err := (Runner{}).Run([]string{"dev", "--ssh", "--addr", "0.0.0.0:2222"})
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(value []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(value)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+func TestDestructiveCommandsAcceptConfirmationOrYes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "secret", args: []string{"secret", "rm", "app", "KEY"}},
+		{name: "egress", args: []string{"egress", "rm", "app", "example.test"}},
+		{name: "access", args: []string{"access", "rm", "app", "key"}},
+	} {
+		t.Run(test.name+" interactive", func(t *testing.T) {
+			confirmed := false
+			r := Runner{StorePath: filepath.Join(t.TempDir(), "servers.json"), Confirm: func(string) bool {
+				confirmed = true
+				return true
+			}}
+			err := r.Run(test.args)
+			if !confirmed || errors.Is(err, ErrConfirm) {
+				t.Fatalf("confirmed=%t err=%v", confirmed, err)
+			}
+		})
+		t.Run(test.name+" yes", func(t *testing.T) {
+			r := Runner{StorePath: filepath.Join(t.TempDir(), "servers.json")}
+			args := append(append([]string(nil), test.args...), "--yes")
+			if err := r.Run(args); errors.Is(err, ErrConfirm) || (err != nil && strings.Contains(err.Error(), "usage:")) {
+				t.Fatalf("--yes was not accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfirmationRequiredExplainsNonInteractiveRecovery(t *testing.T) {
+	r := Runner{StorePath: filepath.Join(t.TempDir(), "servers.json")}
+	err := r.Run([]string{"secret", "rm", "app", "KEY"})
+	if !errors.Is(err, ErrConfirm) || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDeployAcceptsConfirmationOrYes(t *testing.T) {
+	t.Chdir(t.TempDir())
+	confirmed := false
+	r := Runner{Confirm: func(string) bool {
+		confirmed = true
+		return true
+	}}
+	if err := r.Run([]string{"deploy"}); !confirmed || errors.Is(err, ErrConfirm) {
+		t.Fatalf("confirmed=%t err=%v", confirmed, err)
+	}
+	if err := (Runner{}).Run([]string{"deploy", "--yes"}); errors.Is(err, ErrConfirm) {
+		t.Fatalf("--yes required another confirmation: %v", err)
+	}
+	if err := (Runner{}).Run([]string{"deploy"}); !errors.Is(err, ErrConfirm) || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("non-interactive error = %v", err)
+	}
+}
+
+func TestCommandHelpDescribesTheTestedDevContract(t *testing.T) {
+	var out bytes.Buffer
+	r := Runner{Out: &out}
+	if err := r.Run([]string{"dev", "--help"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"pt dev [flags] [--] [args...]", "--headless", "--ssh", "--mem-pages", "--frame-timeout", "--max-fps"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help does not contain %q: %s", want, out.String())
+		}
+	}
+}
 
 func TestStrictManifestAndExplicitScaffolds(t *testing.T) {
 	root := t.TempDir()

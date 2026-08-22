@@ -1,12 +1,13 @@
 // Package sshdev serves a Plumtree app over SSH for local development. It is a
 // thin, single-app stand-in for the production SSH gateway: every connection
 // that requests a shell gets a fresh wazero session (via runner) wired to the
-// SSH channel — keystrokes in, rendered frames out. It is exercised directly
-// by the retained local SSH harness, not exposed as a `pt dev` flag.
+// SSH channel — keystrokes in, rendered frames out. The `pt dev --ssh` command
+// binds it to a loopback address.
 //
 // Dev-only simplifications: anonymous auth (no key required), a stable local
-// dev host key, and one app per server. Real auth, `<owner>/<app>` routing, and
-// quotas belong to the hosted gateway and server phases.
+// dev host key, and one app per server. Callers must keep the listener on
+// loopback. Real auth, `<owner>/<app>` routing, and quotas belong to the hosted
+// gateway and server phases.
 package sshdev
 
 import (
@@ -242,6 +243,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 
 	var logs bytes.Buffer
 	err := s.Runner.Run(ctx, s.Wasm, s.Limits, caps, src, sink, &logs)
+	sink.Close()
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
 		// Clean exit or normal client disconnect — nothing to report.
