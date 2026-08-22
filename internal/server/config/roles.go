@@ -31,6 +31,11 @@ func NewRunnerRole(c Config) (RoleProjection, error) {
 	return newRole(RoleRunner, c, readinessFor(RoleRunner))
 }
 
+// NewRole validates one named role without opening its credential.
+func NewRole(c Config, name RoleName) (RoleProjection, error) {
+	return newRole(name, c, readinessFor(name))
+}
+
 func newRole(name RoleName, c Config, readiness []string) (RoleProjection, error) {
 	if err := c.Validate(); err != nil {
 		return RoleProjection{}, err

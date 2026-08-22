@@ -45,6 +45,19 @@ type Backend interface {
 	EgressAllowlist(appID string) []string
 }
 
+// IdentityAwareBackend resolves app access with the proved leaf identity. New
+// backends must implement this interface; the legacy method remains for small
+// test backends and older split-role clients during the clean cutover.
+type IdentityAwareBackend interface {
+	ResolveRunnableFor(handle string, identity runner.Identity) (Runnable, error)
+}
+
+// AccountedBackend records the immutable artifact and app-relative identity
+// that actually entered a hosted session.
+type AccountedBackend interface {
+	StartAccountedSession(appID, deployID, artifactDigest, identitySummary string) (string, error)
+}
+
 // SuspensionSource is implemented by backends that can stream administrative
 // suspension events to a gateway. Handle must not return until every matching
 // live session has stopped; its return is the gateway's acknowledgement.
@@ -65,10 +78,11 @@ type Suspension struct {
 // Runnable is a resolved app ready to serve a session. WASM is the compiled
 // guest module for the app's active deploy.
 type Runnable struct {
-	AppID    string
-	AppName  string
-	OwnerID  string
-	DeployID string
+	AppID          string
+	AppName        string
+	OwnerID        string
+	DeployID       string
+	ArtifactDigest string
 	// AppType is "tui" (default) or "cli"; it selects the runner entry point.
 	AppType string
 	WASM    []byte

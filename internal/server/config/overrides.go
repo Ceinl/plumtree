@@ -17,7 +17,8 @@ var persistableFields = []string{
 	"exposure.gateway.enabled", "exposure.gateway.address", "resources.autoCapacity",
 	"roles.control", "roles.gateway", "roles.runner", "secrets.databaseKeyFile",
 	"secrets.gatewayTokenFile", "secrets.runnerTokenFile", "runtime.production",
-	"runtime.acknowledgeUnlimitedLimits", "runtime.shutdownTimeout",
+	"runtime.acknowledgeUnlimitedLimits", "runtime.shutdownTimeout", "runtime.runnerEndpoint",
+	"runtime.runnerWorker", "runtime.runnerScratchRoot", "runtime.workerUIDBase",
 }
 
 // FieldNames returns the fixed schema paths accepted by set, unset, flags, and
