@@ -66,8 +66,26 @@ type Server struct {
 	kvMu     sync.Mutex
 	kvStores map[string]runner.Store // app ID -> shared store
 
-	busMu   sync.Mutex
-	busById map[string]*runner.MemBus // app ID -> shared pub/sub bus
+	busMu     sync.Mutex
+	busById   map[string]*runner.MemBus // app ID -> shared pub/sub bus
+	startOnce sync.Once
+	startErr  error
+}
+
+// HandleSession runs one already-authenticated SSH session channel. The root
+// server uses this seam to multiplex leaf shell/exec with its private control
+// and pairing subsystems on one public SSH listener.
+func (s *Server) HandleSession(ctx context.Context, ch ssh.Channel, requests <-chan *ssh.Request, handle string, identity runner.Identity) {
+	if s.Runner == nil {
+		s.Runner = runner.New()
+	}
+	if s.sessions == nil {
+		s.sessions = newSessionRegistry()
+	}
+	if s.slots == nil && s.MaxConcurrentSessions > 0 {
+		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
+	}
+	s.handleSession(ctx, ch, requests, handle, identity)
 }
 
 const (
@@ -79,35 +97,10 @@ const (
 )
 
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
-	if s.Backend == nil {
-		return errors.New("gateway: backend is required")
+	if err := s.Start(ctx); err != nil {
+		return err
 	}
-	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
-		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
-	}
-	if s.RunnerEndpoint != "" && s.RunnerToken == "" {
-		return errors.New("gateway: runner token is required with runner endpoint")
-	}
-	if s.Runner == nil {
-		s.Runner = runner.New()
-	}
-	if s.sessions == nil {
-		s.sessions = newSessionRegistry()
-	}
-	if source, ok := s.Backend.(SuspensionSource); ok {
-		if err := source.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
-			return err
-		}
-	}
-	if s.slots == nil && s.MaxConcurrentSessions > 0 {
-		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
-	}
-	if s.admission == nil {
-		s.admission = newConnectionAdmission(
-			effectiveLimit(s.MaxConnections, DefaultMaxConnections),
-			effectiveLimit(s.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
-		)
-	}
+
 	// A key is optional. Public-key auth is attempted first by normal SSH
 	// clients; clients without a usable key fall through to a prompt-free
 	// keyboard-interactive method that represents an anonymous connection.
@@ -156,6 +149,46 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			s.handleConn(ctx, conn, cfg)
 		}()
 	}
+}
+
+// Start prepares runner capacity and the suspension kill-switch before a
+// listener admits leaf sessions. It is safe to call more than once.
+func (s *Server) Start(ctx context.Context) error {
+	s.startOnce.Do(func() { s.startErr = s.start(ctx) })
+	return s.startErr
+}
+
+func (s *Server) start(ctx context.Context) error {
+	if s.Backend == nil {
+		return errors.New("gateway: backend is required")
+	}
+	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
+		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
+	}
+	if s.RunnerEndpoint != "" && s.RunnerToken == "" {
+		return errors.New("gateway: runner token is required with runner endpoint")
+	}
+	if s.Runner == nil {
+		s.Runner = runner.New()
+	}
+	if s.sessions == nil {
+		s.sessions = newSessionRegistry()
+	}
+	if source, ok := s.Backend.(SuspensionSource); ok {
+		if err := source.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
+			return err
+		}
+	}
+	if s.slots == nil && s.MaxConcurrentSessions > 0 {
+		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
+	}
+	if s.admission == nil {
+		s.admission = newConnectionAdmission(
+			effectiveLimit(s.MaxConnections, DefaultMaxConnections),
+			effectiveLimit(s.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
+		)
+	}
+	return nil
 }
 
 func optionalAuthConfig() *ssh.ServerConfig {

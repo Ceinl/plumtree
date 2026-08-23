@@ -1,5 +1,5 @@
-// Package v1 implements the authenticated control and artifact API. Callers
-// mount Handler at the private control transport boundary.
+// Package v1 implements the authenticated control and artifact API mounted on
+// the private SSH control transport.
 package v1
 
 import (

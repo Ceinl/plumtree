@@ -21,7 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ceinl/plumtree/internal/gateway"
 	"github.com/Ceinl/plumtree/internal/httpapi/v1"
+	"github.com/Ceinl/plumtree/internal/runner"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
 	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
 	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
@@ -66,16 +68,36 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		_, _ = fmt.Fprintf(errOut, "warning: %s: %s\n", diagnostic.Code, diagnostic.Message)
 	}
 	projection, err := serverconfig.MaterializeRole(resolved.Config, serverconfig.RoleControl)
+	if resolved.Config.Roles.Runner && !resolved.Config.Roles.Control && !resolved.Config.Roles.Gateway {
+		projection, err = serverconfig.MaterializeRole(resolved.Config, serverconfig.RoleRunner)
+		if err != nil {
+			return fmt.Errorf("clean server: runner configuration: %w", err)
+		}
+		component := &runnerComponent{projection: projection, out: out}
+		return runLifecycle(ctx, resolved.Config, component)
+	}
 	if err != nil {
 		return fmt.Errorf("clean server: control configuration: %w", err)
 	}
-	component := &controlComponent{resolved: resolved, projection: projection, out: out}
+	var gatewayToken []byte
+	if resolved.Config.Roles.Gateway {
+		gatewayProjection, gatewayErr := serverconfig.MaterializeRole(resolved.Config, serverconfig.RoleGateway)
+		if gatewayErr != nil {
+			return fmt.Errorf("clean server: gateway configuration: %w", gatewayErr)
+		}
+		gatewayToken = gatewayProjection.Secret()
+	}
+	component := &controlComponent{resolved: resolved, projection: projection, gatewayToken: gatewayToken, out: out}
+	return runLifecycle(ctx, resolved.Config, component)
+}
+
+func runLifecycle(ctx context.Context, cfg serverconfig.Config, component serverconfig.Component) error {
 	lifecycle := serverconfig.NewLifecycle(component)
-	shutdownTimeout, parseErr := time.ParseDuration(resolved.Config.Runtime.ShutdownTimeout)
+	shutdownTimeout, parseErr := time.ParseDuration(cfg.Runtime.ShutdownTimeout)
 	if parseErr != nil || shutdownTimeout <= 0 {
 		shutdownTimeout, _ = time.ParseDuration(serverconfig.Default().Runtime.ShutdownTimeout)
 	}
-	err = lifecycle.RunWithSignals(ctx, shutdownTimeout)
+	err := lifecycle.RunWithSignals(ctx, shutdownTimeout)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -162,8 +184,18 @@ func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, 
 	if err := loaded.Config.ValidateProduction(); err != nil {
 		return ResolvedServe{}, fmt.Errorf("clean server: production validation: %w", err)
 	}
-	if _, err := serverconfig.NewControlRole(loaded.Config); err != nil {
-		return ResolvedServe{}, fmt.Errorf("clean server: control role: %w", err)
+	if !loaded.Config.Roles.Control && !loaded.Config.Roles.Gateway && !loaded.Config.Roles.Runner {
+		return ResolvedServe{}, errors.New("clean server: at least one role is required")
+	}
+	for _, role := range []struct {
+		name    serverconfig.RoleName
+		enabled bool
+	}{{serverconfig.RoleControl, loaded.Config.Roles.Control}, {serverconfig.RoleGateway, loaded.Config.Roles.Gateway}, {serverconfig.RoleRunner, loaded.Config.Roles.Runner}} {
+		if role.enabled {
+			if _, err := serverconfig.NewRole(loaded.Config, role.name); err != nil {
+				return ResolvedServe{}, fmt.Errorf("clean server: %s role: %w", role.name, err)
+			}
+		}
 	}
 	return ResolvedServe{Loaded: loaded, ConfigPath: configPath, ProductVersion: productVersion, ServerID: serverID}, nil
 }
@@ -270,18 +302,21 @@ func firstNonEmpty(values ...string) string {
 type controlComponent struct {
 	resolved      ResolvedServe
 	projection    serverconfig.RoleProjection
+	gatewayToken  []byte
 	out           io.Writer
 	repo          *sqlite.Repository
 	listener      net.Listener
 	sshConfig     *ssh.ServerConfig
 	api           *v1.Server
 	identities    *identityservice.Service
+	leaf          *gateway.Server
 	identity      sqlite.ServerIdentity
 	errors        chan error
 	wg            sync.WaitGroup
 	connectionsMu sync.Mutex
 	connections   map[net.Conn]struct{}
 	admission     *connectionAdmission
+	ready         func(string)
 }
 
 func (c *controlComponent) Start(ctx context.Context) error {
@@ -313,6 +348,11 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: API: %w", err)
 	}
+	c.leaf = newLeafServer(repo, c.resolved.Config, c.gatewayToken)
+	if err := c.leaf.Start(ctx); err != nil {
+		_ = repo.Close()
+		return fmt.Errorf("clean server: leaf gateway: %w", err)
+	}
 	var listenConfig net.ListenConfig
 	c.listener, err = listenConfig.Listen(ctx, "tcp", c.resolved.Config.Exposure.SSH.Address)
 	if err != nil {
@@ -333,6 +373,9 @@ func (c *controlComponent) Ready(context.Context) error {
 		return errors.New("clean server: control role is not ready")
 	}
 	_, _ = fmt.Fprintf(c.out, "plumtree server %s ready on %s\n", c.identity.ID, c.listener.Addr())
+	if c.ready != nil {
+		c.ready(c.listener.Addr().String())
+	}
 	return nil
 }
 
@@ -387,7 +430,7 @@ func (c *controlComponent) accept() {
 				delete(c.connections, conn)
 				c.connectionsMu.Unlock()
 			}()
-			serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.identity, c.resolved.ProductVersion, c.resolved.Config)
+			serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.leaf, c.identity, c.resolved.ProductVersion, c.resolved.Config)
 		}()
 	}
 }
@@ -420,12 +463,15 @@ func authenticatedSSHConfig(signer ssh.Signer) *ssh.ServerConfig {
 			permissions.Extensions["plumtree-public-key"] = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 			return permissions, nil
 		},
+		KeyboardInteractiveCallback: func(_ ssh.ConnMetadata, _ ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+			return &ssh.Permissions{Extensions: map[string]string{"plumtree-auth-kind": "anonymous"}}, nil
+		},
 	}
 	configuration.AddHostKey(signer)
 	return configuration
 }
 
-func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config) {
+func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, leaf *gateway.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config) {
 	defer raw.Close()
 	idleTimeout, _ := time.ParseDuration(cfg.Limits.IdleTimeout)
 	connection := newActivityConn(raw, idleTimeout)
@@ -446,13 +492,17 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 		publicKey = serverConn.Permissions.Extensions["plumtree-public-key"]
 	}
 	var principal v1.Principal
+	leafIdentity := runner.Identity{User: "anonymous:" + base64.RawStdEncoding.EncodeToString(serverConn.SessionID()), Kind: runner.IdentityAnonymous}
 	if fingerprint != "" {
+		leafIdentity = runner.Identity{User: fingerprint, Kind: runner.IdentitySSHKey}
 		device, lookupErr := repo.DeviceByFingerprint(context.Background(), fingerprint)
 		if lookupErr != nil && !errors.Is(lookupErr, sqlite.ErrNotFound) {
 			return
 		}
 		if lookupErr == nil {
 			principal = v1.Principal{ServerID: identity.ID, AuthorID: device.AuthorID, DeviceID: device.ID, Fingerprint: device.Fingerprint}
+			leafIdentity.Authenticated = true
+			leafIdentity.OwnerID = device.AuthorID
 		}
 	}
 	for request := range channels {
@@ -464,24 +514,31 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 		if err != nil {
 			continue
 		}
-		go serveSession(channel, channelRequests, identities, api, principal, identity, productVersion, base64.RawStdEncoding.EncodeToString(serverConn.SessionID()), publicKey, fingerprint)
+		go serveSession(channel, channelRequests, serverConn.User(), leafIdentity, identities, api, leaf, principal, identity, productVersion, base64.RawStdEncoding.EncodeToString(serverConn.SessionID()), publicKey, fingerprint)
 	}
 }
 
-func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, identities *identityservice.Service, api *v1.Server, principal v1.Principal, identity sqlite.ServerIdentity, productVersion, sessionID, publicKey, fingerprint string) {
+func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, handle string, leafIdentity runner.Identity, identities *identityservice.Service, api *v1.Server, leaf *gateway.Server, principal v1.Principal, identity sqlite.ServerIdentity, productVersion, sessionID, publicKey, fingerprint string) {
 	defer channel.Close()
 	for request := range requests {
 		if request.Type != "subsystem" {
-			_ = request.Reply(false, nil)
-			continue
+			prefixed := make(chan *ssh.Request)
+			go func(first *ssh.Request) {
+				defer close(prefixed)
+				prefixed <- first
+				for next := range requests {
+					prefixed <- next
+				}
+			}(request)
+			leaf.HandleSession(context.Background(), channel, prefixed, handle, leafIdentity)
+			return
 		}
 		var subsystemRequest struct{ Name string }
 		if err := ssh.Unmarshal(request.Payload, &subsystemRequest); err != nil {
 			_ = request.Reply(false, nil)
 			continue
 		}
-		subsystem := subsystemRequest.Name
-		switch subsystem {
+		switch subsystemRequest.Name {
 		case transport.ControlSubsystem:
 			if principal.DeviceID == "" {
 				_ = request.Reply(false, nil)
@@ -509,6 +566,21 @@ func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, identities 
 	}
 }
 
+func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken []byte) *gateway.Server {
+	limits := runner.Limits{
+		MemoryPages:     uint32(cfg.Limits.MemoryPages),
+		MaxEventsPerSec: cfg.Limits.MaxEventsPerSec,
+		MaxFramesPerSec: cfg.Limits.MaxFramesPerSec,
+	}
+	limits.SessionTimeout, _ = time.ParseDuration(cfg.Limits.SessionTimeout)
+	limits.FrameTimeout, _ = time.ParseDuration(cfg.Limits.FrameTimeout)
+	return &gateway.Server{
+		Backend: gateway.NewSQLiteBackend(repo), Runner: runner.New(), Limits: limits,
+		MaxFPS: cfg.Limits.MaxFPS, StateDir: cfg.Storage.KVRoot, MaxConcurrentSessions: cfg.Limits.MaxSessions,
+		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)), AllowHostCommands: false,
+	}
+}
+
 func newIdentityService(repo *sqlite.Repository, sshAddress string) (*identityservice.Service, error) {
 	cfg := serverconfig.Default()
 	cfg.Roles.Control = true
@@ -516,57 +588,56 @@ func newIdentityService(repo *sqlite.Repository, sshAddress string) (*identityse
 	return identityservice.New(repo, cfg)
 }
 
+func httpHandlerWithPrincipal(handler http.Handler, principal v1.Principal) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		handler.ServeHTTP(writer, request.WithContext(v1.WithPrincipal(request.Context(), principal)))
+	})
+}
+
 type ServeConfig struct {
 	Database, SSHAddress, HostKeyPath, ServerID, ProductVersion string
 	Ready                                                       func(string)
 }
 
-// Serve runs the selected native SSH and SQLite assembly until ctx ends. It is
-// the programmatic entry used by tests and embedding callers; the process path
-// goes through Execute and typed configuration files.
+// Serve keeps the programmatic native server seam used by qualification tests.
+// Normal process startup goes through Execute and the typed configuration file.
 func Serve(ctx context.Context, cfg ServeConfig) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if strings.TrimSpace(cfg.ProductVersion) == "" {
-		return errors.New("clean server: product version is required")
-	}
-	config := serverconfig.Default()
-	config.Roles.Control = true
-	config.Storage.DatabasePath = cfg.Database
-	config.Storage.SSHIdentity = cfg.HostKeyPath
-	config.Exposure.SSH = serverconfig.ExposureGate{Enabled: true, Address: cfg.SSHAddress}
-	projection, err := serverconfig.MaterializeRole(config, serverconfig.RoleControl)
+	configuration := serverconfig.Default()
+	configuration.Roles.Control = true
+	configuration.Storage.DatabasePath = cfg.Database
+	configuration.Storage.SSHIdentity = cfg.HostKeyPath
+	configuration.Exposure.SSH = serverconfig.ExposureGate{Enabled: true, Address: cfg.SSHAddress}
+	projection, err := serverconfig.MaterializeRole(configuration, serverconfig.RoleControl)
 	if err != nil {
-		return fmt.Errorf("clean server: control configuration: %w", err)
+		return err
 	}
-	resolved := ResolvedServe{Loaded: serverconfig.Loaded{Config: config}, ProductVersion: cfg.ProductVersion, ServerID: cfg.ServerID}
-	component := &controlComponent{resolved: resolved, projection: projection, out: io.Discard}
+	component := &controlComponent{
+		resolved:   ResolvedServe{Loaded: serverconfig.Loaded{Config: configuration}, ProductVersion: cfg.ProductVersion, ServerID: cfg.ServerID},
+		projection: projection,
+		out:        io.Discard,
+		ready:      cfg.Ready,
+	}
 	if err := component.Start(ctx); err != nil {
 		return err
 	}
-	if cfg.Ready != nil {
-		cfg.Ready(component.listener.Addr().String())
+	if err := component.Ready(ctx); err != nil {
+		_ = component.Stop(context.Background())
+		return err
 	}
-	err = func() error {
-		select {
-		case <-ctx.Done():
-			return nil
-		case acceptErr := <-component.Errors():
-			return acceptErr
+	select {
+	case <-ctx.Done():
+	case err := <-component.Errors():
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			return err
 		}
-	}()
+	}
 	component.closeConnections()
-	stopCtx, cancelStop := context.WithTimeout(context.Background(), time.Second)
-	defer cancelStop()
-	_ = component.Stop(stopCtx)
-	return err
-}
-
-func httpHandlerWithPrincipal(handler http.Handler, principal v1.Principal) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		handler.ServeHTTP(writer, request.WithContext(v1.WithPrincipal(request.Context(), principal)))
-	})
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return component.Stop(stopCtx)
 }
 
 func ensureIdentity(ctx context.Context, repo *sqlite.Repository, requestedID string, signer ssh.Signer, fingerprint string) (sqlite.ServerIdentity, error) {

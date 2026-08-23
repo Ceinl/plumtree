@@ -1,8 +1,8 @@
 # Deploying Plumtree
 
-Compose runs the root-owned `plumtree` binary as one service. It persists the
-SQLite database and SSH host key in one volume and publishes only the SSH
-control transport; there is no public HTTP listener or shared bearer token.
+Compose runs a combined control/gateway service and a networkless runner
+service. The first service persists SQLite, KV, and the SSH host key. The
+runner receives no database, KV, SSH, or network access. Only SSH is published.
 
 ## Quick start
 
@@ -32,6 +32,8 @@ plumtree serve --config /etc/plumtree/config.json \
   -storage-database-path /data/plumtree.db \
   -storage-ssh-identity /data/plumtree_host_key \
   -exposure-ssh-address :2222 \
+  -runtime-runner-endpoint unix:///run/plumtree/runner.sock \
+  -secrets-gateway-token-file /run/secrets/runner-token \
   -product-version "$PLUMTREE_PRODUCT_VERSION"
 ```
 

@@ -18,5 +18,7 @@ func ResolvePaths(c Config, configPath string) Config {
 	c.Secrets.DatabaseKeyFile = resolve(c.Secrets.DatabaseKeyFile)
 	c.Secrets.GatewayTokenFile = resolve(c.Secrets.GatewayTokenFile)
 	c.Secrets.RunnerTokenFile = resolve(c.Secrets.RunnerTokenFile)
+	c.Runtime.RunnerWorker = resolve(c.Runtime.RunnerWorker)
+	c.Runtime.RunnerScratchRoot = resolve(c.Runtime.RunnerScratchRoot)
 	return c
 }
