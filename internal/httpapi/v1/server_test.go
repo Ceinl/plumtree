@@ -113,8 +113,8 @@ func TestExactMultipartDeploymentDerivesArtifactAndProblems(t *testing.T) {
 		t.Fatalf("deploy status=%d body=%s", rec.Code, rec.Body)
 	}
 	var response struct {
-		App      struct{ ID, ActiveDeployID string } `json:"app"`
-		Deploy   struct{ ID string }                 `json:"deploy"`
+		App      struct{ ID, Handle, ActiveDeployID string } `json:"app"`
+		Deploy   struct{ ID string }                         `json:"deploy"`
 		Artifact struct {
 			Digest     string
 			SizeBytes  int64
@@ -124,7 +124,7 @@ func TestExactMultipartDeploymentDerivesArtifactAndProblems(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.App.ID == "" || response.Deploy.ID == "" || response.App.ActiveDeployID != response.Deploy.ID || response.Artifact.Digest != digestBytes(wasm) || response.Artifact.SizeBytes != int64(len(wasm)) || response.Artifact.ABIVersion != abi.Version {
+	if response.App.ID == "" || response.App.Handle != "counter" || response.Deploy.ID == "" || response.App.ActiveDeployID != response.Deploy.ID || response.Artifact.Digest != digestBytes(wasm) || response.Artifact.SizeBytes != int64(len(wasm)) || response.Artifact.ABIVersion != abi.Version {
 		t.Fatalf("response=%s", rec.Body)
 	}
 	if _, err := repo.ResolveRunnable(context.Background(), principal.AuthorID, "counter"); err != nil {

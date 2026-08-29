@@ -225,7 +225,7 @@ func (r Runner) deployProject(args []string) error {
 	if err != nil {
 		return err
 	}
-	api, _, err := r.openTarget(context.Background(), *server)
+	api, record, err := r.openTarget(context.Background(), *server)
 	if err != nil {
 		return err
 	}
@@ -248,7 +248,11 @@ func (r Runner) deployProject(args []string) error {
 	if *jsonOut {
 		return writeStable(out, deployed)
 	}
-	_, _ = fmt.Fprintf(out, "Deployed %s (%s)\n", manifest.Name, manifest.Access)
+	command, err := SSHInstruction(record, manifest.Name)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "Deployed %s (%s)\nConnect: %s\n", manifest.Name, manifest.Access, command)
 	return nil
 }
 
@@ -486,7 +490,7 @@ func (r Runner) audit(args []string) error {
 
 func (r Runner) ssh(args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: pt ssh APP_HANDLE")
+		return errors.New("usage: pt ssh APP")
 	}
 	store, err := paired.Load(r.StorePath)
 	if err != nil {

@@ -6,9 +6,9 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
-// schemaStatements is the clean-break v1 state schema. It is deliberately
+// schemaStatements is the clean-break state schema. It is deliberately
 // kept as ordered statements so initialization can roll back as one unit and
 // tests can inspect the exact table/index/trigger inventory.
 var schemaStatements = []string{
@@ -106,6 +106,7 @@ var schemaStatements = []string{
   UNIQUE (author_id, name),
   UNIQUE (id, author_id)
 ) STRICT`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS apps_name_unique_idx ON apps(name)`,
 	`CREATE TABLE IF NOT EXISTS artifact_blobs (
   digest TEXT PRIMARY KEY,
   size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
@@ -250,7 +251,7 @@ var schemaStatements = []string{
  ON audit_events(scope_author_id, occurred_at_ns DESC)`,
 	`CREATE INDEX IF NOT EXISTS audit_events_expiry_idx
  ON audit_events(occurred_at_ns)`,
-	`PRAGMA user_version = 1`,
+	`PRAGMA user_version = 2`,
 }
 
 // EnsureSchema creates the selected repository schema.

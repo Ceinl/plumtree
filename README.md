@@ -11,7 +11,7 @@ own servers, and streams the rendered terminal to the user.
 
 ```
 # run any deployed app — nothing to install but ssh
-ssh <owner>/<app>@plumtree.app
+ssh <app>@plumtree.app
 
 # ship your own
 plumtree bootstrap -handle alice -device laptop
@@ -33,8 +33,12 @@ the outside world through typed operation packages.
    WASM and runs it locally in [wazero](https://wazero.io) over a real PTY.
 2. **Deploy** — `pt build` compiles the app locally to WASM and the clean API
    stores the typed artifact and metadata.
-3. **Run** — `ssh <author>/<app>@<host>` starts the active deployment. A shell
+3. **Run** — `ssh <app>@<host>` starts the active deployment. A shell
    runs the TUI path; SSH exec passes bounded arguments to the finite CLI path.
+
+App names are unique on one server. Author and device ownership stays internal
+to deployment and management, so it does not become part of the public SSH
+address.
 
 The connecting user runs **nothing locally** — only `ssh` and a terminal. The
 app's code never reaches their machine, so a malicious app can't touch their
@@ -114,10 +118,10 @@ something larger than a single-feature fixture:
 
 | Example | SDK capabilities | Try it |
 |---------|------------------|--------|
-| [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh <owner>/chat@plumtree.app` |
-| [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh <owner>/ascii-saver@plumtree.app` |
-| [`tic-tac-toe`](examples/tic-tac-toe) | mouse input + leased player seats + KV/CAS + live pub/sub | `ssh <owner>/tic-tac-toe@plumtree.app` |
-| [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + clean CLI | `ssh <owner>/agentboard@plumtree.app` |
+| [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh chat@plumtree.app` |
+| [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh ascii-saver@plumtree.app` |
+| [`tic-tac-toe`](examples/tic-tac-toe) | mouse input + leased player seats + KV/CAS + live pub/sub | `ssh tic-tac-toe@plumtree.app` |
+| [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + clean CLI | `ssh agentboard@plumtree.app` |
 
 The chat remembers display names only for stable SSH-key identities; anonymous
 session IDs are intentionally ephemeral. Tic-tac-toe gives its first two live
@@ -247,8 +251,8 @@ existing terminal apps.
 ## Glossary
 
 - **Plumtree / pt** — the platform and its author CLI.
-- **App** — an SDK-written Go terminal program, namespaced `<owner>/<app>`,
-  compiled to WASM.
+- **App** — an SDK-written Go terminal program with a server-global public
+  name, internal author ownership, and a WASM deployment.
 - **ctx** — the capability object (host functions) handed to an app: kv, pubsub,
   auth, env, fetch, io.
 - **Sandbox** — the wazero WASM instance an app runs in, server-side.

@@ -29,6 +29,24 @@ func registerTestAuthor(t *testing.T, r *Repository) (Author, Device) {
 	return a, d
 }
 
+func TestAppNamesAreServerGlobal(t *testing.T) {
+	r := newTestRepository(t)
+	first, _ := registerTestAuthor(t, r)
+	second, _, err := r.RegisterAuthor(context.Background(), RegistrationInput{
+		AuthorID: "author-2", Handle: "bob", DeviceID: "device-2", DeviceName: "desktop",
+		PublicKey: "ssh-ed25519-key-2", Fingerprint: "fingerprint-2", RecoverySalt: []byte("salt"), RecoveryVerifier: []byte("verifier"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateApp(context.Background(), AppInput{ID: "app-1", AuthorID: first.ID, Name: "demo", Kind: "tui", AccessMode: "public"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateApp(context.Background(), AppInput{ID: "app-2", AuthorID: second.ID, Name: "demo", Kind: "tui", AccessMode: "public"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate public app name error = %v, want ErrConflict", err)
+	}
+}
+
 func TestRepositorySchemaAndAtomicJourney(t *testing.T) {
 	r := newTestRepository(t)
 	a, d := registerTestAuthor(t, r)

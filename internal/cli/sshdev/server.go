@@ -6,7 +6,7 @@
 //
 // Dev-only simplifications: anonymous auth (no key required), a stable local
 // dev host key, and one app per server. Callers must keep the listener on
-// loopback. Real auth, `<owner>/<app>` routing, and quotas belong to the hosted
+// loopback. Real auth, app-handle routing, and quotas belong to the hosted
 // gateway and server phases.
 package sshdev
 

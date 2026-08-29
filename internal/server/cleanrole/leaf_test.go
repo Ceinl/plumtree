@@ -34,7 +34,7 @@ func TestPublicLeafExecReturnsGuestStatusAndRecordsSession(t *testing.T) {
 	go func() {
 		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-leaf", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
 	}()
-	client := dialLeaf(t, <-ready, "alice/tool", nil)
+	client := dialLeaf(t, <-ready, "tool", nil)
 	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
@@ -79,12 +79,13 @@ func TestLeafAccessMatrixUsesProvedAppRelativeKeys(t *testing.T) {
 		signer       ssh.Signer
 		allowed      bool
 	}{
-		{"public anonymous", "alice/public-tool", nil, true},
-		{"public unknown key", "alice/public-tool", unknown, true},
-		{"restricted owner", "alice/private-tool", owner, true},
-		{"restricted access key", "alice/private-tool", access, true},
-		{"restricted unknown key", "alice/private-tool", unknown, false},
-		{"restricted anonymous", "alice/private-tool", nil, false},
+		{"public anonymous", "public-tool", nil, true},
+		{"public unknown key", "public-tool", unknown, true},
+		{"qualified public compatibility", "alice/public-tool", nil, true},
+		{"restricted owner", "private-tool", owner, true},
+		{"restricted access key", "private-tool", access, true},
+		{"restricted unknown key", "private-tool", unknown, false},
+		{"restricted anonymous", "private-tool", nil, false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -122,7 +123,7 @@ func TestPublicLeafShellRunsTUIAndHandlesDisconnect(t *testing.T) {
 	go func() {
 		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-tui", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
 	}()
-	client := dialLeaf(t, <-ready, "alice/counter", nil)
+	client := dialLeaf(t, <-ready, "counter", nil)
 	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {

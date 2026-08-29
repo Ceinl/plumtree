@@ -366,6 +366,10 @@ func TestSSHInstructionRejectsTerminalInjection(t *testing.T) {
 	if _, err := SSHInstruction(testServerRecord(), "owner/app\nmalicious"); err == nil {
 		t.Fatal("unsafe handle accepted")
 	}
+	command, err := SSHInstruction(testServerRecord(), "counter")
+	if err != nil || !strings.Contains(command, " counter@") {
+		t.Fatalf("bare app command=%q err=%v", command, err)
+	}
 }
 
 func TestPairedServerCommandsListSwitchRenameAndForget(t *testing.T) {

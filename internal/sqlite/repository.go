@@ -313,18 +313,32 @@ type Runnable struct {
 	WASM         []byte
 }
 
-// ResolveLeafRunnable resolves an author/app SSH handle and applies the app's
-// public or restricted key policy before returning artifact bytes.
-func (r *Repository) ResolveLeafRunnable(ctx context.Context, authorHandle, appName, fingerprint, identityAuthorID string) (Runnable, error) {
-	if err := validateHandle(authorHandle); err != nil {
-		return Runnable{}, err
+// ResolveLeafRunnable resolves the server-global app SSH handle and applies
+// its public or restricted key policy before returning artifact bytes. The
+// former author/app form remains a compatibility path, but authors are not
+// part of the public app address.
+func (r *Repository) ResolveLeafRunnable(ctx context.Context, handle, fingerprint, identityAuthorID string) (Runnable, error) {
+	authorHandle, appName, qualified := strings.Cut(handle, "/")
+	if !qualified {
+		appName = authorHandle
+		authorHandle = ""
 	}
-	if err := validateID(appName); err != nil || appName == "" {
+	if err := validateID(appName); err != nil || appName == "" || strings.ContainsAny(appName, "/\\") {
 		return Runnable{}, fmt.Errorf("%w: app name", ErrInvalid)
 	}
-	var authorID string
-	var authorSuspended int
-	err := r.db.QueryRowContext(ctx, `SELECT id,suspended FROM authors WHERE handle=?`, authorHandle).Scan(&authorID, &authorSuspended)
+	var appID, authorID, accessMode string
+	var appSuspended, authorSuspended int
+	query := `SELECT a.id,a.author_id,a.access_mode,a.suspended,au.suspended
+FROM apps a JOIN authors au ON au.id=a.author_id WHERE a.name=?`
+	args := []any{appName}
+	if qualified {
+		if err := validateHandle(authorHandle); err != nil {
+			return Runnable{}, err
+		}
+		query += ` AND au.handle=?`
+		args = append(args, authorHandle)
+	}
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(&appID, &authorID, &accessMode, &appSuspended, &authorSuspended)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Runnable{}, ErrNotFound
 	}
@@ -333,15 +347,6 @@ func (r *Repository) ResolveLeafRunnable(ctx context.Context, authorHandle, appN
 	}
 	if authorSuspended != 0 {
 		return Runnable{}, ErrSuspended
-	}
-	var appID, accessMode string
-	var appSuspended int
-	err = r.db.QueryRowContext(ctx, `SELECT id,access_mode,suspended FROM apps WHERE author_id=? AND name=?`, authorID, appName).Scan(&appID, &accessMode, &appSuspended)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Runnable{}, ErrNotFound
-	}
-	if err != nil {
-		return Runnable{}, storageError(err)
 	}
 	if appSuspended != 0 {
 		return Runnable{}, ErrSuspended

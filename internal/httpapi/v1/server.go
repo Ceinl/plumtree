@@ -482,17 +482,12 @@ func (s *Server) handleDeployment(w http.ResponseWriter, r *http.Request, p Prin
 		s.problemForError(w, err)
 		return
 	}
-	author, err := s.repo.Author(r.Context(), p.AuthorID)
-	if err != nil {
-		s.problemForError(w, err)
-		return
-	}
 	status := http.StatusCreated
 	if previous != "" {
 		status = http.StatusOK
 	}
 	s.writeJSON(w, status, map[string]any{"apiVersion": APIVersion,
-		"app":      map[string]any{"id": result.App.ID, "name": result.App.Name, "handle": author.Handle + "/" + result.App.Name, "activeDeployId": result.Deployment.ID},
+		"app":      map[string]any{"id": result.App.ID, "name": result.App.Name, "handle": result.App.Name, "activeDeployId": result.Deployment.ID},
 		"deploy":   map[string]any{"id": result.Deployment.ID, "createdAt": result.Deployment.CreatedAt},
 		"artifact": result.Artifact})
 }

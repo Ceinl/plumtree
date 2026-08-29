@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"sync"
 
 	"github.com/Ceinl/plumtree/internal/runner"
@@ -64,15 +63,11 @@ func (b *SQLiteBackend) ResolveRunnable(handle string) (Runnable, error) {
 }
 
 func (b *SQLiteBackend) ResolveRunnableFor(handle string, identity runner.Identity) (Runnable, error) {
-	author, app, ok := strings.Cut(handle, "/")
-	if !ok || author == "" || app == "" || strings.Contains(app, "/") {
-		return Runnable{}, sqlite.ErrNotFound
-	}
 	fingerprint := ""
 	if identity.Kind == runner.IdentitySSHKey {
 		fingerprint = identity.User
 	}
-	resolved, err := b.Repository.ResolveLeafRunnable(context.Background(), author, app, fingerprint, identity.OwnerID)
+	resolved, err := b.Repository.ResolveLeafRunnable(context.Background(), handle, fingerprint, identity.OwnerID)
 	if errors.Is(err, sqlite.ErrSuspended) {
 		return Runnable{}, ErrSuspended
 	}
