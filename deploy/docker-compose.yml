@@ -1,17 +1,35 @@
 # Compose deployment: control and gateway share the public SSH process. Hosted
 # WASM runs behind an authenticated Unix socket in a networkless runner.
 services:
+  token-init:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.plumtree
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - cp /run/source/runner.token /run/target/runner-token && chmod 0444 /run/target/runner-token
+    volumes:
+      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/source/runner.token:ro
+      - runner-secrets:/run/target
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
   plumtree:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.plumtree
     restart: unless-stopped
+    depends_on:
+      token-init:
+        condition: service_completed_successfully
     ports:
       - "${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}:2222"
     volumes:
       - plumtree-data:/data
       - runner-socket:/run/plumtree
-      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
+      - runner-secrets:/run/secrets:ro
     command:
       - serve
       - -config
@@ -49,11 +67,14 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.plumtree
     restart: unless-stopped
+    depends_on:
+      token-init:
+        condition: service_completed_successfully
     network_mode: none
     volumes:
       - runner-socket:/run/plumtree
       - runner-scratch:/run/plumtree-sessions
-      - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
+      - runner-secrets:/run/secrets:ro
     command:
       - serve
       - -config
@@ -86,3 +107,4 @@ volumes:
   plumtree-data:
   runner-socket:
   runner-scratch:
+  runner-secrets:

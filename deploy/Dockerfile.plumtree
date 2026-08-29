@@ -6,7 +6,9 @@ RUN CGO_ENABLED=1 go build -trimpath -o /out/plumtree ./cmd/plumtree
 RUN CGO_ENABLED=1 go build -trimpath -o /out/runner-worker ./cmd/runner-worker
 
 FROM alpine:3.24.1
-RUN adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data
+RUN adduser -D -u 65532 plumtree \
+    && mkdir -p /data /run/plumtree /run/plumtree-sessions \
+    && chown plumtree /data /run/plumtree /run/plumtree-sessions
 COPY --from=build /out/plumtree /usr/local/bin/plumtree
 COPY --from=build /out/runner-worker /usr/local/bin/runner-worker
 COPY --chown=plumtree:plumtree --chmod=0600 config.example.json /etc/plumtree/config.json

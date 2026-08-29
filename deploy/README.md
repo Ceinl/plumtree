@@ -17,6 +17,9 @@ docker compose run --rm plumtree bootstrap \
 docker compose up -d --build
 ```
 
+`runner.token` is ignored by Git. Compose copies it into a private named volume
+before the two non-root services start, so the host file can stay mode `0600`.
+
 The bootstrap command prints a one-use ID and secret. On the author device,
 run `pt pair --bootstrap <id> --yes 127.0.0.1` and enter the secret when
 prompted. The authority expires after ten minutes and is consumed atomically
