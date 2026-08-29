@@ -179,6 +179,9 @@ FROM app_deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=?`, input.Previou
 			}
 			appErr = appRow.Scan(&app.ID, &app.AuthorID, &app.Name, &app.Kind, &app.AccessMode, &suspended, &created, &updated)
 			if errors.Is(appErr, sql.ErrNoRows) {
+				if err := reserveAppName(ctx, m, input.AppName); err != nil {
+					return err
+				}
 				now := r.now().UnixNano()
 				app.ID = "app_" + randomRepositoryID()
 				app.AuthorID, app.Name, app.Kind, app.AccessMode = input.AuthorID, input.AppName, input.Kind, input.AccessMode

@@ -147,6 +147,9 @@ func (r *Repository) CreateApp(ctx context.Context, input AppInput) (App, error)
 		} else {
 			return quotaErr
 		}
+		if err := reserveAppName(ctx, m, app.Name); err != nil {
+			return err
+		}
 		if _, err := m.ExecContext(ctx, `INSERT INTO apps(id,author_id,name,kind,access_mode,suspended,created_at_ns,updated_at_ns) VALUES(?,?,?,?,?,0,?,?)`, app.ID, app.AuthorID, app.Name, app.Kind, app.AccessMode, ns, ns); err != nil {
 			return mapConstraint(err)
 		}

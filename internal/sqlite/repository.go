@@ -337,6 +337,12 @@ FROM apps a JOIN authors au ON au.id=a.author_id WHERE a.name=?`
 		}
 		query += ` AND au.handle=?`
 		args = append(args, authorHandle)
+	} else {
+		// Old databases can contain author-scoped name collisions. Keep their
+		// qualified compatibility route available, but never select one
+		// arbitrarily for the public bare handle.
+		query += ` AND (SELECT COUNT(*) FROM apps WHERE name=?)=1`
+		args = append(args, appName)
 	}
 	err := r.db.QueryRowContext(ctx, query, args...).Scan(&appID, &authorID, &accessMode, &appSuspended, &authorSuspended)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -614,6 +620,24 @@ func validateHandle(value string) error {
 	}
 	if strings.ToLower(value) != value || strings.ContainsAny(value, " /\\") {
 		return fmt.Errorf("%w: handle", ErrInvalid)
+	}
+	return nil
+}
+
+// reserveAppName keeps new public SSH handles server-global. Repository
+// mutations use BEGIN IMMEDIATE, so the check and following insert are one
+// serialized write operation even on databases created before this rule.
+func reserveAppName(ctx context.Context, m *MutationTx, name string) error {
+	var count int
+	row, err := m.QueryRowContext(ctx, `SELECT COUNT(*) FROM apps WHERE name=?`, name)
+	if err != nil {
+		return err
+	}
+	if err := row.Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return ErrConflict
 	}
 	return nil
 }

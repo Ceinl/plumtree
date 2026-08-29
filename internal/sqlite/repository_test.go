@@ -45,6 +45,15 @@ func TestAppNamesAreServerGlobal(t *testing.T) {
 	if _, err := r.CreateApp(context.Background(), AppInput{ID: "app-2", AuthorID: second.ID, Name: "demo", Kind: "tui", AccessMode: "public"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate public app name error = %v, want ErrConflict", err)
 	}
+	wasm := []byte("wasm")
+	digest := sha256.Sum256(wasm)
+	_, err = r.DeployApplication(context.Background(), ApplicationDeploymentInput{
+		AuthorID: second.ID, DeviceID: "device-2", AppName: "demo", Kind: "cli", AccessMode: "public", SourceDigest: "source",
+		Artifact: ArtifactInput{ID: "artifact-2", Digest: "sha256:" + hexForTest(digest[:]), WASM: wasm, ABIVersion: 1},
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate deployed app name error = %v, want ErrConflict", err)
+	}
 }
 
 func TestRepositorySchemaAndAtomicJourney(t *testing.T) {
