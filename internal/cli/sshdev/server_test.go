@@ -3,6 +3,7 @@ package sshdev
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -181,6 +182,38 @@ func TestServeCleanCLIOverSSHExec(t *testing.T) {
 	}
 	if got := string(out); !strings.Contains(got, "authenticated=true") || !strings.Contains(got, "local") {
 		t.Fatalf("clean CLI = %s", got)
+	}
+
+	failed, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := failed.CombinedOutput("not-a-command")
+	var exit *ssh.ExitError
+	if !errors.As(err, &exit) || exit.ExitStatus() != 2 {
+		t.Fatalf("invalid command exit=%v output=%s", err, output)
+	}
+}
+
+func TestServeFailedGuestReportsStatusOne(t *testing.T) {
+	srv := &Server{Wasm: []byte("not wasm"), Runner: runner.New(), Limits: runner.DefaultLimits, AppType: "cli", AppName: "broken"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addrCh := make(chan string, 1)
+	go srv.ListenAndServe(ctx, "127.0.0.1:0", func(a net.Addr) { addrCh <- a.String() })
+	client, err := ssh.Dial("tcp", <-addrCh, &ssh.ClientConfig{User: "dev", HostKeyCallback: ssh.InsecureIgnoreHostKey()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := session.CombinedOutput("run")
+	var exit *ssh.ExitError
+	if !errors.As(err, &exit) || exit.ExitStatus() != 1 {
+		t.Fatalf("failed guest exit=%v output=%s", err, output)
 	}
 }
 

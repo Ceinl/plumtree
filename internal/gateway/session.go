@@ -31,6 +31,17 @@ type windowChange struct {
 
 type execRequest struct{ Command string }
 
+const (
+	exitFailure uint32 = 1
+	exitInvalid uint32 = 2
+)
+
+func finishSSHSession(ch ssh.Channel, cancel context.CancelFunc, status uint32) {
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
+	_ = ch.Close()
+	cancel()
+}
+
 func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, handle string, identity runner.Identity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -78,15 +89,15 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				var payload execRequest
 				if len(req.Payload) > 4+64*1024 || ssh.Unmarshal(req.Payload, &payload) != nil {
 					req.Reply(false, nil)
-					continue
+					finishSSHSession(ch, cancel, exitInvalid)
+					return
 				}
 				var err error
 				args, err = execprotocol.ParseExecCommand(payload.Command)
 				if err != nil {
 					req.Reply(true, nil)
 					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
-					ch.Close()
-					cancel()
+					finishSSHSession(ch, cancel, exitInvalid)
 					return
 				}
 			}
@@ -146,8 +157,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	if !s.acquireSlot() {
 		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.MaxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
-		ch.Close()
-		cancel()
+		finishSSHSession(ch, cancel, exitFailure)
 		return
 	}
 	defer s.releaseSlot()
@@ -163,14 +173,20 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 			msg = fmt.Sprintf("app %q is temporarily unavailable (suspended)", handle)
 		}
 		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
-		ch.Close()
-		cancel()
+		finishSSHSession(ch, cancel, exitFailure)
 		return
 	}
 	identity = appRelativeIdentity(identity, run.OwnerID)
 
+	startingID := s.sessions.addStarting(sessionEntry{
+		ownerID:  run.OwnerID,
+		appID:    run.AppID,
+		deployID: run.DeployID,
+		cancel:   cancel,
+	})
 	sessionID, err := s.startAccountedSession(run, identity)
 	if err != nil {
+		s.sessions.remove(startingID)
 		s.logf("start session %q: %v", run.AppName, err)
 		msg := "session unavailable; try again later"
 		if errors.Is(err, ErrSuspended) {
@@ -179,16 +195,18 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 			msg = "this app has reached its daily connection limit; try again later"
 		}
 		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
-		ch.Close()
-		cancel()
+		finishSSHSession(ch, cancel, exitFailure)
 		return
 	}
-	s.sessions.add(sessionID, sessionEntry{
-		ownerID:  run.OwnerID,
-		appID:    run.AppID,
-		deployID: run.DeployID,
-		cancel:   cancel,
-	})
+	if !s.sessions.promote(startingID, sessionID) {
+		if endErr := s.Backend.EndSession(sessionID); endErr != nil {
+			s.logf("end invalidated session %q: %v", sessionID, endErr)
+		}
+		s.sessions.remove(sessionID)
+		fmt.Fprintf(ch.Stderr(), "app %q is temporarily unavailable (suspended)\r\n", handle)
+		finishSSHSession(ch, cancel, exitFailure)
+		return
+	}
 	defer s.sessions.remove(sessionID)
 	startedAt := time.Now()
 	s.logf("session start id=%s app=%q deploy=%s identity=%q", sessionID, run.AppName, run.DeployID, identityLogValue(identity))
@@ -204,13 +222,11 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 		s.logf("end session %q: %v", sessionID, err)
 	}
 	s.logf("session end id=%s app=%q duration=%s log=%dB truncated=%t", sessionID, run.AppName, sessionDuration.Round(time.Millisecond), len(log), truncated)
-	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitStatus}))
-	ch.Close()
-	cancel()
+	finishSSHSession(ch, cancel, exitStatus)
 }
 
 func appRelativeIdentity(identity runner.Identity, appOwnerID string) runner.Identity {
-	identity.OwnsApp = identity.OwnerID != "" && identity.OwnerID == appOwnerID
+	identity.OwnsApp = identity.Authenticated && identity.OwnerID != "" && identity.OwnerID == appOwnerID
 	identity.OwnerID = ""
 	return identity
 }

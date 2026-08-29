@@ -101,6 +101,12 @@ func TestLeafAccessMatrixUsesProvedAppRelativeKeys(t *testing.T) {
 			if !test.allowed && runErr == nil {
 				t.Fatalf("denied session ran: %s", output)
 			}
+			if !test.allowed {
+				var exit *ssh.ExitError
+				if !errors.As(runErr, &exit) || exit.ExitStatus() != 1 {
+					t.Fatalf("denied exit=%v output=%s", runErr, output)
+				}
+			}
 		})
 	}
 }

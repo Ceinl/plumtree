@@ -153,8 +153,10 @@ func hasEnv(env []string, key string) bool {
 }
 
 type testChannel struct {
-	stdout lockedBuffer
-	stderr lockedBuffer
+	stdout       lockedBuffer
+	stderr       lockedBuffer
+	requestsMu   sync.Mutex
+	exitStatuses []uint32
 }
 
 func (c *testChannel) Read([]byte) (int, error)    { return 0, io.EOF }
@@ -162,10 +164,27 @@ func (c *testChannel) Write(p []byte) (int, error) { return c.stdout.Write(p) }
 func (c *testChannel) String() string              { return c.stdout.String() }
 func (c *testChannel) Close() error                { return nil }
 func (c *testChannel) CloseWrite() error           { return nil }
-func (c *testChannel) SendRequest(string, bool, []byte) (bool, error) {
+func (c *testChannel) SendRequest(name string, _ bool, payload []byte) (bool, error) {
+	if name == "exit-status" {
+		var request struct{ Status uint32 }
+		if err := ssh.Unmarshal(payload, &request); err == nil {
+			c.requestsMu.Lock()
+			c.exitStatuses = append(c.exitStatuses, request.Status)
+			c.requestsMu.Unlock()
+		}
+	}
 	return false, nil
 }
 func (c *testChannel) Stderr() io.ReadWriter { return &c.stderr }
+
+func (c *testChannel) exitStatus() (uint32, bool) {
+	c.requestsMu.Lock()
+	defer c.requestsMu.Unlock()
+	if len(c.exitStatuses) == 0 {
+		return 0, false
+	}
+	return c.exitStatuses[len(c.exitStatuses)-1], true
+}
 
 type lockedBuffer struct {
 	mu  sync.Mutex

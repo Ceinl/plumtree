@@ -323,36 +323,43 @@ func (r *Repository) ResolveLeafRunnable(ctx context.Context, authorHandle, appN
 		return Runnable{}, fmt.Errorf("%w: app name", ErrInvalid)
 	}
 	var authorID string
-	var suspended int
-	err := r.db.QueryRowContext(ctx, `SELECT id,suspended FROM authors WHERE handle=?`, authorHandle).Scan(&authorID, &suspended)
+	var authorSuspended int
+	err := r.db.QueryRowContext(ctx, `SELECT id,suspended FROM authors WHERE handle=?`, authorHandle).Scan(&authorID, &authorSuspended)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Runnable{}, ErrNotFound
 	}
 	if err != nil {
 		return Runnable{}, storageError(err)
 	}
-	if suspended != 0 {
+	if authorSuspended != 0 {
 		return Runnable{}, ErrSuspended
 	}
-	runnable, err := r.ResolveRunnable(ctx, authorID, appName)
-	if err != nil {
-		return Runnable{}, err
-	}
-	if runnable.App.AccessMode == "public" || identityAuthorID == authorID {
-		return runnable, nil
-	}
-	if strings.TrimSpace(fingerprint) == "" {
+	var appID, accessMode string
+	var appSuspended int
+	err = r.db.QueryRowContext(ctx, `SELECT id,access_mode,suspended FROM apps WHERE author_id=? AND name=?`, authorID, appName).Scan(&appID, &accessMode, &appSuspended)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Runnable{}, ErrNotFound
 	}
-	var allowed int
-	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_access_keys WHERE app_id=? AND fingerprint=?`, runnable.App.ID, fingerprint).Scan(&allowed)
 	if err != nil {
 		return Runnable{}, storageError(err)
 	}
-	if allowed == 0 {
-		return Runnable{}, ErrNotFound
+	if appSuspended != 0 {
+		return Runnable{}, ErrSuspended
 	}
-	return runnable, nil
+	if accessMode != "public" && (identityAuthorID == "" || identityAuthorID != authorID) {
+		if strings.TrimSpace(fingerprint) == "" {
+			return Runnable{}, ErrNotFound
+		}
+		var allowed int
+		err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_access_keys WHERE app_id=? AND fingerprint=?`, appID, fingerprint).Scan(&allowed)
+		if err != nil {
+			return Runnable{}, storageError(err)
+		}
+		if allowed == 0 {
+			return Runnable{}, ErrNotFound
+		}
+	}
+	return r.ResolveRunnable(ctx, authorID, appName)
 }
 
 type RegistrationInput struct {

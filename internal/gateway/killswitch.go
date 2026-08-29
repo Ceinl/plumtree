@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"strconv"
 	"sync"
 )
 
@@ -21,18 +22,20 @@ type sessionEntry struct {
 	deployID string
 	cancel   context.CancelFunc
 	done     chan struct{}
+	invalid  bool
 }
 
 // sessionRegistry tracks live sessions so an operator kill switch can terminate
 // them by app, owner, deploy, or all at once (the runner-wide switch). It is
 // safe for concurrent use.
 type sessionRegistry struct {
-	mu       sync.Mutex
-	sessions map[string]sessionEntry // keyed by session ID
+	mu           sync.Mutex
+	sessions     map[string]*sessionEntry // keyed by session ID
+	nextStarting uint64
 }
 
 func newSessionRegistry() *sessionRegistry {
-	return &sessionRegistry{sessions: make(map[string]sessionEntry)}
+	return &sessionRegistry{sessions: make(map[string]*sessionEntry)}
 }
 
 func (r *sessionRegistry) add(sessionID string, e sessionEntry) {
@@ -41,7 +44,37 @@ func (r *sessionRegistry) add(sessionID string, e sessionEntry) {
 	if e.done == nil {
 		e.done = make(chan struct{})
 	}
+	r.sessions[sessionID] = &e
+}
+
+// addStarting registers a resolved session before accounting begins. This
+// closes the window where a suspension could be acknowledged while
+// StartSession was still in flight.
+func (r *sessionRegistry) addStarting(e sessionEntry) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e.done == nil {
+		e.done = make(chan struct{})
+	}
+	r.nextStarting++
+	id := "starting-" + strconv.FormatUint(r.nextStarting, 10)
+	r.sessions[id] = &e
+	return id
+}
+
+// promote replaces the temporary accounting key with the durable session ID.
+// It reports false when a suspension matched the session while accounting was
+// in flight, so the caller can end the record without running the guest.
+func (r *sessionRegistry) promote(startingID, sessionID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.sessions[startingID]
+	if !ok {
+		return false
+	}
+	delete(r.sessions, startingID)
 	r.sessions[sessionID] = e
+	return !e.invalid
 }
 
 func (r *sessionRegistry) remove(sessionID string) {
@@ -82,10 +115,10 @@ func (r *sessionRegistry) killAndWait(ctx context.Context, scope KillScope, id s
 	return len(entries), nil
 }
 
-func (r *sessionRegistry) matching(scope KillScope, id string) []sessionEntry {
+func (r *sessionRegistry) matching(scope KillScope, id string) []*sessionEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var entries []sessionEntry
+	var entries []*sessionEntry
 	for _, e := range r.sessions {
 		var match bool
 		switch scope {
@@ -97,6 +130,7 @@ func (r *sessionRegistry) matching(scope KillScope, id string) []sessionEntry {
 			match = e.deployID == id
 		}
 		if match {
+			e.invalid = true
 			entries = append(entries, e)
 		}
 	}
@@ -108,6 +142,7 @@ func (r *sessionRegistry) killAll() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, e := range r.sessions {
+		e.invalid = true
 		e.cancel()
 	}
 	return len(r.sessions)

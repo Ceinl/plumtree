@@ -45,6 +45,12 @@ type Server struct {
 	Logf    func(format string, args ...any)
 }
 
+func finishSSHSession(ch ssh.Channel, cancel context.CancelFunc, status uint32) {
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
+	_ = ch.Close()
+	cancel()
+}
+
 func (s *Server) logf(format string, args ...any) {
 	if s.Logf != nil {
 		s.Logf(format, args...)
@@ -163,15 +169,15 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				var payload execRequest
 				if len(req.Payload) > 4+64*1024 || ssh.Unmarshal(req.Payload, &payload) != nil {
 					req.Reply(false, nil)
-					continue
+					finishSSHSession(ch, cancel, 2)
+					return
 				}
 				var err error
 				args, err = execprotocol.ParseExecCommand(payload.Command)
 				if err != nil {
 					req.Reply(true, nil)
 					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
-					ch.Close()
-					cancel()
+					finishSSHSession(ch, cancel, 2)
 					return
 				}
 			}
@@ -181,10 +187,8 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			}
 			started = true
 			go func() {
-				s.runSessionArgs(ctx, ch, size, winch, args)
-				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
-				ch.Close()
-				cancel()
+				status := s.runSessionArgs(ctx, ch, size, winch, args)
+				finishSSHSession(ch, cancel, status)
 			}()
 
 		case "env":
@@ -198,23 +202,24 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 }
 
 func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal) {
-	s.runSessionArgs(ctx, ch, size, winch, nil)
+	_ = s.runSessionArgs(ctx, ch, size, winch, nil)
 }
 
-func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) {
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) uint32 {
 	caps := s.Caps
 	// Server capabilities are shared by every development connection. Keep the
 	// guest-written goodbye message session-local so concurrent clients cannot
 	// race or inherit one another's message.
 	caps.Goodbye = new(string)
 	if s.AppType == "cli" || len(args) > 0 {
-		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch); err != nil {
+		err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch)
+		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
 		if *caps.Goodbye != "" {
 			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
-		return
+		return runner.ExitStatus(err)
 	}
 
 	w, h := size()
@@ -250,6 +255,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 	default:
 		s.logf("session error: %v", err)
 	}
+	return runner.ExitStatus(err)
 }
 
 // devHostKey returns a stable host key, persisted under the user config dir so
