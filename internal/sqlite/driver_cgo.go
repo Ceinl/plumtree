@@ -109,9 +109,6 @@ func keyConnection(conn *sqlite3.SQLiteConn, key []byte, encrypted bool) error {
 		if _, err := conn.Exec(statement, nil); err != nil {
 			return ErrKeyRejected
 		}
-		if value, err := pragmaValue(conn, "cipher_status"); err != nil || value != "1" {
-			return ErrKeyRejected
-		}
 	}
 	return nil
 }
