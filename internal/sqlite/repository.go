@@ -81,6 +81,10 @@ type Repository struct {
 	faults    Faults
 	listeners []func(CommitEvent) error
 	mu        sync.RWMutex
+
+	// Per-app guest KV budgets; 0 means unlimited.
+	kvMaxKeys  int
+	kvMaxBytes int
 }
 
 // OpenRepository opens the configured engine and initializes schema v1.
@@ -99,7 +103,7 @@ func OpenRepository(path string, key []byte, options ...RepositoryOption) (*Repo
 
 // NewRepository initializes schema v1 on an already opened engine.
 func NewRepository(db *DB, options ...RepositoryOption) (*Repository, error) {
-	r := &Repository{db: db, now: time.Now}
+	r := &Repository{db: db, now: time.Now, kvMaxKeys: DefaultKVMaxKeys, kvMaxBytes: DefaultKVMaxBytes}
 	for _, option := range options {
 		if option != nil {
 			option(r)
@@ -314,7 +318,9 @@ type Runnable struct {
 }
 
 // ResolveLeafRunnable resolves an author/app SSH handle and applies the app's
-// public or restricted key policy before returning artifact bytes.
+// public or restricted key policy before returning artifact bytes. A restricted
+// app admits only fingerprints registered as app access keys plus the owner's
+// own active device fingerprint; everyone else receives ErrNotFound.
 func (r *Repository) ResolveLeafRunnable(ctx context.Context, authorHandle, appName, fingerprint, identityAuthorID string) (Runnable, error) {
 	if err := validateHandle(authorHandle); err != nil {
 		return Runnable{}, err
@@ -348,6 +354,14 @@ func (r *Repository) ResolveLeafRunnable(ctx context.Context, authorHandle, appN
 	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_access_keys WHERE app_id=? AND fingerprint=?`, runnable.App.ID, fingerprint).Scan(&allowed)
 	if err != nil {
 		return Runnable{}, storageError(err)
+	}
+	if allowed == 0 {
+		// The app owner's own active device is always allowed, even without a
+		// registered app access key.
+		err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE fingerprint=? AND author_id=? AND revoked_at_ns IS NULL`, fingerprint, runnable.App.AuthorID).Scan(&allowed)
+		if err != nil {
+			return Runnable{}, storageError(err)
+		}
 	}
 	if allowed == 0 {
 		return Runnable{}, ErrNotFound

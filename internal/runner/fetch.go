@@ -3,11 +3,13 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,10 +39,11 @@ type Fetcher interface {
 	Fetch(ctx context.Context, req abi.FetchRequest) (abi.FetchResponse, error)
 }
 
-// AllowlistFetcher dispatches requests only to hosts on Allow. A host matches if
-// it equals an allow entry or is a subdomain of one (".example.com" covers
-// "api.example.com"). An empty Allow denies everything — the default-deny
-// posture.
+// AllowlistFetcher dispatches requests only to hosts on Allow. A bare entry
+// ("example.com") matches exactly that host; a dotted or starred wildcard
+// (".example.com", "*.example.com") matches the domain itself plus its
+// subdomains ("api.example.com"). An empty Allow denies everything — the
+// default-deny posture. Malformed entries never match anything.
 //
 // Beyond the name allowlist, the fetcher refuses to connect to non-public IPs on
 // every dial — including each redirect hop and after DNS resolution — so an
@@ -58,11 +61,57 @@ type AllowlistFetcher struct {
 }
 
 // NewAllowlistFetcher returns a fetcher permitting the given hosts, with a
-// 10-second request timeout and the non-public-IP block enabled.
+// 10-second request timeout and the non-public-IP block enabled. Entries are
+// not validated here (use NewValidatedAllowlistFetcher for that); malformed
+// entries silently never match.
 func NewAllowlistFetcher(allow []string) *AllowlistFetcher {
 	f := &AllowlistFetcher{Allow: allow}
 	f.Client = f.guardedClient()
 	return f
+}
+
+// NewValidatedAllowlistFetcher is NewAllowlistFetcher with every entry checked
+// up front: each must be a well-formed hostname or wildcard pattern. It returns
+// an error listing the offending entries, so a typo in configuration fails
+// loudly instead of silently narrowing (or never matching) the allowlist.
+func NewValidatedAllowlistFetcher(allow []string) (*AllowlistFetcher, error) {
+	var bad []string
+	for _, raw := range allow {
+		if !validAllowlistEntry(raw) {
+			bad = append(bad, strconv.Quote(raw))
+		}
+	}
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("fetch: invalid egress allowlist entries: %s", strings.Join(bad, ", "))
+	}
+	return NewAllowlistFetcher(allow), nil
+}
+
+// validAllowlistEntry reports whether entry is a host this package will match:
+// an optional "." or "*." wildcard prefix followed by dot-separated DNS labels
+// of letters, digits, and hyphens, none empty, none starting or ending with a
+// hyphen, at most 253 characters in total.
+func validAllowlistEntry(entry string) bool {
+	body := strings.TrimPrefix(strings.TrimPrefix(entry, "*."), ".")
+	if body == "" || len(body) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(body, ".") {
+		if label == "" || len(label) > 63 ||
+			label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !isDNSLabelChar(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isDNSLabelChar(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-'
 }
 
 func (f *AllowlistFetcher) Fetch(ctx context.Context, req abi.FetchRequest) (abi.FetchResponse, error) {
@@ -221,15 +270,23 @@ var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("2002::/16"),     // 6to4
 }
 
-// allowed reports whether host is permitted by the allowlist.
+// allowed reports whether host is permitted by the allowlist. Bare entries
+// match exactly; ".domain" / "*.domain" entries match the domain and its
+// subdomains. Malformed entries (empty, ".", "..", "*", "*.", anything with
+// whitespace) are skipped, never matched.
 func (f *AllowlistFetcher) allowed(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	for _, a := range f.Allow {
-		a = strings.ToLower(strings.TrimSpace(a))
-		if a == "" {
+	for _, raw := range f.Allow {
+		entry := strings.ToLower(strings.TrimSpace(raw))
+		wildcard := strings.HasPrefix(entry, "*.") || strings.HasPrefix(entry, ".")
+		body := strings.TrimPrefix(strings.TrimPrefix(entry, "*."), ".")
+		if !validAllowlistEntry(entry) {
 			continue
 		}
-		if host == a || strings.HasSuffix(host, "."+strings.TrimPrefix(a, ".")) {
+		if host == body {
+			return true
+		}
+		if wildcard && strings.HasSuffix(host, "."+body) {
 			return true
 		}
 	}

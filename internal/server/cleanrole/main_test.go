@@ -71,6 +71,89 @@ func TestResolveServeMakesConfigPathsAbsolute(t *testing.T) {
 	}
 }
 
+func TestResolveServeAcceptsHostKeyFlagAndEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if _, _, err := serverconfig.Bootstrap(path); err != nil {
+		t.Fatal(err)
+	}
+
+	flagResolved, err := ResolveServe([]string{"serve", "--config", path, "--host-key", "flag_key"}, []string{"PLUMTREE_HOST_KEY=env_key"}, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := flagResolved.Config.Storage.SSHIdentity; got != filepath.Join(dir, "flag_key") {
+		t.Fatalf("flag host key path = %q", got)
+	}
+
+	envResolved, err := ResolveServe([]string{"serve", "--config", path}, []string{"PLUMTREE_HOST_KEY=env_key"}, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envResolved.Config.Storage.SSHIdentity; got != filepath.Join(dir, "env_key") {
+		t.Fatalf("environment host key path = %q", got)
+	}
+}
+
+// The host-command allowlist resolves from the manual flag alias, the
+// environment, and persisted config, in that precedence order.
+func TestResolveServeAcceptsHostCommandAllowlistFlagAndEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	cfg := serverconfig.Default()
+	cfg.Runtime.HostCommandAllowlist = "from-config"
+	if err := serverconfig.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	flagResolved, err := ResolveServe([]string{
+		"serve", "--config", path,
+		"--host-command-allowlist", "/usr/bin/uptime, pt-status",
+	}, []string{"PLUMTREE_HOST_COMMAND_ALLOWLIST=from-env"}, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := flagResolved.Config.Runtime.HostCommandAllowlist; got != "/usr/bin/uptime, pt-status" {
+		t.Fatalf("flag allowlist = %q", got)
+	}
+	if sources := flagResolved.Sources["runtime.hostCommandAllowlist"]; sources != serverconfig.SourceFlag {
+		t.Fatalf("allowlist provenance = %q", sources)
+	}
+
+	envResolved, err := ResolveServe([]string{"serve", "--config", path}, []string{"PLUMTREE_HOST_COMMAND_ALLOWLIST=from-env"}, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envResolved.Config.Runtime.HostCommandAllowlist; got != "from-env" {
+		t.Fatalf("environment allowlist = %q", got)
+	}
+
+	configResolved, err := ResolveServe([]string{"serve", "--config", path}, nil, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := configResolved.Config.Runtime.HostCommandAllowlist; got != "from-config" {
+		t.Fatalf("persisted allowlist = %q", got)
+	}
+}
+
+func TestLoadOrCreateHostKeyRefusesCorruptFileAndLeavesItUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host_key")
+	corrupt := []byte("definitely not a private key\n")
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := loadOrCreateHostKey(path)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "remove the file") {
+		t.Fatalf("corrupt host key error = %v", err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil || !bytes.Equal(got, corrupt) {
+		t.Fatalf("corrupt file was modified: %q, %v", got, readErr)
+	}
+}
+
 func TestExecuteAnnouncesReadinessAndDrainsOnCancellation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

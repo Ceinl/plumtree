@@ -2,6 +2,7 @@ package cleanrole
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 type runnerComponent struct {
 	projection serverconfig.RoleProjection
 	out        io.Writer
+	environ    []string
 	listener   net.Listener
 	errors     chan error
 	stopped    chan struct{}
@@ -30,11 +32,24 @@ type runnerComponent struct {
 func (c *runnerComponent) Start(ctx context.Context) error {
 	cfg := c.projection.Config()
 	network, address, ok := strings.Cut(cfg.Runtime.RunnerEndpoint, "://")
-	if !ok || (network != "unix" && network != "tcp") || address == "" {
-		return errors.New("clean server: runner endpoint must be unix:///path or tcp://host:port")
+	if !ok || (network != "unix" && network != "tcp" && network != "tls") || address == "" {
+		return errors.New("clean server: runner endpoint must be unix:///path, tcp://host:port, or tls://host:port")
 	}
-	if cfg.Runtime.Production && network != "unix" {
-		return errors.New("clean server: production runner endpoint must use a Unix socket")
+	if cfg.Runtime.Production && network == "tcp" {
+		return fmt.Errorf("clean server: production refuses plain tcp:// runner endpoint %q; use unix:// or tls://", cfg.Runtime.RunnerEndpoint)
+	}
+	if network == "tcp" {
+		_, _ = fmt.Fprintf(c.out, "warning: runner endpoint %s ships the broker token and session traffic unencrypted; prefer unix:// or tls://\n", cfg.Runtime.RunnerEndpoint)
+	}
+	var tlsConfig *tls.Config
+	if network == "tls" {
+		certFile, keyFile, err := c.tlsKeyPair()
+		if err != nil {
+			return err
+		}
+		if tlsConfig, err = runner.TLSListenerConfig(certFile, keyFile); err != nil {
+			return err
+		}
 	}
 	if network == "unix" {
 		if err := prepareRunnerSocket(address); err != nil {
@@ -47,9 +62,16 @@ func (c *runnerComponent) Start(ctx context.Context) error {
 		}
 	}
 	var listenConfig net.ListenConfig
-	listener, err := listenConfig.Listen(ctx, network, address)
+	listenNetwork := network
+	if network == "tls" {
+		listenNetwork = "tcp"
+	}
+	listener, err := listenConfig.Listen(ctx, listenNetwork, address)
 	if err != nil {
 		return fmt.Errorf("clean server: runner listen: %w", err)
+	}
+	if tlsConfig != nil {
+		listener = tls.NewListener(listener, tlsConfig)
 	}
 	c.listener = listener
 	c.errors = make(chan error, 1)
@@ -101,6 +123,18 @@ func (c *runnerComponent) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// tlsKeyPair resolves the broker's TLS certificate and key from the
+// PLUMTREE_RUNNER_TLS_CERT and PLUMTREE_RUNNER_TLS_KEY environment entries.
+func (c *runnerComponent) tlsKeyPair() (certFile, keyFile string, err error) {
+	env := environmentMap(c.environ)
+	certFile = strings.TrimSpace(env["PLUMTREE_RUNNER_TLS_CERT"])
+	keyFile = strings.TrimSpace(env["PLUMTREE_RUNNER_TLS_KEY"])
+	if certFile == "" || keyFile == "" {
+		return "", "", errors.New("clean server: tls:// runner endpoint requires PLUMTREE_RUNNER_TLS_CERT and PLUMTREE_RUNNER_TLS_KEY")
+	}
+	return certFile, keyFile, nil
 }
 
 func prepareRunnerSocket(path string) error {

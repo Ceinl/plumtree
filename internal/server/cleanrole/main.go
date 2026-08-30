@@ -4,11 +4,9 @@ package cleanrole
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,11 +15,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/gateway"
+	"github.com/Ceinl/plumtree/internal/hostkey"
 	"github.com/Ceinl/plumtree/internal/httpapi/v1"
 	"github.com/Ceinl/plumtree/internal/runner"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
@@ -49,7 +49,8 @@ func Run(args []string) error {
 	return Execute(context.Background(), args, os.Environ(), os.Stdout, os.Stderr)
 }
 
-// Execute runs a local config or bootstrap command or the selected control role.
+// Execute runs a local config or bootstrap command, an operator command, or
+// the selected control role.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
 	if len(args) > 0 && args[0] == "config" {
 		return executeConfig(args[1:], environment, out)
@@ -59,6 +60,14 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 	}
 	if len(args) > 1 && args[0] == "author" && args[1] == "bootstrap" {
 		return runBootstrap(args[2:], out)
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "suspend", "unsuspend":
+			return executeSuspension(args[0], args[1:], out)
+		case "quota":
+			return executeQuota(args[1:], out)
+		}
 	}
 	resolved, err := ResolveServe(args, environment, 0)
 	if err != nil {
@@ -73,7 +82,7 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		if err != nil {
 			return fmt.Errorf("clean server: runner configuration: %w", err)
 		}
-		component := &runnerComponent{projection: projection, out: out}
+		component := &runnerComponent{projection: projection, out: out, environ: environment}
 		return runLifecycle(ctx, resolved.Config, component)
 	}
 	if err != nil {
@@ -123,6 +132,81 @@ func runBootstrap(args []string, out io.Writer) error {
 	return json.NewEncoder(out).Encode(map[string]any{"bootstrapID": result.ID, "handle": result.Handle, "deviceName": result.DeviceName, "secret": string(result.Secret), "expiresAt": result.ExpiresAt})
 }
 
+// splitDatabaseFlag extracts the shared -database operator flag from args so
+// the command's positional arguments can appear before or after it.
+func splitDatabaseFlag(args []string) (string, []string) {
+	database := "plumtree.db"
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		if value, ok := strings.CutPrefix(args[i], "--database="); ok {
+			database = value
+			continue
+		}
+		if value, ok := strings.CutPrefix(args[i], "-database="); ok {
+			database = value
+			continue
+		}
+		if args[i] == "--database" || args[i] == "-database" {
+			if i+1 < len(args) {
+				database = args[i+1]
+				i++
+			}
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	return database, rest
+}
+
+// executeSuspension applies the operator kill switch to one deployment. The
+// gateway picks the change up live through its suspension watcher.
+func executeSuspension(command string, args []string, out io.Writer) error {
+	database, positionals := splitDatabaseFlag(args)
+	usage := fmt.Sprintf("usage: plumtree %s deploy <id> [-database PATH]", command)
+	if len(positionals) != 2 || positionals[0] != "deploy" {
+		return errors.New(usage)
+	}
+	repository, err := sqlite.OpenRepository(database, nil)
+	if err != nil {
+		return err
+	}
+	defer repository.Close()
+	suspended := command == "suspend"
+	if err := repository.SetDeploymentSuspended(context.Background(), positionals[1], suspended); err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"deployment": positionals[1], "suspended": suspended})
+}
+
+// executeQuota sets one author's typed resource quotas in a single write.
+func executeQuota(args []string, out io.Writer) error {
+	database, positionals := splitDatabaseFlag(args)
+	const usage = "usage: plumtree quota set <authorID> <maxApps> <maxDeploymentsPerApp> <maxSecretsPerApp> <maxSessions> [-database PATH]"
+	if len(positionals) != 6 || positionals[0] != "set" {
+		return errors.New(usage)
+	}
+	fields := []string{"maxApps", "maxDeploymentsPerApp", "maxSecretsPerApp", "maxSessions"}
+	values := make([]int, len(fields))
+	for i, raw := range positionals[2:] {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			return fmt.Errorf("%w: %s must be a non-negative integer", sqlite.ErrInvalid, fields[i])
+		}
+		values[i] = value
+	}
+	repository, err := sqlite.OpenRepository(database, nil)
+	if err != nil {
+		return err
+	}
+	defer repository.Close()
+	quota := sqlite.Quota{AuthorID: positionals[1], MaxApps: values[0], MaxDeploymentsPerApp: values[1], MaxSecretsPerApp: values[2], MaxSessions: values[3]}
+	if err := repository.SetQuota(context.Background(), quota); err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(map[string]any{"author": quota.AuthorID, "maxApps": quota.MaxApps,
+		"maxDeploymentsPerApp": quota.MaxDeploymentsPerApp, "maxSecretsPerApp": quota.MaxSecretsPerApp, "maxSessions": quota.MaxSessions})
+}
+
 // ResolveServe bootstraps and resolves the exact startup configuration. Precedence
 // is flag, environment, persisted configuration, then typed default.
 func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, error) {
@@ -158,7 +242,17 @@ func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, 
 			return nil
 		})
 	}
-	if err := fs.Parse(args); err != nil {
+	if value := hostKeyFlagValue(args); value != "" {
+		overrides["storage.sshIdentity"] = value
+	} else if value := env["PLUMTREE_HOST_KEY"]; value != "" {
+		overrides["storage.sshIdentity"] = value
+	}
+	if value := hostCommandAllowlistFlagValue(args); value != "" {
+		overrides["runtime.hostCommandAllowlist"] = value
+	} else if value := env["PLUMTREE_HOST_COMMAND_ALLOWLIST"]; value != "" {
+		overrides["runtime.hostCommandAllowlist"] = value
+	}
+	if err := fs.Parse(stripHostKeyArgs(stripHostCommandArgs(args))); err != nil {
 		return ResolvedServe{}, err
 	}
 	if fs.NArg() != 0 {
@@ -262,6 +356,79 @@ func configPathFromArgs(args []string, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// hostKeyFlagValue extracts the -host-key operator alias for storage.sshIdentity.
+// It is parsed manually because the mechanical flag set only carries schema fields.
+func hostKeyFlagValue(args []string) string {
+	for i, arg := range args {
+		if arg == "--host-key" || arg == "-host-key" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		if value, ok := strings.CutPrefix(arg, "--host-key="); ok {
+			return value
+		}
+		if value, ok := strings.CutPrefix(arg, "-host-key="); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+// stripHostKeyArgs removes the manual -host-key alias so the mechanical flag
+// set never sees an unknown flag.
+func stripHostKeyArgs(args []string) []string {
+	result := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--host-key" || args[i] == "-host-key" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--host-key=") || strings.HasPrefix(args[i], "-host-key=") {
+			continue
+		}
+		result = append(result, args[i])
+	}
+	return result
+}
+
+// hostCommandAllowlistFlagValue extracts the manual -host-command-allowlist
+// operator alias for runtime.hostCommandAllowlist. Like -host-key it is parsed
+// by hand because the mechanical flag set only carries schema spellings.
+func hostCommandAllowlistFlagValue(args []string) string {
+	for i, arg := range args {
+		if arg == "--host-command-allowlist" || arg == "-host-command-allowlist" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		if value, ok := strings.CutPrefix(arg, "--host-command-allowlist="); ok {
+			return value
+		}
+		if value, ok := strings.CutPrefix(arg, "-host-command-allowlist="); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+// stripHostCommandArgs removes the manual -host-command-allowlist alias so the
+// mechanical flag set never sees an unknown flag.
+func stripHostCommandArgs(args []string) []string {
+	result := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--host-command-allowlist" || args[i] == "-host-command-allowlist" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--host-command-allowlist=") || strings.HasPrefix(args[i], "-host-command-allowlist=") {
+			continue
+		}
+		result = append(result, args[i])
+	}
+	return result
 }
 
 func removeConfigArgs(args []string) []string {
@@ -574,11 +741,25 @@ func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken
 	}
 	limits.SessionTimeout, _ = time.ParseDuration(cfg.Limits.SessionTimeout)
 	limits.FrameTimeout, _ = time.ParseDuration(cfg.Limits.FrameTimeout)
+	allowlist := parseHostCommandAllowlist(cfg.Runtime.HostCommandAllowlist)
 	return &gateway.Server{
 		Backend: gateway.NewSQLiteBackend(repo), Runner: runner.New(), Limits: limits,
-		MaxFPS: cfg.Limits.MaxFPS, StateDir: cfg.Storage.KVRoot, MaxConcurrentSessions: cfg.Limits.MaxSessions,
-		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)), AllowHostCommands: false,
+		MaxFPS: cfg.Limits.MaxFPS, MaxConcurrentSessions: cfg.Limits.MaxSessions,
+		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)),
+		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist,
 	}
+}
+
+// parseHostCommandAllowlist splits the operator's CSV allowlist, trimming
+// whitespace and dropping empty entries so "a,, b" and "" behave sanely.
+func parseHostCommandAllowlist(raw string) []string {
+	var out []string
+	for _, entry := range strings.Split(raw, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func newIdentityService(repo *sqlite.Repository, sshAddress string) (*identityservice.Service, error) {
@@ -673,32 +854,7 @@ func randomIdentityID() (string, error) {
 }
 
 func loadOrCreateHostKey(path string) (ssh.Signer, string, error) {
-	if data, err := os.ReadFile(path); err == nil {
-		signer, err := ssh.ParsePrivateKey(data)
-		if err != nil {
-			return nil, "", err
-		}
-		return signer, ssh.FingerprintSHA256(signer.PublicKey()), nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, "", err
-	}
-	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, "", err
-	}
-	block, err := ssh.MarshalPrivateKey(privateKey, "plumtree server host key")
-	if err != nil {
-		return nil, "", err
-	}
-	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return nil, "", err
-		}
-	}
-	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0600); err != nil {
-		return nil, "", err
-	}
-	signer, err := ssh.NewSignerFromKey(privateKey)
+	signer, err := hostkey.LoadOrCreate(path, "plumtree server host key")
 	if err != nil {
 		return nil, "", err
 	}

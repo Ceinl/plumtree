@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -109,18 +110,92 @@ func TestIsNonPublicIP(t *testing.T) {
 	}
 }
 
-func TestAllowlistSubdomainMatch(t *testing.T) {
-	f := NewAllowlistFetcher([]string{"example.com"})
-	cases := map[string]bool{
-		"example.com":          true,
-		"api.example.com":      true,
-		"evil.com":             false,
-		"notexample.com":       false,
-		"example.com.evil.com": false,
+// Matching semantics: a bare entry matches exactly that host; "." and "*"
+// wildcards match the domain plus its subdomains; malformed entries never
+// match anything, including lookalike hosts.
+func TestAllowlistMatchingSemantics(t *testing.T) {
+	tests := []struct {
+		name  string
+		allow []string
+		host  string
+		want  bool
+	}{
+		{"bare matches exact", []string{"example.com"}, "example.com", true},
+		{"bare does not match subdomain", []string{"example.com"}, "api.example.com", false},
+		{"bare is not suffix-matched", []string{"example.com"}, "example.com.evil.com", false},
+		{"bare does not match lookalike", []string{"example.com"}, "notexample.com", false},
+		{"bare does not match other", []string{"example.com"}, "evil.com", false},
+		{"dot wildcard matches domain", []string{".example.com"}, "example.com", true},
+		{"dot wildcard matches subdomain", []string{".example.com"}, "api.example.com", true},
+		{"dot wildcard matches deep subdomain", []string{"*.example.com"}, "a.b.example.com", true},
+		{"star wildcard matches domain", []string{"*.example.com"}, "example.com", true},
+		{"star wildcard matches subdomain", []string{"*.example.com"}, "api.example.com", true},
+		{"star wildcard is not prefix-greedy", []string{"*.star.com"}, "notstar.com", false},
+		{"wildcard is not suffix-hijacked", []string{".example.com"}, "example.com.evil.com", false},
+		{"empty entry never matches", []string{""}, "example.com", false},
+		{"bare dot never matches", []string{"."}, "anything.com", false},
+		{"double dot never matches", []string{".."}, "anything.com", false},
+		{"star alone never matches", []string{"*"}, "example.com", false},
+		{"star dot never matches", []string{"*."}, "example.com", false},
+		{"entry with space never matches", []string{"ex ample.com"}, "ex ample.com", false},
+		{"case-insensitive entry", []string{"EXAMPLE.com"}, "example.com", true},
 	}
-	for host, want := range cases {
-		if got := f.allowed(host); got != want {
-			t.Errorf("allowed(%q) = %v, want %v", host, got, want)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewAllowlistFetcher(tc.allow)
+			if got := f.allowed(tc.host); got != tc.want {
+				t.Errorf("allowed(%q) with allow %q = %v, want %v", tc.host, tc.allow, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewValidatedAllowlistFetcher(t *testing.T) {
+	valid := [][]string{
+		nil,
+		{"example.com"},
+		{".example.com"},
+		{"*.example.com"},
+		{"a-b.example.com", "xn--80ak6aa92e.com"},
+	}
+	for _, allow := range valid {
+		if _, err := NewValidatedAllowlistFetcher(allow); err != nil {
+			t.Errorf("NewValidatedAllowlistFetcher(%q) err = %v, want nil", allow, err)
 		}
+	}
+
+	rejected := [][]string{
+		{""},
+		{"."},
+		{".."},
+		{"*"},
+		{"*."},
+		{"bad host.com"},                    // space
+		{"-leadinghyphen.com"},              // leading hyphen
+		{"trailinghyphen-.com"},             // trailing hyphen label
+		{"empty..label.com"},                // empty label
+		{strings.Repeat("a", 64) + ".com"},  // label over 63 bytes
+		{strings.Repeat("a.", 127) + "com"}, // total length over 253
+	}
+	for _, allow := range rejected {
+		f, err := NewValidatedAllowlistFetcher(allow)
+		if err == nil {
+			t.Errorf("NewValidatedAllowlistFetcher(%q) accepted, want error", allow)
+			continue
+		}
+		if f != nil {
+			t.Errorf("NewValidatedAllowlistFetcher(%q) returned a fetcher alongside an error", allow)
+		}
+		for _, entry := range allow {
+			if !strings.Contains(err.Error(), entry) && strings.TrimSpace(entry) != "" {
+				t.Errorf("error for %q does not list offending entry: %v", allow, err)
+			}
+		}
+	}
+
+	// A rejected list must name the offender so operators can fix config fast.
+	_, err := NewValidatedAllowlistFetcher([]string{"ok.example.com", "bad host.com"})
+	if err == nil || !strings.Contains(err.Error(), `"bad host.com"`) {
+		t.Fatalf("mixed-list error = %v, want the offending entry named", err)
 	}
 }

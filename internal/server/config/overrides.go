@@ -19,6 +19,7 @@ var persistableFields = []string{
 	"secrets.gatewayTokenFile", "secrets.runnerTokenFile", "runtime.production",
 	"runtime.acknowledgeUnlimitedLimits", "runtime.shutdownTimeout", "runtime.runnerEndpoint",
 	"runtime.runnerWorker", "runtime.runnerScratchRoot", "runtime.workerUIDBase",
+	"runtime.hostCommandAllowlist",
 }
 
 // FieldNames returns the fixed schema paths accepted by set, unset, flags, and

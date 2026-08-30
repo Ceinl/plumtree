@@ -2,7 +2,14 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -69,7 +76,7 @@ func TestProcessRunnerProxiesHostCommands(t *testing.T) {
 	wasm := buildGuest(t, "testdata/execguest", "GOWORK=off")
 	var out strings.Builder
 	pr := NewProcessRunner(worker)
-	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Exec: LocalCommander{}}, nil, &out); err != nil {
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{Exec: LocalCommander{Allowlist: []string{"echo"}}}, nil, &out); err != nil {
 		t.Fatalf("ProcessRunner.RunCLI: %v", err)
 	}
 	if got := out.String(); !strings.Contains(got, "exit=0 stdout=host-ok") {
@@ -268,4 +275,76 @@ func TestProcessRunnerProxiesAllCapabilities(t *testing.T) {
 				want, frameText(sink.frames[len(sink.frames)-1]))
 		}
 	}
+}
+
+// The broker speaks tls:// with a generated key pair, and a full CLI session
+// completes over the encrypted transport with server-authenticated TLS.
+func TestRemoteProcessRunnerCLIOverTLS(t *testing.T) {
+	worker := buildWorker(t)
+	wasm := buildGuest(t, "testdata/kvguest", "GOWORK=off")
+
+	certPEM, keyPEM := testCertificate(t)
+	certFile := filepath.Join(t.TempDir(), "broker.crt")
+	keyFile := filepath.Join(t.TempDir(), "broker.key")
+	if err := os.WriteFile(certFile, certPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tlsConfig, err := TLSListenerConfig(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secure := tls.NewListener(listener, tlsConfig)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	broker := &Broker{WorkerPath: worker, Token: "runner-secret", MaxSessions: 1}
+	errCh := make(chan error, 1)
+	go func() { errCh <- broker.Serve(ctx, secure) }()
+
+	store := NewMemStore(0, 0)
+	var out strings.Builder
+	pr := NewRemoteProcessRunner("tls://"+listener.Addr().String(), "runner-secret")
+	pr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // test CA is not in the system roots
+	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, nil, &out); err != nil {
+		t.Fatalf("TLS ProcessRunner.RunCLI: %v", err)
+	}
+	if !strings.Contains(out.String(), "get=11:hello world") {
+		t.Errorf("output missing KV round-trip; full output:\n%s", out.String())
+	}
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("broker shutdown: %v", err)
+	}
+}
+
+func testCertificate(t *testing.T) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return certPEM, keyPEM
 }

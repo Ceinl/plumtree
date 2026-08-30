@@ -262,7 +262,12 @@ func (s *Server) routeApps(w http.ResponseWriter, r *http.Request, p Principal, 
 			if !s.readJSON(w, r, &req) {
 				return
 			}
-			app, err := s.repo.CreateApp(r.Context(), sqlite.AppInput{ID: newID("app"), AuthorID: p.AuthorID, CreatedByDeviceID: p.DeviceID, Name: req.Name, Kind: req.Kind, AccessMode: req.AccessMode})
+			appID, err := newID("app")
+			if err != nil {
+				s.problemForError(w, err)
+				return
+			}
+			app, err := s.repo.CreateApp(r.Context(), sqlite.AppInput{ID: appID, AuthorID: p.AuthorID, CreatedByDeviceID: p.DeviceID, Name: req.Name, Kind: req.Kind, AccessMode: req.AccessMode})
 			if err != nil {
 				s.problemForError(w, err)
 				return
@@ -353,7 +358,12 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request, p Principa
 		if !s.readJSON(w, r, &req) {
 			return
 		}
-		key, err := s.repo.AddAccessKey(r.Context(), sqlite.AccessKeyInput{ID: newID("access"), AppID: appID, Name: req.Name, PublicKey: req.PublicKey, Fingerprint: req.Fingerprint, AddedByDeviceID: p.DeviceID})
+		keyID, err := newID("access")
+		if err != nil {
+			s.problemForError(w, err)
+			return
+		}
+		key, err := s.repo.AddAccessKey(r.Context(), sqlite.AccessKeyInput{ID: keyID, AppID: appID, Name: req.Name, PublicKey: req.PublicKey, Fingerprint: req.Fingerprint, AddedByDeviceID: p.DeviceID})
 		if err != nil {
 			s.problemForError(w, err)
 			return
@@ -476,7 +486,12 @@ func (s *Server) handleDeployment(w http.ResponseWriter, r *http.Request, p Prin
 		s.problemForError(w, err)
 		return
 	}
-	artifactInput := sqlite.ArtifactInput{ID: newID("artifact"), Digest: digestBytes(wasm), WASM: wasm, ABIVersion: int(metadata.ABIVersion), BuildMetadata: metadata.BuildMetadata}
+	artifactID, err := newID("artifact")
+	if err != nil {
+		s.problemForError(w, err)
+		return
+	}
+	artifactInput := sqlite.ArtifactInput{ID: artifactID, Digest: digestBytes(wasm), WASM: wasm, ABIVersion: int(metadata.ABIVersion), BuildMetadata: metadata.BuildMetadata}
 	result, err := s.repo.DeployApplication(r.Context(), sqlite.ApplicationDeploymentInput{AuthorID: p.AuthorID, DeviceID: p.DeviceID, AppName: metadata.AppName, Kind: metadata.AppType, AccessMode: metadata.AccessMode, SourceDigest: metadata.SourceDigest, PreviousDeploymentID: previous, Artifact: artifactInput})
 	if err != nil {
 		s.problemForError(w, err)
@@ -723,12 +738,12 @@ func (s *Server) methodNotAllowed(w http.ResponseWriter) {
 	s.problem(w, problem{status: http.StatusMethodNotAllowed, code: "method_not_allowed", title: "Method not allowed", detail: "the HTTP method is not supported for this route"})
 }
 
-func newID(prefix string) string {
+func newID(prefix string) (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return prefix + "_fallback"
+		return "", fmt.Errorf("generate %s id: %w", prefix, err)
 	}
-	return prefix + "_" + hex.EncodeToString(b[:])
+	return prefix + "_" + hex.EncodeToString(b[:]), nil
 }
 func digestBytes(data []byte) string {
 	sum := sha256.Sum256(data)

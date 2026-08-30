@@ -28,9 +28,10 @@ type Limits struct {
 	FrameTimeout time.Duration // wall-clock deadline for one frame's compute
 
 	// SessionTimeout caps the total wall-clock time for the whole session, a
-	// proxy for a CPU/time quota. 0 means unlimited. It bounds a guest that
-	// yields every frame (so the per-frame watchdog never fires) but runs
-	// forever.
+	// proxy for a CPU/time quota. 0 selects MaxSessionTimeout, a hard ceiling
+	// that keeps an unconfigured deployment from hosting a guest forever. It
+	// bounds a guest that yields every frame (so the per-frame watchdog never
+	// fires) but runs forever.
 	SessionTimeout time.Duration
 	// MaxEventsPerSec caps how fast input events are delivered to the guest. 0
 	// means unlimited. Excess input is delayed, never dropped, so keystrokes are
@@ -68,6 +69,19 @@ var DefaultLimits = Limits{
 // was terminated.
 var ErrSessionDeadline = errors.New("session exceeded total time budget; terminated")
 
+// MaxSessionTimeout is the hard ceiling applied when an operator leaves
+// SessionTimeout unlimited, so every guest runs under a total time budget.
+const MaxSessionTimeout = 24 * time.Hour
+
+// effectiveSessionTimeout returns the configured total-session budget, or
+// MaxSessionTimeout when the configured budget is unlimited.
+func effectiveSessionTimeout(lim Limits) time.Duration {
+	if lim.SessionTimeout > 0 {
+		return lim.SessionTimeout
+	}
+	return MaxSessionTimeout
+}
+
 // Source supplies input events to the guest. Next blocks until an event is
 // ready and returns ok=false to tell the guest to stop (disconnect, scripted
 // end, or cancellation).
@@ -103,12 +117,10 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 	if err := validateLimits(lim); err != nil {
 		return err
 	}
-	sessCtx := ctx
-	if lim.SessionTimeout > 0 {
-		var sessCancel context.CancelFunc
-		sessCtx, sessCancel = context.WithTimeout(ctx, lim.SessionTimeout)
-		defer sessCancel()
-	}
+	// The total-session budget is always applied: an unlimited configuration
+	// selects the hard MaxSessionTimeout ceiling instead of running unbounded.
+	sessCtx, sessCancel := context.WithTimeout(ctx, effectiveSessionTimeout(lim))
+	defer sessCancel()
 	runCtx, cancel := context.WithCancel(sessCtx)
 	defer cancel()
 
@@ -129,6 +141,12 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 	}
 
 	wd := &watchdog{timeout: lim.FrameTimeout, cancel: cancel}
+	// The session watchdog bounds guest execution stretches the per-frame
+	// watchdog never sees: compute before the first recv (where wd is not yet
+	// armed) and loops between present calls (where wd is disarmed). It is
+	// armed before _start runs and re-armed as each host call returns; firing
+	// terminates the session with ErrSessionDeadline.
+	sessionWd := &watchdog{timeout: effectiveSessionTimeout(lim), cancel: cancel}
 
 	timers := caps.timers
 	if timers == nil {
@@ -170,6 +188,7 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 				return -1
 			}
 			wd.arm() // the guest now has a frame's worth of work to do
+			sessionWd.arm()
 			return int32(len(b))
 		}).
 		Export("recv").
@@ -191,6 +210,7 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 			if f, err := abi.DecodeFrame(buf); err == nil {
 				sink.Present(f)
 			}
+			sessionWd.arm() // the next guest stretch gets a fresh session budget
 		}).
 		Export("present")
 
@@ -210,13 +230,19 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 		WithName("app").
 		WithStdout(logs).
 		WithStderr(logs)
-	// Command module: Instantiate runs _start (main) to completion.
+	// Command module: Instantiate runs _start (main) to completion. The session
+	// watchdog is armed first so startup compute is bounded even though the
+	// per-frame watchdog only arms at the first recv.
+	sessionWd.arm()
 	_, err := r.InstantiateWithConfig(runCtx, wasm, modCfg)
 	wd.disarm()
 
 	if err != nil {
 		if wd.fired.Load() {
 			return ErrFrameDeadline
+		}
+		if sessionWd.fired.Load() {
+			return ErrSessionDeadline
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()

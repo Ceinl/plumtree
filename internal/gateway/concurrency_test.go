@@ -51,8 +51,10 @@ func (b *countingBackend) ResolveRunnable(string) (Runnable, error) {
 func (*countingBackend) StartSession(string, string) (string, error) { return "", nil }
 func (*countingBackend) RecordSessionLog(string, string, bool) error { return nil }
 func (*countingBackend) EndSession(string) error                     { return nil }
-func (*countingBackend) SecretsForApp(string) map[string]string      { return nil }
-func (*countingBackend) EgressAllowlist(string) []string             { return nil }
+func (*countingBackend) SecretsForApp(string) (map[string]string, error) {
+	return nil, nil
+}
+func (*countingBackend) EgressAllowlist(string) ([]string, error) { return nil, nil }
 
 func TestAcquireSlotUnlimited(t *testing.T) {
 	s := &Server{} // MaxConcurrentSessions == 0, slots nil

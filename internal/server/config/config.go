@@ -103,6 +103,10 @@ type Runtime struct {
 	RunnerWorker               string `json:"runnerWorker,omitempty"`
 	RunnerScratchRoot          string `json:"runnerScratchRoot,omitempty"`
 	WorkerUIDBase              int    `json:"workerUIDBase,omitempty"`
+	// HostCommandAllowlist is a comma-separated list of executables hosted
+	// apps may run as the server OS user. Empty (the default) keeps host
+	// commands disabled; shell interpreters are always refused.
+	HostCommandAllowlist string `json:"hostCommandAllowlist,omitempty"`
 }
 
 // Secret references are paths only. Secret bytes are read by a role only when
@@ -208,8 +212,14 @@ func (c Config) ValidateProduction() error {
 	if c.Roles.Gateway && strings.TrimSpace(c.Runtime.RunnerEndpoint) == "" {
 		return fmt.Errorf("%w: production gateway requires runtime.runnerEndpoint", ErrInvalid)
 	}
-	if c.Roles.Gateway && !strings.HasPrefix(c.Runtime.RunnerEndpoint, "unix://") {
-		return fmt.Errorf("%w: production gateway runner endpoint must use a Unix socket", ErrInvalid)
+	if c.Roles.Gateway {
+		switch endpoint := c.Runtime.RunnerEndpoint; {
+		case strings.HasPrefix(endpoint, "unix://"), strings.HasPrefix(endpoint, "tls://"):
+		case strings.HasPrefix(endpoint, "tcp://"):
+			return fmt.Errorf("%w: production gateway runner endpoint %q uses plain tcp://, which ships the broker token and session traffic unencrypted; use unix:// or tls://", ErrInvalid, endpoint)
+		default:
+			return fmt.Errorf("%w: production gateway runner endpoint must use unix:// or tls://", ErrInvalid)
+		}
 	}
 	if c.Roles.Gateway && strings.TrimSpace(c.Secrets.GatewayTokenFile) == "" {
 		return fmt.Errorf("%w: production gateway requires secrets.gatewayTokenFile", ErrInvalid)
@@ -217,6 +227,9 @@ func (c Config) ValidateProduction() error {
 	if c.Roles.Runner {
 		if c.Roles.Control || c.Roles.Gateway {
 			return fmt.Errorf("%w: production runner must use an isolated role", ErrInvalid)
+		}
+		if endpoint := c.Runtime.RunnerEndpoint; strings.HasPrefix(endpoint, "tcp://") {
+			return fmt.Errorf("%w: production runner endpoint %q uses plain tcp://, which ships the broker token and session traffic unencrypted; use unix:// or tls://", ErrInvalid, endpoint)
 		}
 		if strings.TrimSpace(c.Runtime.RunnerEndpoint) == "" || strings.TrimSpace(c.Runtime.RunnerWorker) == "" || strings.TrimSpace(c.Secrets.RunnerTokenFile) == "" {
 			return fmt.Errorf("%w: production runner requires endpoint, worker, and token", ErrInvalid)
@@ -671,6 +684,8 @@ func (c Config) Set(field, value string) (Config, error) {
 			return c, fmt.Errorf("%w: workerUIDBase", ErrInvalid)
 		}
 		next.Runtime.WorkerUIDBase = v
+	case "runtime.hostCommandAllowlist":
+		next.Runtime.HostCommandAllowlist = value
 	case "exposure.http.enabled":
 		v, e := strconv.ParseBool(value)
 		if e != nil {
@@ -782,6 +797,8 @@ func (c Config) Unset(field string) (Config, error) {
 		c.Runtime.RunnerScratchRoot = d.Runtime.RunnerScratchRoot
 	case "runtime.workerUIDBase":
 		c.Runtime.WorkerUIDBase = d.Runtime.WorkerUIDBase
+	case "runtime.hostCommandAllowlist":
+		c.Runtime.HostCommandAllowlist = d.Runtime.HostCommandAllowlist
 	default:
 		return c, fmt.Errorf("%w: unknown setting %q", ErrInvalid, field)
 	}

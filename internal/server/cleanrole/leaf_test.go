@@ -105,6 +105,44 @@ func TestLeafAccessMatrixUsesProvedAppRelativeKeys(t *testing.T) {
 	}
 }
 
+func TestSuspendedLeafDeploymentRejectsWithNonzeroExitStatus(t *testing.T) {
+	dir := t.TempDir()
+	database := filepath.Join(dir, "plumtree.db")
+	wasm := buildCleanCLI(t)
+	seedLeafApp(t, database, wasm, "public")
+	repo, err := sqlite.OpenRepository(database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetDeploymentSuspended(context.Background(), "deployment-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan string, 1)
+	go func() {
+		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-suspended", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
+	}()
+	client := dialLeaf(t, <-ready, "alice/tool", nil)
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, runErr := session.CombinedOutput("get_identity")
+	var exit *ssh.ExitError
+	if !errors.As(runErr, &exit) || exit.ExitStatus() == 0 {
+		t.Fatalf("suspended deployment ran: err=%v output=%s", runErr, output)
+	}
+	if !strings.Contains(string(output), "unavailable") {
+		t.Fatalf("output=%s", output)
+	}
+}
+
 func TestPublicLeafShellRunsTUIAndHandlesDisconnect(t *testing.T) {
 	dir := t.TempDir()
 	database := filepath.Join(dir, "plumtree.db")

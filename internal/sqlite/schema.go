@@ -221,6 +221,19 @@ var schemaStatements = []string{
  ON sessions(app_id, started_at_ns DESC)`,
 	`CREATE INDEX IF NOT EXISTS sessions_open_app_idx
  ON sessions(app_id) WHERE ended_at_ns IS NULL`,
+	`CREATE TABLE IF NOT EXISTS kv_entries (
+  app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  key BLOB NOT NULL,
+  value BLOB NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  updated_at_ns INTEGER NOT NULL,
+  PRIMARY KEY (app_id, key)
+) STRICT`,
+	`CREATE TABLE IF NOT EXISTS kv_usage (
+  app_id TEXT PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  keys INTEGER NOT NULL CHECK (keys >= 0),
+  bytes INTEGER NOT NULL CHECK (bytes >= 0)
+) STRICT`,
 	`CREATE TABLE IF NOT EXISTS author_quotas (
   author_id TEXT PRIMARY KEY REFERENCES authors(id) ON DELETE CASCADE,
   max_apps INTEGER NOT NULL,

@@ -60,11 +60,10 @@ func runCLI(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim
 		return err
 	}
 	callerCtx := ctx
-	if lim.SessionTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, lim.SessionTimeout)
-		defer cancel()
-	}
+	// A CLI guest gets the same total-session budget as a TUI guest; an
+	// unlimited configuration selects the hard MaxSessionTimeout ceiling.
+	ctx, cancel := context.WithTimeout(ctx, effectiveSessionTimeout(lim))
+	defer cancel()
 	cfg := wazero.NewRuntimeConfig().
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(lim.MemoryPages)

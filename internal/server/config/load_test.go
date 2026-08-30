@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,43 @@ func TestLoadRejectsInvalidEnvironmentInsteadOfFallingBack(t *testing.T) {
 	}, HostMemory: 1 << 30})
 	if err == nil {
 		t.Fatal("invalid environment value was accepted")
+	}
+}
+
+// Production must refuse the cleartext tcp:// runner transport by name while
+// accepting both encrypted transports.
+func TestProductionValidationRefusesPlainTCPRunnerEndpoint(t *testing.T) {
+	tests := []struct {
+		name, endpoint string
+		accepted       bool
+	}{
+		{name: "unix socket", endpoint: "unix:///run/plumtree/runner.sock", accepted: true},
+		{name: "tls", endpoint: "tls://broker.internal:7947", accepted: true},
+		{name: "plain tcp", endpoint: "tcp://broker.internal:7947"},
+	}
+	for _, gatewayRole := range []bool{true, false} {
+		for _, test := range tests {
+			c := Default()
+			c.Runtime.Production = true
+			c.Roles = Roles{Control: false, Gateway: gatewayRole, Runner: !gatewayRole}
+			c.Secrets.DatabaseKeyFile = filepath.Join(t.TempDir(), "database.key")
+			c.Secrets.RunnerTokenFile = filepath.Join(t.TempDir(), "runner.token")
+			if gatewayRole {
+				c.Secrets.GatewayTokenFile = filepath.Join(t.TempDir(), "gateway.token")
+			}
+			c.Runtime.RunnerWorker = "/usr/local/bin/runner-worker"
+			c.Runtime.RunnerEndpoint = test.endpoint
+			err := c.ValidateProduction()
+			if test.accepted && err != nil {
+				t.Errorf("%s (gateway=%t): %v", test.name, gatewayRole, err)
+			}
+			if !test.accepted {
+				if err == nil {
+					t.Errorf("%s (gateway=%t): plain tcp:// was accepted", test.name, gatewayRole)
+				} else if !strings.Contains(err.Error(), "tcp://") {
+					t.Errorf("%s (gateway=%t): error %q does not name tcp://", test.name, gatewayRole, err)
+				}
+			}
+		}
 	}
 }

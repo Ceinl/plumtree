@@ -31,6 +31,13 @@ type windowChange struct {
 
 type execRequest struct{ Command string }
 
+// sendExitStatus reports a terminal session result before the channel closes.
+// Early rejects must report failure too, so clients scripting over SSH see a
+// nonzero status instead of a silent success default.
+func sendExitStatus(ch ssh.Channel, status uint32) {
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
+}
+
 func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request, handle string, identity runner.Identity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -85,6 +92,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				if err != nil {
 					req.Reply(true, nil)
 					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					sendExitStatus(ch, 1)
 					ch.Close()
 					cancel()
 					return
@@ -146,6 +154,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	if !s.acquireSlot() {
 		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.MaxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
+		sendExitStatus(ch, 1)
 		ch.Close()
 		cancel()
 		return
@@ -163,6 +172,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 			msg = fmt.Sprintf("app %q is temporarily unavailable (suspended)", handle)
 		}
 		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
+		sendExitStatus(ch, 1)
 		ch.Close()
 		cancel()
 		return
@@ -179,6 +189,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 			msg = "this app has reached its daily connection limit; try again later"
 		}
 		fmt.Fprintf(ch.Stderr(), "%s\r\n", msg)
+		sendExitStatus(ch, 1)
 		ch.Close()
 		cancel()
 		return
@@ -204,24 +215,25 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 		s.logf("end session %q: %v", sessionID, err)
 	}
 	s.logf("session end id=%s app=%q duration=%s log=%dB truncated=%t", sessionID, run.AppName, sessionDuration.Round(time.Millisecond), len(log), truncated)
-	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitStatus}))
+	sendExitStatus(ch, exitStatus)
 	ch.Close()
 	cancel()
 }
 
 func appRelativeIdentity(identity runner.Identity, appOwnerID string) runner.Identity {
-	identity.OwnsApp = identity.OwnerID != "" && identity.OwnerID == appOwnerID
+	identity.OwnsApp = identity.Authenticated && identity.OwnerID != "" && identity.OwnerID == appOwnerID
 	identity.OwnerID = ""
 	return identity
 }
 
-func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal) (string, bool) {
+func (s *Server) runSession(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal) (string, bool, uint32) {
 	return s.runSessionArgs(ctx, ch, wasm, appType, caps, size, winch, nil)
 }
 
-func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool) {
-	log, truncated, _ := s.runSessionArgsStatus(ctx, ch, wasm, appType, caps, size, winch, args)
-	return log, truncated
+// runSessionArgs reports the captured log, whether it was truncated, and the
+// guest's exit status: 0 for success or caller cancellation, nonzero otherwise.
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool, uint32) {
+	return s.runSessionArgsStatus(ctx, ch, wasm, appType, caps, size, winch, args)
 }
 
 func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool, uint32) {
@@ -302,7 +314,9 @@ func (s *Server) startAccountedSession(run Runnable, identity runner.Identity) (
 
 func (s *Server) isolatedRunner() *runner.ProcessRunner {
 	if s.RunnerEndpoint != "" {
-		return runner.NewRemoteProcessRunner(s.RunnerEndpoint, s.RunnerToken)
+		pr := runner.NewRemoteProcessRunner(s.RunnerEndpoint, s.RunnerToken)
+		pr.Logf = s.logf
+		return pr
 	}
 	if s.RunnerWorker != "" {
 		return runner.NewProcessRunner(s.RunnerWorker)

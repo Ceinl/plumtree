@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -157,6 +158,16 @@ func (b *Broker) logf(format string, args ...any) {
 	if b.Logf != nil {
 		b.Logf(format, args...)
 	}
+}
+
+// TLSListenerConfig loads a PEM certificate/key pair for a TLS-secured broker
+// listener, enforcing modern defaults (MinVersion TLS 1.2).
+func TLSListenerConfig(certFile, keyFile string) (*tls.Config, error) {
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("runner: load broker TLS key pair: %w", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}, nil
 }
 
 func writeBrokerAuth(w io.Writer, token string) error {
