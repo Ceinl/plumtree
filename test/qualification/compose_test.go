@@ -118,7 +118,7 @@ func TestComposeReleaseJourney(t *testing.T) {
 	record := readCurrentServer(t, serversPath)
 	deviceKey := filepath.Join(filepath.Dir(serversPath), "keys", record.KeyRef)
 	assertContains(t, runOK(t, command{path: ssh, env: authorEnv, timeout: 20 * time.Second, args: sshArgs(endpoint, deviceKey, "alice/hello-cli", "Dima")}), "Hello Dima")
-	assertContains(t, runTUISSH(t, endpoint, deviceKey, "alice/counter"), "Count: 0")
+	assertContains(t, runTUISSH(t, endpoint, deviceKey, "alice/counter", "Count: 0"), "Count: 0")
 	runManagementJourney(t, pt, sshKeygen, authorEnv, endpoint, root, helloID)
 	assertContains(t, runOK(t, command{path: pt, env: authorEnv, args: []string{"logs", helloID}}), "sessions")
 

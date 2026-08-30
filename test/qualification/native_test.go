@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,7 +122,7 @@ func TestNativeReleaseJourney(t *testing.T) {
 
 	cliSSH := runOK(t, command{path: ssh, env: baseEnv, timeout: 15 * time.Second, args: sshArgs(endpoint, deviceKey, "alice/hello-cli", "Dima")})
 	assertContains(t, cliSSH, "Hello Dima")
-	tuiSSH := runTUISSH(t, endpoint, deviceKey, "alice/counter")
+	tuiSSH := runTUISSH(t, endpoint, deviceKey, "alice/counter", "Count: 0")
 	assertContains(t, tuiSSH, "Count: 0")
 
 	runManagementJourney(t, pt, sshKeygen, baseEnv, endpoint, root, helloID)
@@ -160,7 +161,7 @@ func TestNativeReleaseJourney(t *testing.T) {
 	runOK(t, command{path: ssh, env: baseEnv, timeout: 15 * time.Second, args: sshArgs(server.endpoint, deviceKey, "alice/hello-cli", "restored")})
 }
 
-func runTUISSH(t *testing.T, endpoint, keyPath, user string) string {
+func runTUISSH(t *testing.T, endpoint, keyPath, user, readyText string) string {
 	t.Helper()
 	key, err := os.ReadFile(keyPath)
 	if err != nil {
@@ -183,8 +184,8 @@ func runTUISSH(t *testing.T, endpoint, keyPath, user string) string {
 	if err := session.RequestPty("xterm", 12, 40, ssh.TerminalModes{}); err != nil {
 		t.Fatalf("request TUI PTY: %v", err)
 	}
-	var output bytes.Buffer
-	session.Stdout, session.Stderr = &output, &output
+	output := newSessionOutput(readyText)
+	session.Stdout, session.Stderr = output, output
 	stdin, err := session.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +193,7 @@ func runTUISSH(t *testing.T, endpoint, keyPath, user string) string {
 	if err := session.Start(""); err != nil {
 		t.Fatalf("start TUI leaf: %v", err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	output.wait(5 * time.Second)
 	if _, err := stdin.Write([]byte("q")); err != nil {
 		t.Fatalf("quit TUI leaf: %v", err)
 	}
@@ -200,6 +201,42 @@ func runTUISSH(t *testing.T, endpoint, keyPath, user string) string {
 		t.Fatalf("run TUI leaf: %v\n%s", err, output.String())
 	}
 	return output.String()
+}
+
+type sessionOutput struct {
+	mu        sync.Mutex
+	buffer    bytes.Buffer
+	readyText []byte
+	ready     chan struct{}
+	once      sync.Once
+}
+
+func newSessionOutput(readyText string) *sessionOutput {
+	return &sessionOutput{readyText: []byte(readyText), ready: make(chan struct{})}
+}
+
+func (o *sessionOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	n, err := o.buffer.Write(p)
+	ready := bytes.Contains(o.buffer.Bytes(), o.readyText)
+	o.mu.Unlock()
+	if ready {
+		o.once.Do(func() { close(o.ready) })
+	}
+	return n, err
+}
+
+func (o *sessionOutput) wait(timeout time.Duration) {
+	select {
+	case <-o.ready:
+	case <-time.After(timeout):
+	}
+}
+
+func (o *sessionOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buffer.String()
 }
 
 func runManagementJourney(t *testing.T, pt, sshKeygen string, env []string, endpoint, root, appID string) {
