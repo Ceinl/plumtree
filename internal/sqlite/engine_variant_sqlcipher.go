@@ -13,6 +13,9 @@ package sqlite
 // deliberately does not load a library or extension at runtime.
 #include <sqlite3.h>
 #include <string.h>
+// SQLCipher 3 exports sqlite3_key but does not declare it in every packaged
+// sqlite3.h. Keep the stable SQLCipher API visible to the compiler.
+int sqlite3_key(sqlite3 *db, const void *key, int key_len);
 #if !defined(SQLITE_HAS_CODEC)
 #error SQLCipher builds must define SQLITE_HAS_CODEC
 #endif

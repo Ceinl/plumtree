@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -37,6 +39,27 @@ func TestOpenPlaintextDevelopmentMode(t *testing.T) {
 	}
 	if info.JournalMode != "wal" {
 		t.Fatalf("journal mode = %q, want wal", info.JournalMode)
+	}
+}
+
+func TestOpenCreatesPrivateDatabaseFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("database permissions = %o, want 600", got)
 	}
 }
 

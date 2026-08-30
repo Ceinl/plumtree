@@ -28,6 +28,7 @@ import (
 	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
 	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
 	"github.com/Ceinl/plumtree/internal/sqlite"
+	statebundle "github.com/Ceinl/plumtree/internal/state"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
 )
@@ -56,10 +57,13 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		return executeConfig(args[1:], environment, out)
 	}
 	if len(args) > 0 && args[0] == "bootstrap" {
-		return runBootstrap(args[1:], out)
+		return runBootstrap(ctx, args[1:], environment, out)
 	}
 	if len(args) > 1 && args[0] == "author" && args[1] == "bootstrap" {
-		return runBootstrap(args[2:], out)
+		return runBootstrap(ctx, args[2:], environment, out)
+	}
+	if len(args) > 0 && args[0] == "state" {
+		return runState(ctx, args[1:], environment, out)
 	}
 	if len(args) > 0 {
 		switch args[0] {
@@ -113,23 +117,140 @@ func runLifecycle(ctx context.Context, cfg serverconfig.Config, component server
 	return err
 }
 
-func runBootstrap(args []string, out io.Writer) error {
+func runBootstrap(ctx context.Context, args, environment []string, out io.Writer) error {
 	fs := flag.NewFlagSet("plumtree bootstrap", flag.ContinueOnError)
-	database := fs.String("database", "plumtree.db", "path to the Plumtree SQLite database")
+	database := fs.String("database", "", "path to the Plumtree SQLite database")
+	configPath := fs.String("config", "", "typed config file path")
 	handle := fs.String("handle", "", "author handle bound to this authority")
 	device := fs.String("device", "device", "first device name")
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-use authority lifetime")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *handle == "" {
-		return errors.New("usage: plumtree bootstrap -database PATH -handle HANDLE [-device NAME] [-ttl 10m]")
+	if fs.NArg() != 0 || *handle == "" || (*database != "" && *configPath != "") {
+		return errors.New("usage: plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m]")
 	}
-	result, err := Bootstrap(context.Background(), BootstrapConfig{Database: *database, Handle: *handle, DeviceName: *device, TTL: *ttl})
+	databasePath := *database
+	var databaseKey []byte
+	if *configPath != "" {
+		projection, err := loadControlProjection(*configPath, environment)
+		if err != nil {
+			return err
+		}
+		if err := ensurePrivateDirectory(projection.Config().Storage.KVRoot); err != nil {
+			return fmt.Errorf("clean server: prepare KV root: %w", err)
+		}
+		databasePath = projection.Config().Storage.DatabasePath
+		databaseKey = projection.Secret()
+	}
+	if databasePath == "" {
+		databasePath = "plumtree.db"
+	}
+	result, err := Bootstrap(ctx, BootstrapConfig{Database: databasePath, DatabaseKey: databaseKey, Handle: *handle, DeviceName: *device, TTL: *ttl})
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"bootstrapID": result.ID, "handle": result.Handle, "deviceName": result.DeviceName, "secret": string(result.Secret), "expiresAt": result.ExpiresAt})
+}
+
+func ensurePrivateDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("directory must be private and must not be a symlink")
+	}
+	return nil
+}
+
+func loadControlProjection(configPath string, environment []string) (serverconfig.RoleProjection, error) {
+	loaded, err := serverconfig.Load(serverconfig.LoadOptions{
+		Path: configPath, Environment: environmentMap(environment), ReadFile: os.ReadFile, HostMemory: serverconfig.HostMemory(),
+	})
+	if err != nil {
+		return serverconfig.RoleProjection{}, fmt.Errorf("clean server: load config: %w", err)
+	}
+	loaded.Config = serverconfig.ResolvePaths(loaded.Config, configPath)
+	if err := loaded.Config.ValidateProduction(); err != nil {
+		return serverconfig.RoleProjection{}, fmt.Errorf("clean server: production validation: %w", err)
+	}
+	if !loaded.Config.Roles.Control {
+		return serverconfig.RoleProjection{}, errors.New("clean server: control role is required")
+	}
+	projection, err := serverconfig.MaterializeRole(loaded.Config, serverconfig.RoleControl)
+	if err != nil {
+		return serverconfig.RoleProjection{}, fmt.Errorf("clean server: control configuration: %w", err)
+	}
+	return projection, nil
+}
+
+func runState(ctx context.Context, args, environment []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: plumtree state inventory|backup|restore")
+	}
+	command := args[0]
+	fs := flag.NewFlagSet("plumtree state "+command, flag.ContinueOnError)
+	configPath := fs.String("config", "", "typed config file path")
+	output := fs.String("output", "", "backup bundle path")
+	input := fs.String("input", "", "backup bundle path")
+	yes := fs.Bool("yes", false, "confirm a destructive restore")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: plumtree state inventory|backup|restore")
+	}
+	if *configPath == "" {
+		*configPath = environmentMap(environment)["PLUMTREE_CONFIG"]
+	}
+	if *configPath == "" {
+		var err error
+		*configPath, err = DefaultConfigPath()
+		if err != nil {
+			return err
+		}
+	}
+	projection, err := loadControlProjection(*configPath, environment)
+	if err != nil {
+		return err
+	}
+	cfg := projection.Config()
+	paths := statebundle.Paths{Database: cfg.Storage.DatabasePath, KVRoot: cfg.Storage.KVRoot, SSHIdentity: cfg.Storage.SSHIdentity}
+	key := projection.Secret()
+
+	switch command {
+	case "inventory":
+		if *input != "" || *output != "" || *yes {
+			return errors.New("usage: plumtree state inventory [-config PATH]")
+		}
+		report, err := statebundle.Inventory(ctx, paths, key)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(report)
+	case "backup":
+		if *output == "" || *input != "" || *yes {
+			return errors.New("usage: plumtree state backup [-config PATH] -output PATH")
+		}
+		if err := statebundle.Backup(ctx, paths, *output, key, statebundle.Options{}); err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"status": "backed-up", "output": *output})
+	case "restore":
+		if *input == "" || *output != "" || !*yes {
+			return errors.New("usage: plumtree state restore [-config PATH] -input PATH -yes")
+		}
+		if err := statebundle.Restore(ctx, *input, paths, key, statebundle.Options{}); err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"status": "restored", "input": *input})
+	default:
+		return fmt.Errorf("usage: plumtree state inventory|backup|restore: unknown command %q", command)
+	}
 }
 
 // splitDatabaseFlag extracts the shared -database operator flag from args so

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -117,6 +118,16 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 	if cfg.WALAutoCheckpointPages <= 0 {
 		cfg.WALAutoCheckpointPages = 1000
 	}
+	created, err := createPrivateDatabaseFile(cfg.Path)
+	if err != nil {
+		zero(key)
+		return nil, redactError(err)
+	}
+	cleanupCreated := func() {
+		if created {
+			_ = os.Remove(cfg.Path)
+		}
+	}
 
 	id := nextDriverID.Add(1)
 	driverName := fmt.Sprintf("plumtree-sqlite-%d", id)
@@ -130,6 +141,7 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 
 	db, err := sql.Open(driverName, sqliteDSN(cfg.Path))
 	if err != nil {
+		cleanupCreated()
 		zero(key)
 		return nil, redactError(err)
 	}
@@ -150,6 +162,7 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 	}
 	if err := result.PingContext(context.Background()); err != nil {
 		_ = db.Close()
+		cleanupCreated()
 		result.closeKey()
 		if encrypted {
 			return nil, ErrKeyRejected
@@ -157,6 +170,24 @@ func OpenWithConfig(cfg Config) (*DB, error) {
 		return nil, redactError(err)
 	}
 	return result, nil
+}
+
+func createPrivateDatabaseFile(path string) (bool, error) {
+	if path == ":memory:" {
+		return false, nil
+	}
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return false, err
+	}
+	return true, nil
 }
 
 func sqliteDSN(path string) string {

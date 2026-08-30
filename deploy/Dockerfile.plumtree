@@ -1,12 +1,19 @@
 FROM golang:1.26.5-alpine3.24 AS build
 WORKDIR /src
-RUN apk add --no-cache gcc musl-dev
+RUN apk add --no-cache bash gcc musl-dev openssl-dev sqlcipher-dev
 COPY . .
-RUN CGO_ENABLED=1 go build -trimpath -o /out/plumtree ./cmd/plumtree
-RUN CGO_ENABLED=1 go build -trimpath -o /out/runner-worker ./cmd/runner-worker
+RUN SQLCIPHER_PREFIX=/usr \
+    SQLCIPHER_INCLUDE=/usr/include/sqlcipher \
+    SQLCIPHER_LIBRARY=sqlcipher \
+    OPENSSL_PREFIX=/usr \
+    CC=gcc \
+    ./scripts/build-native-release.sh /out
 
 FROM alpine:3.24.1
-RUN adduser -D -u 65532 plumtree && mkdir -p /data && chown plumtree /data
+RUN apk add --no-cache sqlcipher-libs \
+    && adduser -D -u 65532 plumtree \
+    && mkdir -p /data \
+    && chown plumtree /data
 COPY --from=build /out/plumtree /usr/local/bin/plumtree
 COPY --from=build /out/runner-worker /usr/local/bin/runner-worker
 COPY --chown=plumtree:plumtree --chmod=0600 config.example.json /etc/plumtree/config.json

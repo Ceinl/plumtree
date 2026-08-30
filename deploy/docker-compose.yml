@@ -8,9 +8,21 @@ services:
     restart: unless-stopped
     ports:
       - "${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}:2222"
+    environment:
+      PLUMTREE_STORAGE_DATABASE_PATH: /data/plumtree.db
+      PLUMTREE_STORAGE_KV_ROOT: /data/plumtree-data
+      PLUMTREE_STORAGE_SSH_IDENTITY: /data/plumtree_host_key
+      PLUMTREE_ROLES_CONTROL: "true"
+      PLUMTREE_ROLES_GATEWAY: "true"
+      PLUMTREE_ROLES_RUNNER: "false"
+      PLUMTREE_RUNTIME_RUNNER_ENDPOINT: unix:///run/plumtree/runner.sock
+      PLUMTREE_RUNTIME_PRODUCTION: "true"
+      PLUMTREE_SECRETS_DATABASE_KEY_FILE: /run/secrets/database-key
+      PLUMTREE_SECRETS_GATEWAY_TOKEN_FILE: /run/secrets/runner-token
     volumes:
       - plumtree-data:/data
       - runner-socket:/run/plumtree
+      - ${PLUMTREE_DATABASE_KEY_FILE:-./database.key}:/run/secrets/database-key:ro
       - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
     command:
       - serve
@@ -18,6 +30,8 @@ services:
       - /etc/plumtree/config.json
       - -storage-database-path
       - /data/plumtree.db
+      - -storage-kv-root
+      - /data/plumtree-data
       - -storage-ssh-identity
       - /data/plumtree_host_key
       - -exposure-ssh-address
@@ -30,6 +44,10 @@ services:
       - "false"
       - -runtime-runner-endpoint
       - unix:///run/plumtree/runner.sock
+      - -runtime-production
+      - "true"
+      - -secrets-database-key-file
+      - /run/secrets/database-key
       - -secrets-gateway-token-file
       - /run/secrets/runner-token
       - -product-version
@@ -50,6 +68,15 @@ services:
       dockerfile: deploy/Dockerfile.plumtree
     restart: unless-stopped
     network_mode: none
+    environment:
+      PLUMTREE_ROLES_CONTROL: "false"
+      PLUMTREE_ROLES_GATEWAY: "false"
+      PLUMTREE_ROLES_RUNNER: "true"
+      PLUMTREE_RUNTIME_RUNNER_ENDPOINT: unix:///run/plumtree/runner.sock
+      PLUMTREE_RUNTIME_RUNNER_WORKER: /usr/local/bin/runner-worker
+      PLUMTREE_RUNTIME_RUNNER_SCRATCH_ROOT: /run/plumtree-sessions
+      PLUMTREE_RUNTIME_PRODUCTION: "true"
+      PLUMTREE_SECRETS_RUNNER_TOKEN_FILE: /run/secrets/runner-token
     volumes:
       - runner-socket:/run/plumtree
       - runner-scratch:/run/plumtree-sessions
@@ -70,6 +97,8 @@ services:
       - /usr/local/bin/runner-worker
       - -runtime-runner-scratch-root
       - /run/plumtree-sessions
+      - -runtime-production
+      - "true"
       - -secrets-runner-token-file
       - /run/secrets/runner-token
     read_only: true

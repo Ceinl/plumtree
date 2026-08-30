@@ -21,7 +21,7 @@ import (
 func TestBootstrapCommandPrintsOneUseAuthorityWithoutVerifier(t *testing.T) {
 	var out bytes.Buffer
 	database := filepath.Join(t.TempDir(), "plumtree.db")
-	if err := runBootstrap([]string{"-database", database, "-handle", "alice", "-device", "laptop", "-ttl", "2m"}, &out); err != nil {
+	if err := runBootstrap(context.Background(), []string{"-database", database, "-handle", "alice", "-device", "laptop", "-ttl", "2m"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(out.Bytes(), []byte(`"bootstrapID"`)) || !bytes.Contains(out.Bytes(), []byte(`"secret"`)) || bytes.Contains(out.Bytes(), []byte("verifier")) {

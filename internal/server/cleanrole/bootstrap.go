@@ -14,6 +14,7 @@ import (
 
 type BootstrapConfig struct {
 	Database, Handle, DeviceName string
+	DatabaseKey                  []byte
 	TTL                          time.Duration
 }
 
@@ -35,7 +36,7 @@ func Bootstrap(ctx context.Context, cfg BootstrapConfig) (BootstrapResult, error
 	if cfg.TTL < time.Minute || cfg.TTL > time.Hour {
 		return BootstrapResult{}, errors.New("clean server: bootstrap TTL must be between 1m and 1h")
 	}
-	repo, err := sqlite.OpenRepository(cfg.Database, nil)
+	repo, err := sqlite.OpenRepository(cfg.Database, cfg.DatabaseKey)
 	if err != nil {
 		return BootstrapResult{}, err
 	}
