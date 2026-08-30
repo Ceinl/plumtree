@@ -86,7 +86,7 @@ func (r Runner) devProject(args []string) error {
 	limits.MaxFramesPerSec = *maxFPS
 
 	if *sshMode {
-		return r.runSSH(ctx, result.Artifact.WASM, limits, caps, manifest, *sshAddr, *maxFPS, *sshHost, *noSSHConfig, out, errOut)
+		return r.runSSH(ctx, result.Artifact.WASM, limits, caps, manifest, *sshAddr, *allowNonloopback, *maxFPS, *sshHost, *noSSHConfig, out, errOut)
 	}
 	if manifest.Type == string(scaffold.CLI) {
 		err = runner.RunCLIWithStreams(ctx, result.Artifact.WASM, limits, caps, fs.Args(), runner.CLIStreams{Stdin: r.In, Stdout: out, Stderr: errOut})
@@ -139,10 +139,10 @@ func validateDevOptions(memoryPages uint, frameTimeout time.Duration, maxFPS, wi
 	return nil
 }
 
-func (r Runner) runSSH(ctx context.Context, wasm []byte, limits runner.Limits, caps runner.Capabilities, manifest Manifest, address string, maxFPS int, alias string, noSSHConfig bool, out, errOut io.Writer) error {
+func (r Runner) runSSH(ctx context.Context, wasm []byte, limits runner.Limits, caps runner.Capabilities, manifest Manifest, address string, allowNonloopback bool, maxFPS int, alias string, noSSHConfig bool, out, errOut io.Writer) error {
 	engine := runner.New()
 	defer engine.Close(context.Background())
-	server := &sshdev.Server{Wasm: wasm, Runner: engine, Limits: limits, Caps: caps, AppType: manifest.Type, AppName: manifest.Name, MaxFPS: maxFPS,
+	server := &sshdev.Server{Wasm: wasm, Runner: engine, Limits: limits, Caps: caps, AppType: manifest.Type, AppName: manifest.Name, MaxFPS: maxFPS, AllowNonloopback: allowNonloopback,
 		Logf: func(format string, values ...any) {
 			message := fmt.Sprintf(format, values...)
 			_, _ = fmt.Fprintln(errOut, runner.SanitizeTerminalText(message))

@@ -170,6 +170,7 @@ func TestNewValidatedAllowlistFetcher(t *testing.T) {
 		{".."},
 		{"*"},
 		{"*."},
+		{"*..example.com"},
 		{"bad host.com"},                    // space
 		{"-leadinghyphen.com"},              // leading hyphen
 		{"trailinghyphen-.com"},             // trailing hyphen label

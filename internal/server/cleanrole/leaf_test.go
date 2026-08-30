@@ -22,6 +22,23 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+func startLeafForTest(t *testing.T, ctx context.Context, cfg ServeConfig) string {
+	t.Helper()
+	ready := make(chan string, 1)
+	errs := make(chan error, 1)
+	cfg.Ready = func(address string) { ready <- address }
+	go func() { errs <- Serve(ctx, cfg) }()
+	select {
+	case address := <-ready:
+		return address
+	case err := <-errs:
+		t.Fatalf("leaf server exited before ready: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("leaf server did not become ready")
+	}
+	return ""
+}
+
 func TestPublicLeafExecReturnsGuestStatusAndRecordsSession(t *testing.T) {
 	dir := t.TempDir()
 	database := filepath.Join(dir, "plumtree.db")
@@ -30,11 +47,8 @@ func TestPublicLeafExecReturnsGuestStatusAndRecordsSession(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ready := make(chan string, 1)
-	go func() {
-		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-leaf", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
-	}()
-	client := dialLeaf(t, <-ready, "alice/tool", nil)
+	address := startLeafForTest(t, ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-leaf", ProductVersion: "dev"})
+	client := dialLeaf(t, address, "alice/tool", nil)
 	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
@@ -69,11 +83,7 @@ func TestLeafAccessMatrixUsesProvedAppRelativeKeys(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ready := make(chan string, 1)
-	go func() {
-		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-access", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
-	}()
-	address := <-ready
+	address := startLeafForTest(t, ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-access", ProductVersion: "dev"})
 	tests := []struct {
 		name, handle string
 		signer       ssh.Signer
@@ -123,11 +133,8 @@ func TestSuspendedLeafDeploymentRejectsWithNonzeroExitStatus(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ready := make(chan string, 1)
-	go func() {
-		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-suspended", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
-	}()
-	client := dialLeaf(t, <-ready, "alice/tool", nil)
+	address := startLeafForTest(t, ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-suspended", ProductVersion: "dev"})
+	client := dialLeaf(t, address, "alice/tool", nil)
 	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
@@ -150,11 +157,8 @@ func TestPublicLeafShellRunsTUIAndHandlesDisconnect(t *testing.T) {
 	seedLeafAppNamed(t, database, wasm, "public", "counter", "tui")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ready := make(chan string, 1)
-	go func() {
-		_ = Serve(ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-tui", ProductVersion: "dev", Ready: func(address string) { ready <- address }})
-	}()
-	client := dialLeaf(t, <-ready, "alice/counter", nil)
+	address := startLeafForTest(t, ctx, ServeConfig{Database: database, SSHAddress: "127.0.0.1:0", HostKeyPath: filepath.Join(dir, "host_key"), ServerID: "server-tui", ProductVersion: "dev"})
+	client := dialLeaf(t, address, "alice/counter", nil)
 	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {

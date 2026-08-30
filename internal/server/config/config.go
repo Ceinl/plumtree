@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -179,8 +180,11 @@ func (c Config) Validate() error {
 	if c.Resources.MemoryLimitBytes < 0 {
 		return fmt.Errorf("%w: memoryLimitBytes", ErrInvalid)
 	}
-	if c.Runtime.WorkerUIDBase < 0 {
+	if c.Runtime.WorkerUIDBase < 0 || uint64(c.Runtime.WorkerUIDBase) > math.MaxUint32 {
 		return fmt.Errorf("%w: workerUIDBase", ErrInvalid)
+	}
+	if c.Runtime.WorkerUIDBase > 0 && (c.Limits.MaxSessions <= 0 || uint64(c.Runtime.WorkerUIDBase)+uint64(c.Limits.MaxSessions-1) > math.MaxUint32) {
+		return fmt.Errorf("%w: workerUIDBase range", ErrInvalid)
 	}
 	if c.Resources.Capacity.MaxSessions < 0 || c.Resources.Capacity.MaxWorkers < 0 || c.Resources.Capacity.MaxBuilds < 0 {
 		return fmt.Errorf("%w: capacity", ErrInvalid)
@@ -213,12 +217,13 @@ func (c Config) ValidateProduction() error {
 		return fmt.Errorf("%w: production gateway requires runtime.runnerEndpoint", ErrInvalid)
 	}
 	if c.Roles.Gateway {
-		switch endpoint := c.Runtime.RunnerEndpoint; {
-		case strings.HasPrefix(endpoint, "unix://"), strings.HasPrefix(endpoint, "tls://"):
-		case strings.HasPrefix(endpoint, "tcp://"):
+		endpoint := c.Runtime.RunnerEndpoint
+		switch network, address, ok := strings.Cut(endpoint, "://"); {
+		case network == "tcp":
 			return fmt.Errorf("%w: production gateway runner endpoint %q uses plain tcp://, which ships the broker token and session traffic unencrypted; use unix:// or tls://", ErrInvalid, endpoint)
+		case !ok || address == "" || (network != "unix" && network != "tls"):
+			return fmt.Errorf("%w: production gateway runner endpoint must be unix:// or tls:// with an address", ErrInvalid)
 		default:
-			return fmt.Errorf("%w: production gateway runner endpoint must use unix:// or tls://", ErrInvalid)
 		}
 	}
 	if c.Roles.Gateway && strings.TrimSpace(c.Secrets.GatewayTokenFile) == "" {
@@ -228,11 +233,16 @@ func (c Config) ValidateProduction() error {
 		if c.Roles.Control || c.Roles.Gateway {
 			return fmt.Errorf("%w: production runner must use an isolated role", ErrInvalid)
 		}
-		if endpoint := c.Runtime.RunnerEndpoint; strings.HasPrefix(endpoint, "tcp://") {
+		endpoint := c.Runtime.RunnerEndpoint
+		if strings.HasPrefix(endpoint, "tcp://") {
 			return fmt.Errorf("%w: production runner endpoint %q uses plain tcp://, which ships the broker token and session traffic unencrypted; use unix:// or tls://", ErrInvalid, endpoint)
 		}
-		if strings.TrimSpace(c.Runtime.RunnerEndpoint) == "" || strings.TrimSpace(c.Runtime.RunnerWorker) == "" || strings.TrimSpace(c.Secrets.RunnerTokenFile) == "" {
+		if strings.TrimSpace(endpoint) == "" || strings.TrimSpace(c.Runtime.RunnerWorker) == "" || strings.TrimSpace(c.Secrets.RunnerTokenFile) == "" {
 			return fmt.Errorf("%w: production runner requires endpoint, worker, and token", ErrInvalid)
+		}
+		network, address, ok := strings.Cut(endpoint, "://")
+		if !ok || address == "" || (network != "unix" && network != "tls") {
+			return fmt.Errorf("%w: production runner endpoint must be unix:// or tls:// with an address", ErrInvalid)
 		}
 	}
 	if c.Roles.Control && strings.TrimSpace(c.Secrets.DatabaseKeyFile) == "" {

@@ -303,6 +303,14 @@ func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, erro
 		if tlsConfig.MinVersion < tls.VersionTLS12 {
 			tlsConfig.MinVersion = tls.VersionTLS12
 		}
+		if tlsConfig.ServerName == "" {
+			host, _, splitErr := net.SplitHostPort(address)
+			if splitErr != nil || host == "" {
+				_ = conn.Close()
+				return nil, fmt.Errorf("runner: invalid TLS worker address %q", address)
+			}
+			tlsConfig.ServerName = host
+		}
 		conn = tls.Client(conn, tlsConfig)
 	}
 	if err := writeBrokerAuth(conn, pr.WorkerToken); err != nil {

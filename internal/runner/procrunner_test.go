@@ -311,7 +311,11 @@ func TestRemoteProcessRunnerCLIOverTLS(t *testing.T) {
 	store := NewMemStore(0, 0)
 	var out strings.Builder
 	pr := NewRemoteProcessRunner("tls://"+listener.Addr().String(), "runner-secret")
-	pr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // test CA is not in the system roots
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("add broker certificate to test roots")
+	}
+	pr.TLSClientConfig = &tls.Config{RootCAs: roots}
 	if err := pr.RunCLI(context.Background(), wasm, DefaultLimits, Capabilities{KV: store}, nil, &out); err != nil {
 		t.Fatalf("TLS ProcessRunner.RunCLI: %v", err)
 	}

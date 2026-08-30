@@ -216,8 +216,11 @@ func (b *SQLiteBackend) ResolveRunnableFor(handle string, identity runner.Identi
 
 func (b *SQLiteBackend) StartSession(appID, deployID string) (string, error) {
 	deployment, _, err := b.Repository.Deployment(context.Background(), deployID)
-	if err != nil || deployment.AppID != appID {
+	if err != nil {
 		return "", err
+	}
+	if deployment.AppID != appID {
+		return "", sqlite.ErrNotFound
 	}
 	_, artifact, err := b.Repository.CurrentDeployment(context.Background(), appID)
 	if err != nil {

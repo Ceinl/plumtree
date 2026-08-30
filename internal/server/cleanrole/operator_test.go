@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
 	"github.com/Ceinl/plumtree/internal/sqlite"
 )
 
@@ -110,6 +112,26 @@ func TestQuotaSetCommandEnforcesTheNewLimit(t *testing.T) {
 	session.ID = "session-2"
 	if err := repo.StartSession(context.Background(), session); !errors.Is(err, sqlite.ErrQuota) {
 		t.Fatalf("second session over quota = %v", err)
+	}
+}
+
+func TestOperatorCommandUsesConfiguredDatabaseKey(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "database.key")
+	if err := os.WriteFile(keyPath, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.json")
+	cfg := serverconfig.Default()
+	cfg.Roles.Gateway = false
+	cfg.Storage.DatabasePath = filepath.Join(dir, "plumtree.db")
+	cfg.Secrets.DatabaseKeyFile = keyPath
+	if err := serverconfig.Write(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	err := Execute(context.Background(), []string{"suspend", "deploy", "deployment-1", "--config", configPath}, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if !errors.Is(err, sqlite.ErrInvalidKey) {
+		t.Fatalf("configured key error = %v, want ErrInvalidKey", err)
 	}
 }
 

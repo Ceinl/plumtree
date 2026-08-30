@@ -92,7 +92,12 @@ func NewValidatedAllowlistFetcher(allow []string) (*AllowlistFetcher, error) {
 // of letters, digits, and hyphens, none empty, none starting or ending with a
 // hyphen, at most 253 characters in total.
 func validAllowlistEntry(entry string) bool {
-	body := strings.TrimPrefix(strings.TrimPrefix(entry, "*."), ".")
+	body := entry
+	if strings.HasPrefix(body, "*.") {
+		body = strings.TrimPrefix(body, "*.")
+	} else {
+		body = strings.TrimPrefix(body, ".")
+	}
 	if body == "" || len(body) > 253 {
 		return false
 	}

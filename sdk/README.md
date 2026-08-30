@@ -184,11 +184,14 @@ entries authorize bare-name requests resolved against a fixed sandbox PATH;
 absolute-path entries authorize exactly that cleaned path. Shell interpreters
 (sh, bash, zsh, dash, ksh, csh, fish, cmd, powershell, pwsh) are always
 refused — by name and by symlink-resolved path — because a shell turns bounded
-arguments back into arbitrary execution. Each command runs in a fresh temporary
-working directory with a minimal environment (PATH, HOME) under a per-exec
-timeout, so no gateway secrets or state reach the child process. Do not invoke
-commands through shells in apps that target hosted execution: dispatch your
-bounded argument vector directly instead.
+arguments back into arbitrary execution. The allowlist is not execution
+confinement: an allowed program receives the serving process's OS authority,
+and caller-controlled arguments can let it access files or start child
+processes. Each command runs in a fresh temporary working directory with a
+minimal environment (PATH, HOME) under a per-exec timeout. Server secrets are
+not added to that child environment. Do not invoke commands through shells in
+apps that target hosted execution: dispatch your bounded argument vector
+directly instead.
 
 This capability is intended for trusted apps on private/self-hosted servers,
 including apps that invoke locally installed AI-agent CLIs during development.

@@ -127,7 +127,11 @@ func TestRunnerRoleServesBrokerOverTLSAndRefusesPlainTCPInProduction(t *testing.
 	listenerAddr := component.listener.Addr().String()
 	var output bytes.Buffer
 	process := runner.NewRemoteProcessRunner("tls://"+listenerAddr, "tls-runner-token")
-	process.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // test CA is not in the system roots
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("add runner certificate to test roots")
+	}
+	process.TLSClientConfig = &tls.Config{RootCAs: roots}
 	err = process.RunCLI(context.Background(), buildCleanCLI(t), runner.DefaultLimits,
 		runner.Capabilities{Auth: runner.StaticAuth{Identity: runner.Identity{User: "owner", Kind: runner.IdentitySSHKey, Authenticated: true}}},
 		[]string{"get_identity"}, &output)

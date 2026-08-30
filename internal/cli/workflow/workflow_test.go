@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -103,7 +104,7 @@ func TestDevTUIRequiresRealTerminalOrExplicitAlternateMode(t *testing.T) {
 	}
 }
 
-func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
+func TestDevSSHExplicitNonLoopbackServesCLIAndPassesExecArguments(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -120,10 +121,10 @@ func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
 	var out lockedBuffer
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--no-ssh-config", "--addr", "127.0.0.1:0"})
+		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--no-ssh-config", "--allow-nonloopback-ssh", "--addr", "0.0.0.0:0"})
 	}()
 
-	addressPattern := regexp.MustCompile(`127\.0\.0\.1:[0-9]+`)
+	addressPattern := regexp.MustCompile(`(?:0\.0\.0\.0|\[::\]):[0-9]+`)
 	deadline := time.Now().Add(30 * time.Second)
 	var address string
 	for time.Now().Before(deadline) {
@@ -137,7 +138,12 @@ func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
 		t.Fatalf("SSH server did not become ready: %q", out.String())
 	}
 
-	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: "greeter", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second})
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectAddress := net.JoinHostPort("127.0.0.1", port)
+	client, err := ssh.Dial("tcp", connectAddress, &ssh.ClientConfig{User: "greeter", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

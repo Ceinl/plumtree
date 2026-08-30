@@ -68,9 +68,9 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 	if len(args) > 0 {
 		switch args[0] {
 		case "suspend", "unsuspend":
-			return executeSuspension(args[0], args[1:], out)
+			return executeSuspension(ctx, args[0], args[1:], environment, out)
 		case "quota":
-			return executeQuota(args[1:], out)
+			return executeQuota(ctx, args[1:], environment, out)
 		}
 	}
 	resolved, err := ResolveServe(args, environment, 0)
@@ -253,56 +253,98 @@ func runState(ctx context.Context, args, environment []string, out io.Writer) er
 	}
 }
 
-// splitDatabaseFlag extracts the shared -database operator flag from args so
-// the command's positional arguments can appear before or after it.
-func splitDatabaseFlag(args []string) (string, []string) {
-	database := "plumtree.db"
-	var rest []string
+// splitOperatorStorageFlags extracts operator storage flags so positional
+// arguments can appear before or after them.
+func splitOperatorStorageFlags(args []string) (database, configPath string, databaseSet bool, rest []string, err error) {
+	database = "plumtree.db"
 	for i := 0; i < len(args); i++ {
 		if value, ok := strings.CutPrefix(args[i], "--database="); ok {
 			database = value
+			databaseSet = true
 			continue
 		}
 		if value, ok := strings.CutPrefix(args[i], "-database="); ok {
 			database = value
+			databaseSet = true
 			continue
 		}
-		if args[i] == "--database" || args[i] == "-database" {
-			if i+1 < len(args) {
-				database = args[i+1]
-				i++
+		if value, ok := strings.CutPrefix(args[i], "--config="); ok {
+			configPath = value
+			continue
+		}
+		if value, ok := strings.CutPrefix(args[i], "-config="); ok {
+			configPath = value
+			continue
+		}
+		if args[i] == "--database" || args[i] == "-database" || args[i] == "--config" || args[i] == "-config" {
+			if i+1 >= len(args) {
+				return "", "", false, nil, errors.New("operator storage flag requires a path")
 			}
+			if strings.Contains(args[i], "database") {
+				database = args[i+1]
+				databaseSet = true
+			} else {
+				configPath = args[i+1]
+			}
+			i++
 			continue
 		}
 		rest = append(rest, args[i])
 	}
-	return database, rest
+	if databaseSet && configPath != "" {
+		return "", "", false, nil, errors.New("operator command accepts either -config or -database, not both")
+	}
+	return database, configPath, databaseSet, rest, nil
+}
+
+func resolveOperatorStorage(database, configPath string, databaseSet bool, environment []string) (string, []byte, error) {
+	if configPath == "" && !databaseSet {
+		configPath = environmentMap(environment)["PLUMTREE_CONFIG"]
+	}
+	if configPath == "" {
+		return database, nil, nil
+	}
+	projection, err := loadControlProjection(configPath, environment)
+	if err != nil {
+		return "", nil, err
+	}
+	return projection.Config().Storage.DatabasePath, projection.Secret(), nil
 }
 
 // executeSuspension applies the operator kill switch to one deployment. The
 // gateway picks the change up live through its suspension watcher.
-func executeSuspension(command string, args []string, out io.Writer) error {
-	database, positionals := splitDatabaseFlag(args)
-	usage := fmt.Sprintf("usage: plumtree %s deploy <id> [-database PATH]", command)
+func executeSuspension(ctx context.Context, command string, args, environment []string, out io.Writer) error {
+	database, configPath, databaseSet, positionals, parseErr := splitOperatorStorageFlags(args)
+	usage := fmt.Sprintf("usage: plumtree %s deploy <id> [-config PATH | -database PATH]", command)
+	if parseErr != nil {
+		return fmt.Errorf("%s: %w", usage, parseErr)
+	}
 	if len(positionals) != 2 || positionals[0] != "deploy" {
 		return errors.New(usage)
 	}
-	repository, err := sqlite.OpenRepository(database, nil)
+	database, key, err := resolveOperatorStorage(database, configPath, databaseSet, environment)
+	if err != nil {
+		return err
+	}
+	repository, err := sqlite.OpenRepository(database, key)
 	if err != nil {
 		return err
 	}
 	defer repository.Close()
 	suspended := command == "suspend"
-	if err := repository.SetDeploymentSuspended(context.Background(), positionals[1], suspended); err != nil {
+	if err := repository.SetDeploymentSuspended(ctx, positionals[1], suspended); err != nil {
 		return err
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"deployment": positionals[1], "suspended": suspended})
 }
 
 // executeQuota sets one author's typed resource quotas in a single write.
-func executeQuota(args []string, out io.Writer) error {
-	database, positionals := splitDatabaseFlag(args)
-	const usage = "usage: plumtree quota set <authorID> <maxApps> <maxDeploymentsPerApp> <maxSecretsPerApp> <maxSessions> [-database PATH]"
+func executeQuota(ctx context.Context, args, environment []string, out io.Writer) error {
+	database, configPath, databaseSet, positionals, parseErr := splitOperatorStorageFlags(args)
+	const usage = "usage: plumtree quota set <authorID> <maxApps> <maxDeploymentsPerApp> <maxSecretsPerApp> <maxSessions> [-config PATH | -database PATH]"
+	if parseErr != nil {
+		return fmt.Errorf("%s: %w", usage, parseErr)
+	}
 	if len(positionals) != 6 || positionals[0] != "set" {
 		return errors.New(usage)
 	}
@@ -315,13 +357,17 @@ func executeQuota(args []string, out io.Writer) error {
 		}
 		values[i] = value
 	}
-	repository, err := sqlite.OpenRepository(database, nil)
+	database, key, err := resolveOperatorStorage(database, configPath, databaseSet, environment)
+	if err != nil {
+		return err
+	}
+	repository, err := sqlite.OpenRepository(database, key)
 	if err != nil {
 		return err
 	}
 	defer repository.Close()
 	quota := sqlite.Quota{AuthorID: positionals[1], MaxApps: values[0], MaxDeploymentsPerApp: values[1], MaxSecretsPerApp: values[2], MaxSessions: values[3]}
-	if err := repository.SetQuota(context.Background(), quota); err != nil {
+	if err := repository.SetQuota(ctx, quota); err != nil {
 		return err
 	}
 	return json.NewEncoder(out).Encode(map[string]any{"author": quota.AuthorID, "maxApps": quota.MaxApps,

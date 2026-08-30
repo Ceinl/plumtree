@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -128,10 +129,13 @@ func TestEndSessionSendsIdempotencyKey(t *testing.T) {
 // carrying the same idempotency key.
 func TestEndSessionRecoversSlotAfterLostResponse(t *testing.T) {
 	var calls atomic.Int64
+	var keysMu sync.Mutex
 	var keys []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
+		keysMu.Lock()
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		keysMu.Unlock()
 		if n == 1 {
 			http.Error(w, "transient", http.StatusServiceUnavailable)
 			return
@@ -149,6 +153,8 @@ func TestEndSessionRecoversSlotAfterLostResponse(t *testing.T) {
 	waitFor(t, func() bool { return calls.Load() >= 2 })
 	c.removeQueuedEnd("session_1")
 	time.Sleep(20 * time.Millisecond)
+	keysMu.Lock()
+	defer keysMu.Unlock()
 	if got := int(calls.Load()); got != 2 {
 		t.Fatalf("end-session called %d times after confirmation, want 2 (keys=%v)", got, keys)
 	}

@@ -88,7 +88,10 @@ func (r *Repository) kvWrite(ctx context.Context, appID, key string, expected *[
 		}
 		var previous []byte
 		var revision int64 = 1
-		row, _ := m.QueryRowContext(ctx, `SELECT value,revision FROM kv_entries WHERE app_id=? AND key=?`, appID, []byte(key))
+		row, err := m.QueryRowContext(ctx, `SELECT value,revision FROM kv_entries WHERE app_id=? AND key=?`, appID, []byte(key))
+		if err != nil {
+			return err
+		}
 		scanErr := row.Scan(&previous, &revision)
 		existed := scanErr == nil
 		if !existed && !errors.Is(scanErr, sql.ErrNoRows) {
@@ -107,7 +110,10 @@ func (r *Repository) kvWrite(ctx context.Context, appID, key string, expected *[
 			}
 		}
 		var usedKeys, usedBytes int
-		usageRow, _ := m.QueryRowContext(ctx, `SELECT keys,bytes FROM kv_usage WHERE app_id=?`, appID)
+		usageRow, err := m.QueryRowContext(ctx, `SELECT keys,bytes FROM kv_usage WHERE app_id=?`, appID)
+		if err != nil {
+			return err
+		}
 		usageScanErr := usageRow.Scan(&usedKeys, &usedBytes)
 		if usageScanErr != nil && !errors.Is(usageScanErr, sql.ErrNoRows) {
 			return usageScanErr
@@ -129,7 +135,7 @@ ON CONFLICT(app_id,key) DO UPDATE SET value=excluded.value,revision=excluded.rev
 			appID, []byte(key), value, revision, now); err != nil {
 			return err
 		}
-		_, err := m.ExecContext(ctx, `INSERT INTO kv_usage(app_id,keys,bytes) VALUES(?,?,?)
+		_, err = m.ExecContext(ctx, `INSERT INTO kv_usage(app_id,keys,bytes) VALUES(?,?,?)
 ON CONFLICT(app_id) DO UPDATE SET keys=excluded.keys,bytes=excluded.bytes`, appID, newKeys, newBytes)
 		return err
 	})
@@ -145,7 +151,10 @@ func (r *Repository) KVDelete(ctx context.Context, appID, key string) error {
 	}
 	return r.mutate(ctx, "kv-delete", CommitEvent{Operation: "kv-delete", Kind: "app", ID: appID}, func(m *MutationTx) error {
 		var value []byte
-		row, _ := m.QueryRowContext(ctx, `SELECT value FROM kv_entries WHERE app_id=? AND key=?`, appID, []byte(key))
+		row, err := m.QueryRowContext(ctx, `SELECT value FROM kv_entries WHERE app_id=? AND key=?`, appID, []byte(key))
+		if err != nil {
+			return err
+		}
 		scanErr := row.Scan(&value)
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return nil
@@ -156,7 +165,7 @@ func (r *Repository) KVDelete(ctx context.Context, appID, key string) error {
 		if _, err := m.ExecContext(ctx, `DELETE FROM kv_entries WHERE app_id=? AND key=?`, appID, []byte(key)); err != nil {
 			return err
 		}
-		_, err := m.ExecContext(ctx, `UPDATE kv_usage SET keys=keys-1,bytes=bytes-?
+		_, err = m.ExecContext(ctx, `UPDATE kv_usage SET keys=keys-1,bytes=bytes-?
 WHERE app_id=? AND keys>0 AND bytes>=?`, len(key)+len(value), appID, len(key)+len(value))
 		return err
 	})

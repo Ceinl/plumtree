@@ -2,6 +2,9 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -110,5 +113,35 @@ func TestSQLiteBackendIgnoresNonSuspensionCommitEvents(t *testing.T) {
 	defer backend.mu.Unlock()
 	if len(backend.pending) != 0 {
 		t.Fatalf("non-suspension event was queued: %v", backend.pending)
+	}
+}
+
+func TestSQLiteBackendRejectsDeploymentFromAnotherApp(t *testing.T) {
+	backend := openSuspensionTestBackend(t)
+	repository := backend.Repository
+	author, _, err := repository.RegisterAuthor(context.Background(), sqlite.RegistrationInput{
+		AuthorID: "author-1", Handle: "alice", DeviceID: "device-1", DeviceName: "laptop",
+		PublicKey: "key", Fingerprint: "fingerprint", RecoverySalt: []byte("salt"), RecoveryVerifier: []byte("verifier"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"app-1", "app-2"} {
+		if _, err := repository.CreateApp(context.Background(), sqlite.AppInput{ID: id, AuthorID: author.ID, Name: id, Kind: "cli", AccessMode: "public"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wasm := []byte("wasm")
+	digest := sha256.Sum256(wasm)
+	artifact, err := repository.PutArtifact(context.Background(), sqlite.ArtifactInput{ID: "artifact-1", Digest: "sha256:" + hex.EncodeToString(digest[:]), WASM: wasm, ABIVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := repository.CreateDeployment(context.Background(), sqlite.DeploymentInput{ID: "deployment-1", AppID: "app-1", ArtifactID: artifact.ID, DeployedByDeviceID: "device-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID, err := backend.StartSession("app-2", deployment.ID); sessionID != "" || !errors.Is(err, sqlite.ErrNotFound) {
+		t.Fatalf("cross-app session = %q, %v; want not found", sessionID, err)
 	}
 }

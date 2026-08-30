@@ -61,6 +61,38 @@ func TestRepositoryKVCrudRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRepositoryKVQueryFaultsReturnErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		failAt int
+		run    func(*Repository, string) error
+	}{
+		{name: "existing value", failAt: 2, run: func(r *Repository, app string) error {
+			return r.KVSet(context.Background(), app, "key", []byte("value"))
+		}},
+		{name: "usage", failAt: 3, run: func(r *Repository, app string) error {
+			return r.KVSet(context.Background(), app, "key", []byte("value"))
+		}},
+		{name: "delete value", failAt: 1, run: func(r *Repository, app string) error { return r.KVDelete(context.Background(), app, "key") }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r, app := newKVTestApp(t)
+			calls := 0
+			r.faults.Statement = func(string) error {
+				calls++
+				if calls == test.failAt {
+					return errors.New("boom")
+				}
+				return nil
+			}
+			if err := test.run(r, app); !errors.Is(err, ErrInjectedStatement) {
+				t.Fatalf("query fault error = %v, want ErrInjectedStatement", err)
+			}
+		})
+	}
+}
+
 func TestRepositoryKVCasSemantics(t *testing.T) {
 	r, app := newKVTestApp(t)
 	ctx := context.Background()
