@@ -26,6 +26,7 @@ func TestComposeReleaseJourney(t *testing.T) {
 	repository := requiredDirectory(t, "PLUMTREE_QUALIFY_REPOSITORY")
 	composeFile := filepath.Join(repository, "deploy", "docker-compose.yml")
 	root := t.TempDir()
+	composeConfigPath := filepath.Join(root, "config.json")
 	databaseKeyPath := filepath.Join(root, "database.key")
 	runnerTokenPath := filepath.Join(root, "runner.token")
 	dataPath := filepath.Join(root, "data")
@@ -35,6 +36,13 @@ func TestComposeReleaseJourney(t *testing.T) {
 		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	configBytes, err := os.ReadFile(filepath.Join(repository, "config.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(composeConfigPath, configBytes, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	databaseKey := make([]byte, 32)
 	if _, err := rand.Read(databaseKey); err != nil {
@@ -53,6 +61,7 @@ func TestComposeReleaseJourney(t *testing.T) {
 		"COMPOSE_PROJECT_NAME="+project,
 		"PLUMTREE_UID="+strconv.Itoa(os.Getuid()),
 		"PLUMTREE_GID="+strconv.Itoa(os.Getgid()),
+		"PLUMTREE_CONFIG_FILE="+composeConfigPath,
 		"PLUMTREE_DATABASE_KEY_FILE="+databaseKeyPath,
 		"PLUMTREE_RUNNER_TOKEN_FILE="+runnerTokenPath,
 		"PLUMTREE_DATA_PATH="+dataPath,

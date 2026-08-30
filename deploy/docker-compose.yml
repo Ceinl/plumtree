@@ -23,6 +23,7 @@ services:
     volumes:
       - ${PLUMTREE_DATA_PATH:-./data}:/data
       - ${PLUMTREE_RUNNER_SOCKET_PATH:-./runner-socket}:/run/plumtree
+      - ${PLUMTREE_CONFIG_FILE:-./config.json}:/etc/plumtree/config.json:ro
       - ${PLUMTREE_DATABASE_KEY_FILE:-./database.key}:/run/secrets/database-key:ro
       - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
     command:
@@ -82,6 +83,7 @@ services:
     volumes:
       - ${PLUMTREE_RUNNER_SOCKET_PATH:-./runner-socket}:/run/plumtree
       - ${PLUMTREE_RUNNER_SCRATCH_PATH:-./runner-scratch}:/run/plumtree-sessions
+      - ${PLUMTREE_CONFIG_FILE:-./config.json}:/etc/plumtree/config.json:ro
       - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
     command:
       - serve

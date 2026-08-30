@@ -12,6 +12,7 @@ cp .env.example .env
 printf 'PLUMTREE_UID=%s\nPLUMTREE_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
 umask 077
 mkdir -p data runner-socket runner-scratch
+cp ../config.example.json config.json
 openssl rand 32 > database.key
 openssl rand -hex 32 > runner.token
 docker compose build
