@@ -49,7 +49,7 @@ const (
 	maxArtifactResponse = 256 << 20 // 256 MiB
 
 	// End-session retries release a lost quota slot; they must outlast any
-	// transient control-plane outage without spinning.
+	// transient server outage without spinning.
 	maxPendingEndSessions = 1024
 	endRetryBase          = 250 * time.Millisecond
 	endRetryMax           = 30 * time.Second
@@ -412,7 +412,7 @@ func (c *Client) doContext(ctx context.Context, method, path string, body, out a
 	return resp.StatusCode, json.NewDecoder(io.LimitReader(resp.Body, responseLimit)).Decode(out)
 }
 
-// StatusError reports a non-2xx control-plane response. Callers classify it by
+// StatusError reports a non-2xx server response. Callers classify it by
 // code — definitive versus transient — instead of matching error strings.
 type StatusError struct {
 	Code    int    // HTTP status code

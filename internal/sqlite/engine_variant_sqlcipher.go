@@ -18,7 +18,7 @@ package sqlite
 #if SQLITE_TEMP_STORE != 2
 #error SQLCipher builds must use SQLITE_TEMP_STORE=2
 #endif
-static const int plumtree_sqlcipher_build = 1;
+enum { plumtree_sqlcipher_build = 1 };
 */
 import "C"
 

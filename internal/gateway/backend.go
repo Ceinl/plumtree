@@ -100,7 +100,7 @@ var (
 	// ErrQuota means the app has reached its connection/session limit.
 	ErrQuota = errors.New("gateway: quota exceeded")
 	// ErrCapsUnavailable means a capability source (secrets, egress allowlist)
-	// could not be read from the control plane. Claimed capabilities must fail
+	// could not be read from the control plane. Owner capabilities must fail
 	// closed: an error here is never equivalent to "no secrets configured".
 	ErrCapsUnavailable = errors.New("gateway: control plane unavailable")
 )

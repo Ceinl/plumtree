@@ -107,10 +107,10 @@ guest. More trust unlocks more capability:
 | `ctx.KV`    | durable per-app key/value state        | all apps            |
 | pub/sub     | live cross-session messaging (no poll) | all apps            |
 | `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
-| `ctx.Env`   | server-side secrets                    | claimed apps        |
-| `ctx.Fetch` | gated, default-deny egress allowlist   | claimed apps        |
+| `ctx.Env`   | server-side secrets                    | paired apps         |
+| `ctx.Fetch` | gated, default-deny egress allowlist   | paired apps         |
 
-"Claimed" means the app was deployed by a paired owner: secrets and egress are
+"Paired" means the app was deployed by a paired owner: secrets and egress are
 owner-relative capabilities and stay absent for ownerless deployments. A failed
 capability lookup fails closed — the session runs without it.
 
@@ -190,7 +190,7 @@ RCE is the product, not a bug — every app is hostile by default, so the goal i
   production configuration requires the isolated runner-worker boundary
   (`runtime.runnerEndpoint` over `unix://` or `tls://`, with the disposable
   worker owned by a separate runner role), so untrusted WASM leaves the
-  control-plane process whenever isolation is configured.
+  server process whenever isolation is configured.
 - **App-scoped capability.** Secrets and egress are loaded only for the app
   selected for that session. Egress stays default-deny.
 - **No raw-ANSI escape path.** The guest returns structured cells (`rune + RGB +

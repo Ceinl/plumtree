@@ -1,5 +1,5 @@
 // Package backoff provides the bounded exponential delay with jitter shared by
-// control-plane retry loops so repeated failures do not re-synchronize across
+// server retry loops so repeated failures do not re-synchronize across
 // processes.
 package backoff
 

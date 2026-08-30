@@ -67,7 +67,7 @@ func withLog(t *testing.T) (*Server, *strings.Builder) {
 	return s, &log
 }
 
-// A control-plane failure must be indistinguishable from intentional config in
+// A capability-source failure must be indistinguishable from intentional config in
 // effect (capability absent) but loud in the operator's log.
 func TestCapsForFailsClosedWhenControlPlaneErrors(t *testing.T) {
 	backend := &capsBackend{
@@ -106,7 +106,7 @@ func TestCapsForFailsClosedWhenControlPlaneErrors(t *testing.T) {
 func TestCapsForNilSecretsYieldsEmptyEnv(t *testing.T) {
 	s, _ := withLog(t)
 	if caps := s.capsFor("app-1", "owner-1"); caps.Env != nil {
-		t.Fatalf("env = %v, want nil for a claimed app with no secrets", caps.Env)
+		t.Fatalf("env = %v, want nil for a paired app with no secrets", caps.Env)
 	}
 }
 
