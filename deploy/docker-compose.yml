@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.plumtree
+    user: "${PLUMTREE_UID:?set PLUMTREE_UID to id -u}:${PLUMTREE_GID:?set PLUMTREE_GID to id -g}"
     restart: unless-stopped
     ports:
       - "${PLUMTREE_SSH_PUBLISH_ADDR:-0.0.0.0:2222}:2222"
@@ -20,8 +21,8 @@ services:
       PLUMTREE_SECRETS_DATABASE_KEY_FILE: /run/secrets/database-key
       PLUMTREE_SECRETS_GATEWAY_TOKEN_FILE: /run/secrets/runner-token
     volumes:
-      - plumtree-data:/data
-      - runner-socket:/run/plumtree
+      - ${PLUMTREE_DATA_PATH:-./data}:/data
+      - ${PLUMTREE_RUNNER_SOCKET_PATH:-./runner-socket}:/run/plumtree
       - ${PLUMTREE_DATABASE_KEY_FILE:-./database.key}:/run/secrets/database-key:ro
       - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
     command:
@@ -66,6 +67,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.plumtree
+    user: "${PLUMTREE_UID:?set PLUMTREE_UID to id -u}:${PLUMTREE_GID:?set PLUMTREE_GID to id -g}"
     restart: unless-stopped
     network_mode: none
     environment:
@@ -78,8 +80,8 @@ services:
       PLUMTREE_RUNTIME_PRODUCTION: "true"
       PLUMTREE_SECRETS_RUNNER_TOKEN_FILE: /run/secrets/runner-token
     volumes:
-      - runner-socket:/run/plumtree
-      - runner-scratch:/run/plumtree-sessions
+      - ${PLUMTREE_RUNNER_SOCKET_PATH:-./runner-socket}:/run/plumtree
+      - ${PLUMTREE_RUNNER_SCRATCH_PATH:-./runner-scratch}:/run/plumtree-sessions
       - ${PLUMTREE_RUNNER_TOKEN_FILE:-./runner.token}:/run/secrets/runner-token:ro
     command:
       - serve
@@ -110,8 +112,3 @@ services:
     cpus: 2.0
     mem_limit: 1024m
     pids_limit: 256
-
-volumes:
-  plumtree-data:
-  runner-socket:
-  runner-scratch:

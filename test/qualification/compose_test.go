@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,14 @@ func TestComposeReleaseJourney(t *testing.T) {
 	root := t.TempDir()
 	databaseKeyPath := filepath.Join(root, "database.key")
 	runnerTokenPath := filepath.Join(root, "runner.token")
+	dataPath := filepath.Join(root, "data")
+	runnerSocketPath := filepath.Join(root, "runner-socket")
+	runnerScratchPath := filepath.Join(root, "runner-scratch")
+	for _, path := range []string{dataPath, runnerSocketPath, runnerScratchPath} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	databaseKey := make([]byte, 32)
 	if _, err := rand.Read(databaseKey); err != nil {
 		t.Fatal(err)
@@ -42,8 +51,13 @@ func TestComposeReleaseJourney(t *testing.T) {
 	project := fmt.Sprintf("plumtreeq%d", time.Now().UnixNano())
 	composeEnv := append(os.Environ(),
 		"COMPOSE_PROJECT_NAME="+project,
+		"PLUMTREE_UID="+strconv.Itoa(os.Getuid()),
+		"PLUMTREE_GID="+strconv.Itoa(os.Getgid()),
 		"PLUMTREE_DATABASE_KEY_FILE="+databaseKeyPath,
 		"PLUMTREE_RUNNER_TOKEN_FILE="+runnerTokenPath,
+		"PLUMTREE_DATA_PATH="+dataPath,
+		"PLUMTREE_RUNNER_SOCKET_PATH="+runnerSocketPath,
+		"PLUMTREE_RUNNER_SCRATCH_PATH="+runnerScratchPath,
 		"PLUMTREE_SSH_PUBLISH_ADDR="+endpoint,
 		"PLUMTREE_PRODUCT_VERSION=qualification",
 	)

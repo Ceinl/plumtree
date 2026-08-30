@@ -9,7 +9,9 @@ runner receives no database, KV, SSH, or network access. Only SSH is published.
 ```sh
 cd deploy
 cp .env.example .env
+printf 'PLUMTREE_UID=%s\nPLUMTREE_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
 umask 077
+mkdir -p data runner-socket runner-scratch
 openssl rand 32 > database.key
 openssl rand -hex 32 > runner.token
 docker compose build
@@ -26,7 +28,8 @@ pairing secret.
 
 The default endpoint is `0.0.0.0:2222`. Set
 `PLUMTREE_SSH_PUBLISH_ADDR` to a dedicated application address when using port
-22 so administrator SSH remains separate.
+22 so administrator SSH remains separate. `PLUMTREE_UID` and `PLUMTREE_GID`
+must match the owner of the private secret and state files.
 
 The service command is equivalent to:
 
