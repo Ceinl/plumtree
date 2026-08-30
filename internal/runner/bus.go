@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -32,7 +33,10 @@ type Bus interface {
 // implementation; a cross-process runner supplies a proxy that forwards to the
 // parent. Keeping it an interface is what lets the bus span a process boundary.
 type Subscriber interface {
-	Subscribe(topic string)
+	// Subscribe registers this subscription for topic. It returns an error when
+	// the subscription cannot take the topic (for example its topic cap is
+	// full); duplicate or closed subscriptions stay harmless (nil).
+	Subscribe(topic string) error
 	Events() <-chan abi.Event
 	Close()
 }
@@ -40,6 +44,14 @@ type Subscriber interface {
 // busInboxSize bounds how many undelivered messages a single session may queue
 // before the host starts dropping (best-effort delivery).
 const busInboxSize = 64
+
+// busMaxTopicsPerSession caps how many distinct topics one session may listen
+// to, so a guest cannot grow the bus's registry without bound.
+const busMaxTopicsPerSession = 256
+
+// ErrTooManyBusTopics reports that a session tried to subscribe beyond its
+// per-session topic cap.
+var ErrTooManyBusTopics = errors.New("bus: too many topics")
 
 // Subscription is one session's view of a Bus: the set of topics it listens to
 // and a bounded inbox of pending messages, each already encoded as a KindMessage
@@ -56,20 +68,23 @@ type Subscription struct {
 }
 
 // Subscribe registers this subscription to receive messages published to topic.
-// Subscribing to the same topic twice is harmless.
-func (s *Subscription) Subscribe(topic string) {
+// Subscribing to the same topic twice is harmless. It returns
+// ErrTooManyBusTopics once the subscription holds busMaxTopicsPerSession
+// distinct topics; the excess topic is not registered.
+func (s *Subscription) Subscribe(topic string) error {
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || s.topics[topic] {
 		s.mu.Unlock()
-		return
+		return nil
 	}
-	if s.topics[topic] {
+	if len(s.topics) >= busMaxTopicsPerSession {
 		s.mu.Unlock()
-		return
+		return ErrTooManyBusTopics
 	}
 	s.topics[topic] = true
 	s.mu.Unlock()
 	s.bus.register(topic, s)
+	return nil
 }
 
 // Events is the channel of pending messages, drained by the session's Source.
@@ -203,7 +218,9 @@ func registerBus(b wazero.HostModuleBuilder, bus Bus, sub Subscriber) wazero.Hos
 			if topic == "" {
 				return code
 			}
-			sub.Subscribe(topic)
+			if err := sub.Subscribe(topic); err != nil {
+				return abi.BusErrInternal
+			}
 			return abi.BusOk
 		}).
 		Export("bus_sub")

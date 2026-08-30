@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -35,6 +34,9 @@ func (r Runner) devProject(args []string) error {
 	maxFPS := fs.Int("max-fps", 60, "terminal and SSH repaint cap")
 	sshMode := fs.Bool("ssh", false, "serve the app over SSH on loopback")
 	sshAddr := fs.String("addr", "127.0.0.1:2222", "SSH listen address (loopback only)")
+	allowNonloopback := fs.Bool("allow-nonloopback-ssh", false, "permit a non-loopback SSH listen address (with --ssh)")
+	sshHost := fs.String("host", "plumtree.dev", "SSH config alias to install for the dev server (with --ssh)")
+	noSSHConfig := fs.Bool("no-ssh-config", false, "print the raw ssh command instead of installing the ~/.ssh/config alias (with --ssh)")
 	jsonOut := fs.Bool("json", false, "emit stable JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -49,8 +51,13 @@ func (r Runner) devProject(args []string) error {
 		if fs.NArg() != 0 {
 			return errors.New("pt dev --ssh does not accept app arguments; pass them with ssh exec")
 		}
-		if err := requireLoopbackAddress(*sshAddr); err != nil {
+		if err := sshdev.CheckListenAddress(*sshAddr, *allowNonloopback); err != nil {
 			return err
+		}
+		if !*noSSHConfig {
+			if err := validateSSHAlias(*sshHost); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -79,7 +86,7 @@ func (r Runner) devProject(args []string) error {
 	limits.MaxFramesPerSec = *maxFPS
 
 	if *sshMode {
-		return r.runSSH(ctx, result.Artifact.WASM, limits, caps, manifest, *sshAddr, *maxFPS, out, errOut)
+		return r.runSSH(ctx, result.Artifact.WASM, limits, caps, manifest, *sshAddr, *allowNonloopback, *maxFPS, *sshHost, *noSSHConfig, out, errOut)
 	}
 	if manifest.Type == string(scaffold.CLI) {
 		err = runner.RunCLIWithStreams(ctx, result.Artifact.WASM, limits, caps, fs.Args(), runner.CLIStreams{Stdin: r.In, Stdout: out, Stderr: errOut})
@@ -89,9 +96,9 @@ func (r Runner) devProject(args []string) error {
 		serializedOut := &serializedWriter{writer: out}
 		source := runner.NewScriptSource(*width, *height, splitTokens(*script))
 		source.Echo = serializedOut
-		var logs bytes.Buffer
-		err = runner.Run(ctx, result.Artifact.WASM, limits, caps, source, runner.TextSink{W: serializedOut}, &logs)
-		writeDevFinish(out, errOut, caps, logs.Bytes())
+		logs := runner.NewLogBuffer()
+		err = runner.Run(ctx, result.Artifact.WASM, limits, caps, source, runner.TextSink{W: serializedOut}, logs)
+		writeDevFinish(out, errOut, caps, []byte(logs.String()))
 	} else {
 		err = r.runTTY(ctx, result.Artifact.WASM, limits, caps, *maxFPS)
 	}
@@ -132,10 +139,10 @@ func validateDevOptions(memoryPages uint, frameTimeout time.Duration, maxFPS, wi
 	return nil
 }
 
-func (r Runner) runSSH(ctx context.Context, wasm []byte, limits runner.Limits, caps runner.Capabilities, manifest Manifest, address string, maxFPS int, out, errOut io.Writer) error {
+func (r Runner) runSSH(ctx context.Context, wasm []byte, limits runner.Limits, caps runner.Capabilities, manifest Manifest, address string, allowNonloopback bool, maxFPS int, alias string, noSSHConfig bool, out, errOut io.Writer) error {
 	engine := runner.New()
 	defer engine.Close(context.Background())
-	server := &sshdev.Server{Wasm: wasm, Runner: engine, Limits: limits, Caps: caps, AppType: manifest.Type, AppName: manifest.Name, MaxFPS: maxFPS,
+	server := &sshdev.Server{Wasm: wasm, Runner: engine, Limits: limits, Caps: caps, AppType: manifest.Type, AppName: manifest.Name, MaxFPS: maxFPS, AllowNonloopback: allowNonloopback,
 		Logf: func(format string, values ...any) {
 			message := fmt.Sprintf(format, values...)
 			_, _ = fmt.Fprintln(errOut, runner.SanitizeTerminalText(message))
@@ -147,23 +154,19 @@ func (r Runner) runSSH(ctx context.Context, wasm []byte, limits runner.Limits, c
 			_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\n", manifest.Name, manifest.Type, resolved)
 			return
 		}
-		_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s\n", manifest.Name, manifest.Type, resolved, port, manifest.Name, host)
+		connectHost := localConnectHost(host)
+		if noSSHConfig {
+			_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s\n", manifest.Name, manifest.Type, resolved, port, manifest.Name, connectHost)
+			return
+		}
+		configPath, installErr := installDevSSHConfig(alias, connectHost, port)
+		if installErr != nil {
+			_, _ = fmt.Fprintf(errOut, "could not install the %q ssh config alias (%v); use the raw command\n", alias, installErr)
+			_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s\n", manifest.Name, manifest.Type, resolved, port, manifest.Name, connectHost)
+			return
+		}
+		_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh %s (alias installed in %s)\n", manifest.Name, manifest.Type, resolved, alias, configPath)
 	})
-}
-
-func requireLoopbackAddress(address string) error {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("invalid SSH listen address: %w", err)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("dev SSH listen address must use loopback (127.0.0.1, ::1, or localhost)")
-	}
-	return nil
 }
 
 func (r Runner) runTTY(ctx context.Context, wasm []byte, limits runner.Limits, caps runner.Capabilities, maxFPS int) error {
@@ -202,11 +205,11 @@ func (r Runner) runTTY(ctx context.Context, wasm []byte, limits runner.Limits, c
 	defer signal.Stop(winch)
 	source := &runner.TTYSource{Keys: keyboard.ListenReader(ctx, in), Winch: winch, Refresh: runner.DefaultRefresh, Size: size}
 	sink := runner.NewTTYSinkWriter(width, height, maxFPS, out)
-	var logs bytes.Buffer
-	err = runner.Run(ctx, wasm, limits, caps, source, sink, &logs)
+	logs := runner.NewLogBuffer()
+	err = runner.Run(ctx, wasm, limits, caps, source, sink, logs)
 	sink.Close()
 	restore()
-	writeDevFinish(out, errOut, caps, logs.Bytes())
+	writeDevFinish(out, errOut, caps, []byte(logs.String()))
 	return err
 }
 

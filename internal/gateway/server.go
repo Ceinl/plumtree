@@ -26,23 +26,26 @@ type Server struct {
 	// HostKey signs the SSH host key. When nil, a persistent dev host key under
 	// the OS config dir is loaded or generated.
 	HostKey ssh.Signer
-	// StateDir is where per-app KV stores are persisted (under StateDir/kv).
-	// Empty disables KV: apps still run but their storage is unavailable.
-	StateDir string
 	// RunnerWorker, when set, is the path to the runner-worker binary; all app
 	// sessions then run the WASM sandbox in a separate local process. This is a
 	// development fallback, not a native-RCE boundary: the process still shares
 	// the gateway's container and OS identity.
 	RunnerWorker string
-	// RunnerEndpoint and RunnerToken select the production runner broker. The
+	// RunnerEndpoint and RunnerToken select the production runner broker
+	// (unix:///path/to/socket, tls://host:port, or tcp://host:port — the plain
+	// TCP form ships traffic unencrypted and is refused in production). The
 	// broker lives in a separate networkless container and owns the disposable
 	// worker process, while this gateway retains credentials and capabilities.
 	RunnerEndpoint string
 	RunnerToken    string
-	// AllowHostCommands gives claimed apps the ability to execute programs as
-	// the gateway OS user. It is off by default and intended only for trusted
-	// apps on private/self-hosted servers.
-	AllowHostCommands bool
+	// EnableHostCommands gives claimed apps the ability to execute allowlisted
+	// programs as the gateway OS user. It is off by default and intended only
+	// for trusted apps on private/self-hosted servers. Startup fails closed
+	// when it is enabled without a non-empty HostCommandAllowlist.
+	EnableHostCommands bool
+	// HostCommandAllowlist is the operator's executable allowlist consulted by
+	// every host command; shells are always refused regardless of its contents.
+	HostCommandAllowlist []string
 	// MaxConcurrentSessions caps how many sessions run on this gateway at once
 	// (the runner-wide concurrency quota). 0 means unlimited. Per-owner limits
 	// are enforced separately by the Backend's session accounting.
@@ -63,11 +66,26 @@ type Server struct {
 	slots     chan struct{} // counting semaphore; nil when unlimited
 	admission *connectionAdmission
 
-	kvMu     sync.Mutex
-	kvStores map[string]runner.Store // app ID -> shared store
+	busMu     sync.Mutex
+	busById   map[string]*runner.MemBus // app ID -> shared pub/sub bus
+	startOnce sync.Once
+	startErr  error
+}
 
-	busMu   sync.Mutex
-	busById map[string]*runner.MemBus // app ID -> shared pub/sub bus
+// HandleSession runs one already-authenticated SSH session channel. The root
+// server uses this seam to multiplex leaf shell/exec with its private control
+// and pairing subsystems on one public SSH listener.
+func (s *Server) HandleSession(ctx context.Context, ch ssh.Channel, requests <-chan *ssh.Request, handle string, identity runner.Identity) {
+	if s.Runner == nil {
+		s.Runner = runner.New()
+	}
+	if s.sessions == nil {
+		s.sessions = newSessionRegistry()
+	}
+	if s.slots == nil && s.MaxConcurrentSessions > 0 {
+		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
+	}
+	s.handleSession(ctx, ch, requests, handle, identity)
 }
 
 const (
@@ -79,35 +97,10 @@ const (
 )
 
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
-	if s.Backend == nil {
-		return errors.New("gateway: backend is required")
+	if err := s.Start(ctx); err != nil {
+		return err
 	}
-	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
-		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
-	}
-	if s.RunnerEndpoint != "" && s.RunnerToken == "" {
-		return errors.New("gateway: runner token is required with runner endpoint")
-	}
-	if s.Runner == nil {
-		s.Runner = runner.New()
-	}
-	if s.sessions == nil {
-		s.sessions = newSessionRegistry()
-	}
-	if source, ok := s.Backend.(SuspensionSource); ok {
-		if err := source.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
-			return err
-		}
-	}
-	if s.slots == nil && s.MaxConcurrentSessions > 0 {
-		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
-	}
-	if s.admission == nil {
-		s.admission = newConnectionAdmission(
-			effectiveLimit(s.MaxConnections, DefaultMaxConnections),
-			effectiveLimit(s.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
-		)
-	}
+
 	// A key is optional. Public-key auth is attempted first by normal SSH
 	// clients; clients without a usable key fall through to a prompt-free
 	// keyboard-interactive method that represents an anonymous connection.
@@ -156,6 +149,49 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			s.handleConn(ctx, conn, cfg)
 		}()
 	}
+}
+
+// Start prepares runner capacity and the suspension kill-switch before a
+// listener admits leaf sessions. It is safe to call more than once.
+func (s *Server) Start(ctx context.Context) error {
+	s.startOnce.Do(func() { s.startErr = s.start(ctx) })
+	return s.startErr
+}
+
+func (s *Server) start(ctx context.Context) error {
+	if s.Backend == nil {
+		return errors.New("gateway: backend is required")
+	}
+	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
+		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
+	}
+	if s.RunnerEndpoint != "" && s.RunnerToken == "" {
+		return errors.New("gateway: runner token is required with runner endpoint")
+	}
+	if s.EnableHostCommands && len(s.HostCommandAllowlist) == 0 {
+		return errors.New("gateway: host commands enabled with an empty allowlist; refusing to start")
+	}
+	if s.Runner == nil {
+		s.Runner = runner.New()
+	}
+	if s.sessions == nil {
+		s.sessions = newSessionRegistry()
+	}
+	if source, ok := s.Backend.(SuspensionSource); ok {
+		if err := source.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
+			return err
+		}
+	}
+	if s.slots == nil && s.MaxConcurrentSessions > 0 {
+		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
+	}
+	if s.admission == nil {
+		s.admission = newConnectionAdmission(
+			effectiveLimit(s.MaxConnections, DefaultMaxConnections),
+			effectiveLimit(s.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
+		)
+	}
+	return nil
 }
 
 func optionalAuthConfig() *ssh.ServerConfig {
@@ -246,6 +282,12 @@ func (s *Server) identityFromConn(c *ssh.ServerConn) runner.Identity {
 		if fp := c.Permissions.Extensions["pubkey-fp"]; fp != "" {
 			identity, err := s.Backend.ResolveIdentity(fp)
 			if err == nil && identity.User != "" {
+				// Defense in depth: owner metadata on an unauthenticated
+				// identity carries no authority and must never reach the
+				// app-relative derivation.
+				if !identity.Authenticated {
+					identity.OwnerID = ""
+				}
 				return identity
 			}
 			if err != nil {

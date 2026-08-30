@@ -2,8 +2,11 @@ package config
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +53,7 @@ func TestLoadMaterializesFlagEnvironmentConfigDefaultPrecedence(t *testing.T) {
 
 func TestProductionValidationFailsClosed(t *testing.T) {
 	c := Default()
+	c.Roles.Gateway = false
 	c.Runtime.Production = true
 	if err := c.ValidateProduction(); err == nil {
 		t.Fatal("production without a database key was accepted")
@@ -67,28 +71,46 @@ func TestProductionValidationFailsClosed(t *testing.T) {
 
 func TestProductionValidationRejectsEveryUnlimitedCriticalLimit(t *testing.T) {
 	tests := []struct {
-		name string
-		zero func(*Config)
+		name, field string
+		zero        func(*Config)
 	}{
-		{name: "max queued builds", zero: func(c *Config) { c.Limits.MaxQueuedBuilds = 0 }},
-		{name: "max FPS", zero: func(c *Config) { c.Limits.MaxFPS = 0 }},
-		{name: "rate burst", zero: func(c *Config) { c.Limits.RateBurst = 0 }},
+		{name: "max queued builds", field: "limits.maxQueuedBuilds", zero: func(c *Config) { c.Limits.MaxQueuedBuilds = 0 }},
+		{name: "max FPS", field: "limits.maxFPS", zero: func(c *Config) { c.Limits.MaxFPS = 0 }},
+		{name: "rate burst", field: "limits.rateBurst", zero: func(c *Config) { c.Limits.RateBurst = 0 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			c := Default()
+			c.Roles.Gateway = false
 			c.Runtime.Production = true
 			c.Secrets.DatabaseKeyFile = filepath.Join(t.TempDir(), "database.key")
 			test.zero(&c)
-			if err := c.ValidateProduction(); err == nil {
+			if err := c.ValidateProduction(); err == nil || !strings.Contains(err.Error(), test.field) {
 				t.Fatal("production accepted an unlimited critical limit")
 			}
 		})
 	}
 }
 
+func TestValidationRejectsWorkerUIDRangeOverflow(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("int cannot represent values above uint32")
+	}
+	c := Default()
+	c.Runtime.WorkerUIDBase = int(uint64(math.MaxUint32) + 1)
+	if err := c.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversized worker UID base error = %v, want ErrInvalid", err)
+	}
+	c.Runtime.WorkerUIDBase = int(math.MaxUint32)
+	c.Limits.MaxSessions = 2
+	if err := c.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("overflowing worker UID range error = %v, want ErrInvalid", err)
+	}
+}
+
 func TestValidationRequiresShutdownTimeout(t *testing.T) {
 	c := Default()
+	c.Roles.Gateway = false
 	c.Runtime.ShutdownTimeout = ""
 	if err := c.Validate(); err == nil {
 		t.Fatal("empty shutdown timeout was accepted")
@@ -104,6 +126,7 @@ func TestControlProjectionDoesNotReadDisabledRoleSecrets(t *testing.T) {
 	}
 	c := Default()
 	c.Roles.Control = true
+	c.Roles.Gateway = false
 	c.Secrets.DatabaseKeyFile = keyPath
 	c.Secrets.GatewayTokenFile = filepath.Join(dir, "missing-gateway-token")
 
@@ -129,5 +152,46 @@ func TestLoadRejectsInvalidEnvironmentInsteadOfFallingBack(t *testing.T) {
 	}, HostMemory: 1 << 30})
 	if err == nil {
 		t.Fatal("invalid environment value was accepted")
+	}
+}
+
+// Production must refuse the cleartext tcp:// runner transport by name while
+// accepting both encrypted transports.
+func TestProductionValidationRefusesPlainTCPRunnerEndpoint(t *testing.T) {
+	tests := []struct {
+		name, endpoint, errorFragment string
+		accepted                      bool
+	}{
+		{name: "unix socket", endpoint: "unix:///run/plumtree/runner.sock", accepted: true},
+		{name: "tls", endpoint: "tls://broker.internal:7947", accepted: true},
+		{name: "plain tcp", endpoint: "tcp://broker.internal:7947", errorFragment: "tcp://"},
+		{name: "unsupported scheme", endpoint: "http://broker.internal:7947", errorFragment: "unix:// or tls://"},
+		{name: "bare address", endpoint: "broker.internal:7947", errorFragment: "unix:// or tls://"},
+		{name: "empty TLS address", endpoint: "tls://", errorFragment: "unix:// or tls://"},
+	}
+	for _, gatewayRole := range []bool{true, false} {
+		for _, test := range tests {
+			c := Default()
+			c.Runtime.Production = true
+			c.Roles = Roles{Control: false, Gateway: gatewayRole, Runner: !gatewayRole}
+			c.Secrets.DatabaseKeyFile = filepath.Join(t.TempDir(), "database.key")
+			c.Secrets.RunnerTokenFile = filepath.Join(t.TempDir(), "runner.token")
+			if gatewayRole {
+				c.Secrets.GatewayTokenFile = filepath.Join(t.TempDir(), "gateway.token")
+			}
+			c.Runtime.RunnerWorker = "/usr/local/bin/runner-worker"
+			c.Runtime.RunnerEndpoint = test.endpoint
+			err := c.ValidateProduction()
+			if test.accepted && err != nil {
+				t.Errorf("%s (gateway=%t): %v", test.name, gatewayRole, err)
+			}
+			if !test.accepted {
+				if err == nil {
+					t.Errorf("%s (gateway=%t): plain tcp:// was accepted", test.name, gatewayRole)
+				} else if !strings.Contains(err.Error(), test.errorFragment) {
+					t.Errorf("%s (gateway=%t): error %q does not contain %q", test.name, gatewayRole, err, test.errorFragment)
+				}
+			}
+		}
 	}
 }

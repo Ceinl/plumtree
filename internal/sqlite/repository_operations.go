@@ -806,12 +806,32 @@ func (r *Repository) RecordSessionLog(ctx context.Context, sessionID, log string
 	})
 }
 
+// EndSession marks a session finished and returns its end time. Replays of an
+// already-ended session are idempotent: they return the original end time so a
+// retried teardown (e.g. a replayed gateway end-session request) never fails or
+// double-writes.
 func (r *Repository) EndSession(ctx context.Context, sessionID string) (*time.Time, error) {
 	if err := validateID(sessionID); err != nil {
 		return nil, err
 	}
 	ended := r.now()
 	err := r.mutate(ctx, "session-end", CommitEvent{Operation: "session-end", Kind: "session", ID: sessionID}, func(m *MutationTx) error {
+		var previous sql.NullInt64
+		row, rowErr := m.QueryRowContext(ctx, `SELECT ended_at_ns FROM sessions WHERE id=?`, sessionID)
+		if rowErr != nil {
+			return rowErr
+		}
+		scanErr := row.Scan(&previous)
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if scanErr != nil {
+			return scanErr
+		}
+		if previous.Valid {
+			ended = time.Unix(0, previous.Int64)
+			return nil
+		}
 		res, err := m.ExecContext(ctx, `UPDATE sessions SET ended_at_ns=? WHERE id=? AND ended_at_ns IS NULL`, ended.UnixNano(), sessionID)
 		if err != nil {
 			return err

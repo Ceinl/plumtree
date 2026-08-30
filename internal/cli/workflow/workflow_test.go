@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -103,7 +104,7 @@ func TestDevTUIRequiresRealTerminalOrExplicitAlternateMode(t *testing.T) {
 	}
 }
 
-func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
+func TestDevSSHExplicitNonLoopbackServesCLIAndPassesExecArguments(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -120,10 +121,10 @@ func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
 	var out lockedBuffer
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--addr", "127.0.0.1:0"})
+		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--no-ssh-config", "--allow-nonloopback-ssh", "--addr", "0.0.0.0:0"})
 	}()
 
-	addressPattern := regexp.MustCompile(`127\.0\.0\.1:[0-9]+`)
+	addressPattern := regexp.MustCompile(`(?:0\.0\.0\.0|\[::\]):[0-9]+`)
 	deadline := time.Now().Add(30 * time.Second)
 	var address string
 	for time.Now().Before(deadline) {
@@ -137,7 +138,12 @@ func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
 		t.Fatalf("SSH server did not become ready: %q", out.String())
 	}
 
-	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: "greeter", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second})
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectAddress := net.JoinHostPort("127.0.0.1", port)
+	client, err := ssh.Dial("tcp", connectAddress, &ssh.ClientConfig{User: "greeter", HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +174,14 @@ func TestDevSSHServesCLIOnLoopbackAndPassesExecArguments(t *testing.T) {
 
 func TestDevSSHRejectsNonLoopbackListener(t *testing.T) {
 	err := (Runner{}).Run([]string{"dev", "--ssh", "--addr", "0.0.0.0:2222"})
-	if err == nil || !strings.Contains(err.Error(), "loopback") {
+	if err == nil || !strings.Contains(err.Error(), "loopback") || !strings.Contains(err.Error(), "--allow-nonloopback-ssh") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDevSSHRejectsInvalidHostAlias(t *testing.T) {
+	err := (Runner{}).Run([]string{"dev", "--ssh", "--host", "bad alias"})
+	if err == nil || !strings.Contains(err.Error(), "whitespace") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -430,4 +443,127 @@ func TestRemoteCommandExplainsHowToPairWhenStoreIsEmpty(t *testing.T) {
 func testServerRecord() paired.ServerRecord {
 	return paired.ServerRecord{Name: "main", ServerID: "server", Host: "example.test", Port: 2222,
 		HostKeyAlgorithm: "ssh-ed25519", HostKeyFingerprint: "SHA256:host", ProductVersion: "v1", KeyRef: "key.ed25519"}
+}
+
+// TestDevSSHInstallsAliasInManagedBlock runs the real dev SSH path with HOME
+// pointed at a scratch directory and checks that the resulting ssh config
+// contains only the managed block.
+func TestDevSSHInstallsAliasInManagedBlock(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project, err := NewScaffold(root, "greeter", scaffold.CLI, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out lockedBuffer
+	done := make(chan error, 1)
+	go func() {
+		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--host", "dev.test", "--addr", "127.0.0.1:0"})
+	}()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(out.String(), "Connect: ssh dev.test") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(out.String(), "Connect: ssh dev.test") {
+		t.Fatalf("alias command not announced: %q", out.String())
+	}
+
+	config, err := os.ReadFile(filepath.Join(home, ".ssh", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(config)
+	if strings.Count(content, sshConfigBegin) != 1 || strings.Count(content, sshConfigEnd) != 1 {
+		t.Fatalf("marker discipline violated: %q", content)
+	}
+	if !strings.Contains(content, "Host dev.test") || !strings.Contains(content, "StrictHostKeyChecking accept-new") {
+		t.Fatalf("managed block incomplete: %q", content)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SSH server shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SSH server did not stop after cancellation")
+	}
+}
+
+// TestDevSSHNoSSHConfigLeavesDiskUntouched prints the raw command and never
+// writes ~/.ssh/config.
+func TestDevSSHNoSSHConfigLeavesDiskUntouched(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project, err := NewScaffold(root, "greeter", scaffold.CLI, "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(project)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out lockedBuffer
+	done := make(chan error, 1)
+	go func() {
+		done <- (Runner{Context: ctx, Out: &out, Workspace: repoRoot}).Run([]string{"dev", "--ssh", "--no-ssh-config", "--addr", "127.0.0.1:0"})
+	}()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(out.String(), "Connect: ssh -p") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(out.String(), "Connect: ssh -p") || !strings.Contains(out.String(), "@127.0.0.1") {
+		t.Fatalf("raw ssh command not announced: %q", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ssh")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("~/.ssh was created without consent: %v", err)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("SSH server did not stop after cancellation")
+	}
+}
+
+// TestEveryDispatchableCommandHasHelpTopic mirrors the switch cases in
+// Runner.Run so a new command cannot ship without documentation.
+func TestEveryDispatchableCommandHasHelpTopic(t *testing.T) {
+	commands := []string{
+		"pair", "recover", "server", "device", "new", "dev", "build", "deploy",
+		"status", "app", "logs", "secret", "egress", "access", "audit", "ssh",
+	}
+	r := Runner{Out: io.Discard}
+	for _, command := range commands {
+		if err := r.writeHelp(command); err != nil {
+			t.Errorf("pt help %s: %v", command, err)
+		}
+		if err := (Runner{}).Run([]string{"help", command}); err != nil {
+			t.Errorf("pt help %s via Run: %v", command, err)
+		}
+	}
+	if err := r.writeHelp(""); err != nil {
+		t.Fatalf("root help: %v", err)
+	}
+	if err := r.writeHelp("not-a-command"); err == nil {
+		t.Fatal("unknown help topic unexpectedly resolved")
+	}
 }

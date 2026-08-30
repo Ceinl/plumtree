@@ -73,3 +73,81 @@ func TestRunDropsFramesOverOutputBudget(t *testing.T) {
 		t.Fatal("at least the first frame should pass the output budget")
 	}
 }
+
+func TestEffectiveSessionTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		sessionTimeout time.Duration
+		want           time.Duration
+	}{
+		{"configured budget passes through", 5 * time.Minute, 5 * time.Minute},
+		{"unlimited selects the hard ceiling", 0, MaxSessionTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveSessionTimeout(Limits{SessionTimeout: tc.sessionTimeout}); got != tc.want {
+				t.Fatalf("effectiveSessionTimeout = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A guest that presents forever without ever calling recv keeps the per-frame
+// watchdog disarmed for its whole life; only the total session budget stops it.
+func TestRunTerminatesPresentLoopingGuest(t *testing.T) {
+	wasm := buildGuest(t, "testdata/presentloop", "GOWORK=off")
+
+	lim := Limits{
+		MemoryPages:    512,
+		FrameTimeout:   10 * time.Second,       // large: must not fire first
+		SessionTimeout: 150 * time.Millisecond, // the budget under test
+	}
+
+	start := time.Now()
+	err := Run(context.Background(), wasm, lim, Capabilities{}, NewScriptSource(10, 3, nil), &capture{}, io.Discard)
+	if err != ErrSessionDeadline {
+		t.Fatalf("Run err = %v, want ErrSessionDeadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("session termination took %s, budget was 150ms", elapsed)
+	}
+}
+
+// Compute that starts in main and never reaches a host import is still bounded
+// by the total session budget.
+func TestRunTerminatesStartupOnlyCompute(t *testing.T) {
+	wasm := buildGuest(t, "testdata/startspin", "GOWORK=off")
+
+	lim := Limits{
+		MemoryPages:    512,
+		FrameTimeout:   10 * time.Second,       // large: must not fire first
+		SessionTimeout: 150 * time.Millisecond, // the budget under test
+	}
+
+	start := time.Now()
+	err := Run(context.Background(), wasm, lim, Capabilities{}, NewScriptSource(10, 3, nil), &capture{}, io.Discard)
+	if err != ErrSessionDeadline {
+		t.Fatalf("Run err = %v, want ErrSessionDeadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("session termination took %s, budget was 150ms", elapsed)
+	}
+}
+
+// With no configured budget the hard ceiling still applies, and guest log
+// retention stays bounded at maxSessionLog bytes.
+func TestRunUnlimitedSessionTimeoutUsesHardCeiling(t *testing.T) {
+	if got := effectiveSessionTimeout(Limits{}); got != MaxSessionTimeout {
+		t.Fatalf("effectiveSessionTimeout = %s, want %s", got, MaxSessionTimeout)
+	}
+	logs := NewLogBuffer()
+	big := make([]byte, maxSessionLog+1024)
+	for i := range big {
+		big[i] = byte(i)
+	}
+	if n, err := logs.Write(big); n != len(big) || err != nil {
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	if len(logs.String()) != maxSessionLog {
+		t.Fatalf("retained %d bytes, want %d", len(logs.String()), maxSessionLog)
+	}
+}

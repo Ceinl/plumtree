@@ -82,6 +82,16 @@ func RunWorker(in io.Reader, out io.Writer) error {
 // maxSessionLog bounds the guest log captured and shipped to the parent.
 const maxSessionLog = 64 << 10
 
+// LogBuffer is the in-process counterpart of the worker's bounded log: it
+// retains up to maxSessionLog bytes of guest stdout/stderr and silently drops
+// excess output, so a noisy guest cannot grow host memory without bound.
+type LogBuffer struct {
+	boundedBuffer
+}
+
+// NewLogBuffer returns a log buffer capped at maxSessionLog bytes.
+func NewLogBuffer() *LogBuffer { return &LogBuffer{boundedBuffer{max: maxSessionLog}} }
+
 // workerRPC performs one lock-step request/response over the worker's pipes. The
 // guest runs single-threaded, so calls are naturally serialized.
 type workerRPC struct {
@@ -355,10 +365,20 @@ func (b proxyBus) Publish(topic string, data []byte) int {
 
 // proxySubscriber forwards Subscribe to the parent; delivery of messages rides
 // the recv channel (the parent's Source multiplexes input + bus), so Events is
-// never used here.
+// never used here. A non-empty reply payload is the parent's error status,
+// mapped back to the same sentinel the in-process subscription reports.
 type proxySubscriber struct{ rpc *workerRPC }
 
-func (s *proxySubscriber) Subscribe(topic string)   { _, _ = s.rpc.call(opBusSub, []byte(topic)) }
+func (s *proxySubscriber) Subscribe(topic string) error {
+	rp, err := s.rpc.call(opBusSub, []byte(topic))
+	if err != nil {
+		return errRPC
+	}
+	if len(rp) > 0 && rp[0] != 0 {
+		return ErrTooManyBusTopics
+	}
+	return nil
+}
 func (s *proxySubscriber) Events() <-chan abi.Event { return nil }
 func (s *proxySubscriber) Close()                   {}
 

@@ -18,10 +18,9 @@ func appendString(b []byte, s string) []byte {
 }
 
 func main() {
-	req := appendString(nil, "sh")
-	req = binary.LittleEndian.AppendUint32(req, 2)
-	req = appendString(req, "-c")
-	req = appendString(req, "printf host-ok")
+	req := appendString(nil, "echo")
+	req = binary.LittleEndian.AppendUint32(req, 1)
+	req = appendString(req, "host-ok")
 	out := make([]byte, 4096)
 	n := hostExec(ptr(req), int32(len(req)), ptr(out), int32(len(out)))
 	runtime.KeepAlive(req)

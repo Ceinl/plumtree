@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/tetratelabs/wazero"
@@ -12,6 +14,23 @@ import (
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"github.com/tetratelabs/wazero/sys"
 )
+
+// ExitStatus maps a guest result to the SSH exit-status value. It preserves a
+// finite CLI app's explicit process status across local and worker execution.
+func ExitStatus(err error) uint32 {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0
+	}
+	const prefix = "app exited with code "
+	message := err.Error()
+	if index := strings.LastIndex(message, prefix); index >= 0 {
+		value := strings.TrimSpace(message[index+len(prefix):])
+		if code, parseErr := strconv.ParseUint(value, 10, 32); parseErr == nil {
+			return uint32(code)
+		}
+	}
+	return 1
+}
 
 // CLIStreams supplies the finite guest's standard streams.
 type CLIStreams struct {
@@ -41,11 +60,10 @@ func runCLI(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim
 		return err
 	}
 	callerCtx := ctx
-	if lim.SessionTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, lim.SessionTimeout)
-		defer cancel()
-	}
+	// A CLI guest gets the same total-session budget as a TUI guest; an
+	// unlimited configuration selects the hard MaxSessionTimeout ceiling.
+	ctx, cancel := context.WithTimeout(ctx, effectiveSessionTimeout(lim))
+	defer cancel()
 	cfg := wazero.NewRuntimeConfig().
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(lim.MemoryPages)

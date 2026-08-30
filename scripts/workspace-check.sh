@@ -46,7 +46,12 @@ for module_dir in "${workspace_modules[@]}"; do
       # cancellation budgets around Wazero. Race instrumentation slows those
       # guests by orders of magnitude, so retain them as normal-test
       # performance gates and race-check the shared mutable primitives here.
-      mapfile -t race_packages < <(go list ./... | grep -v '^github.com/Ceinl/plumtree/internal/runner$')
+      listed_packages=$(go list ./...)
+      mapfile -t race_packages < <(grep -v '^github.com/Ceinl/plumtree/internal/runner$' <<<"$listed_packages")
+      if (( ${#race_packages[@]} == 0 )); then
+        echo "workspace-check: go list produced no race packages" >&2
+        exit 1
+      fi
       go test -race "${race_packages[@]}"
       go test -race \
         -run '^(TestMemBus.*|TestMemStore.*|TestFileStore.*|TestTokenBucket.*)$' \

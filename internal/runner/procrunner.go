@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -27,12 +28,22 @@ type ProcessRunner struct {
 	// WorkerPath is the root-owned runner worker executable to spawn.
 	WorkerPath string
 	// WorkerEndpoint is a remote runner-broker endpoint. Supported forms are
-	// unix:///path/to/socket and tcp://host:port. Production uses a Unix socket
-	// into a separate, networkless container so a native WASM-runtime escape
-	// cannot inherit the gateway's credentials, filesystem, or network.
+	// unix:///path/to/socket, tls://host:port (server-authenticated TLS with
+	// the system roots), and tcp://host:port. Plain tcp:// sends the shared
+	// broker token and session traffic in the clear: production configuration
+	// refuses it, and elsewhere it only warns. Production uses a Unix socket
+	// or TLS so a native WASM-runtime escape cannot inherit the gateway's
+	// credentials, filesystem, or network.
 	WorkerEndpoint string
 	// WorkerToken authenticates the gateway to a remote runner broker.
 	WorkerToken string
+	// Logf, when set, receives transport diagnostics such as the plaintext
+	// tcp:// warning.
+	Logf func(format string, args ...any)
+	// TLSClientConfig optionally overrides the client TLS configuration for
+	// tls:// endpoints; nil selects server-authenticated TLS with the system
+	// roots (tests use it to pin a local test CA).
+	TLSClientConfig *tls.Config
 }
 
 // NewProcessRunner returns a ProcessRunner that spawns workerPath per session.
@@ -71,11 +82,10 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 		return err
 	}
 	callerCtx := ctx
-	if lim.SessionTimeout > 0 {
-		var cancelSession context.CancelFunc
-		ctx, cancelSession = context.WithTimeout(ctx, lim.SessionTimeout)
-		defer cancelSession()
-	}
+	// Mirror the worker-side budget so a runaway guest also tears down the
+	// parent's serve loop; unlimited selects the hard MaxSessionTimeout ceiling.
+	ctx, cancelSession := context.WithTimeout(ctx, effectiveSessionTimeout(lim))
+	defer cancelSession()
 	ctx, cancel := context.WithCancel(ctx)
 	worker, err := pr.startWorker(ctx)
 	if err != nil {
@@ -269,12 +279,39 @@ func (pr *ProcessRunner) startWorker(ctx context.Context) (*workerTransport, err
 
 func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, error) {
 	network, address, ok := strings.Cut(pr.WorkerEndpoint, "://")
-	if !ok || (network != "unix" && network != "tcp") || address == "" {
-		return nil, fmt.Errorf("runner: invalid worker endpoint %q (want unix:///path or tcp://host:port)", pr.WorkerEndpoint)
+	if !ok || (network != "unix" && network != "tcp" && network != "tls") || address == "" {
+		return nil, fmt.Errorf("runner: invalid worker endpoint %q (want unix:///path, tcp://host:port, or tls://host:port)", pr.WorkerEndpoint)
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	listenNetwork := network
+	if network == "tls" {
+		// TLS rides a plain TCP dial; the handshake authenticates the broker.
+		listenNetwork = "tcp"
+	}
+	if network == "tcp" && pr.Logf != nil {
+		pr.Logf("runner endpoint %s sends the broker token and session traffic unencrypted; prefer unix:// or tls://", pr.WorkerEndpoint)
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, listenNetwork, address)
 	if err != nil {
 		return nil, fmt.Errorf("runner: connect to broker: %w", err)
+	}
+	if network == "tls" {
+		tlsConfig := pr.TLSClientConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		tlsConfig = tlsConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS12 {
+			tlsConfig.MinVersion = tls.VersionTLS12
+		}
+		if tlsConfig.ServerName == "" {
+			host, _, splitErr := net.SplitHostPort(address)
+			if splitErr != nil || host == "" {
+				_ = conn.Close()
+				return nil, fmt.Errorf("runner: invalid TLS worker address %q", address)
+			}
+			tlsConfig.ServerName = host
+		}
+		conn = tls.Client(conn, tlsConfig)
 	}
 	if err := writeBrokerAuth(conn, pr.WorkerToken); err != nil {
 		_ = conn.Close()
@@ -384,10 +421,15 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		if len(payload) == 0 || len(payload) > abi.BusMaxTopic {
 			return errProtocol
 		}
+		// A rejected subscribe is an ordinary bus error, not a protocol fault:
+		// reply with status 1 and let the session continue.
+		var result byte
 		if sub != nil {
-			sub.Subscribe(string(payload))
+			if err := sub.Subscribe(string(payload)); err != nil {
+				result = 1
+			}
 		}
-		return writeMsg(w, opResp, nil)
+		return writeMsg(w, opResp, []byte{result})
 
 	case opBusPub:
 		topic, data, ok := decodeKeyValue(payload)

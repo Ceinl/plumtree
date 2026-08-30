@@ -1,4 +1,5 @@
-// Package identity provides paired-author and audit services for the server.
+// Package identity provides the paired-author and audit services used by the
+// selected SSH server assembly.
 package identity
 
 import (

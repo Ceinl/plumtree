@@ -37,12 +37,28 @@ type Backend interface {
 	EndSession(sessionID string) error
 
 	// SecretsForApp returns the env/secret values injected into a claimed app's
-	// sessions, or nil when the app has none (or is unclaimed).
-	SecretsForApp(appID string) map[string]string
+	// sessions, or (nil, nil) when the app has none (or is unclaimed). An error
+	// means the control plane could not answer; the gateway must fail closed.
+	SecretsForApp(appID string) (map[string]string, error)
 
-	// EgressAllowlist returns the fetch allowlist for a claimed app, or nil when
-	// the app has none (or is unclaimed). Egress stays default-deny when empty.
-	EgressAllowlist(appID string) []string
+	// EgressAllowlist returns the fetch allowlist for a claimed app, or
+	// (nil, nil) when the app has none (or is unclaimed). Egress stays
+	// default-deny when empty. An error means the control plane could not
+	// answer; the gateway must fail closed.
+	EgressAllowlist(appID string) ([]string, error)
+}
+
+// IdentityAwareBackend resolves app access with the proved leaf identity. New
+// backends must implement this interface; the legacy method remains for small
+// test backends and older split-role clients during the clean cutover.
+type IdentityAwareBackend interface {
+	ResolveRunnableFor(handle string, identity runner.Identity) (Runnable, error)
+}
+
+// AccountedBackend records the immutable artifact and app-relative identity
+// that actually entered a hosted session.
+type AccountedBackend interface {
+	StartAccountedSession(appID, deployID, artifactDigest, identitySummary string) (string, error)
 }
 
 // SuspensionSource is implemented by backends that can stream administrative
@@ -65,10 +81,11 @@ type Suspension struct {
 // Runnable is a resolved app ready to serve a session. WASM is the compiled
 // guest module for the app's active deploy.
 type Runnable struct {
-	AppID    string
-	AppName  string
-	OwnerID  string
-	DeployID string
+	AppID          string
+	AppName        string
+	OwnerID        string
+	DeployID       string
+	ArtifactDigest string
 	// AppType is "tui" (default) or "cli"; it selects the runner entry point.
 	AppType string
 	WASM    []byte
@@ -82,4 +99,8 @@ var (
 	ErrSuspended = errors.New("gateway: app suspended")
 	// ErrQuota means the app has reached its connection/session limit.
 	ErrQuota = errors.New("gateway: quota exceeded")
+	// ErrCapsUnavailable means a capability source (secrets, egress allowlist)
+	// could not be read from the control plane. Owner capabilities must fail
+	// closed: an error here is never equivalent to "no secrets configured".
+	ErrCapsUnavailable = errors.New("gateway: control plane unavailable")
 )

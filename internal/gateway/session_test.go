@@ -3,6 +3,8 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -123,6 +125,89 @@ func TestRunSessionCleanCLIUsesCLIForTUIApp(t *testing.T) {
 	}
 }
 
+// Every session end — success, guest failure, and early reject — must report a
+// real exit status so SSH clients can script against the gateway.
+func TestRunSessionReportsGuestFailureExitStatus(t *testing.T) {
+	wasmPath := buildTestBinary(t, "../../examples/agentboard/app", ".", []string{"GOOS=wasip1", "GOARCH=wasm"})
+	wasm, err := os.ReadFile(wasmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch := &testChannel{}
+	s := &Server{Runner: runner.New()}
+	// The guest exits nonzero for an unknown command; the channel must carry it.
+	log, _, status := s.runSessionArgsStatus(context.Background(), ch, wasm, "cli", runner.Capabilities{}, nil, nil, []string{"not-a-command"})
+	if status == 0 {
+		t.Fatalf("guest failure reported exit status 0 (log=%q)", log)
+	}
+	if got := ch.exitStatuses(); len(got) != 0 { // runSessionArgsStatus does not send; the caller does
+		t.Fatalf("unexpected statuses %v before the caller sends one", got)
+	}
+}
+
+func TestStartSessionRejectsSendNonzeroExitStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		server  func(backend Backend) *Server
+		backend *stubBackend
+	}{
+		{"runner at capacity", func(b Backend) *Server {
+			s := &Server{Backend: b, MaxConcurrentSessions: 1}
+			s.slots = make(chan struct{}, 1)
+			s.slots <- struct{}{} // occupy the only runner slot
+			return s
+		}, &stubBackend{}},
+		{"resolve failure", func(b Backend) *Server {
+			return &Server{Backend: b}
+		}, &stubBackend{resolveErr: errors.New("no such app")}},
+		{"start session failure", func(b Backend) *Server {
+			return &Server{Backend: b}
+		}, &stubBackend{startErr: errors.New("quota exceeded")}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ch := &testChannel{}
+			s := test.server(test.backend)
+			ctx, cancel := context.WithCancel(context.Background())
+			s.startSession(ctx, cancel, ch, "alice/tool", runner.Identity{}, nil, nil)
+			got := ch.exitStatuses()
+			if len(got) != 1 || got[0] == 0 {
+				t.Fatalf("exit statuses = %v, want one nonzero status", got)
+			}
+		})
+	}
+}
+
+// stubBackend fails resolution or admission on demand so early-reject paths can
+// be driven without a repository.
+type stubBackend struct {
+	resolveErr error
+	startErr   error
+}
+
+func (*stubBackend) ResolveIdentity(fingerprint string) (runner.Identity, error) {
+	return runner.Identity{User: fingerprint}, nil
+}
+func (b *stubBackend) ResolveRunnable(string) (Runnable, error) {
+	if b.resolveErr != nil {
+		return Runnable{}, b.resolveErr
+	}
+	return Runnable{AppID: "app-1", AppName: "tool", OwnerID: "author-1", DeployID: "deployment-1"}, nil
+}
+func (b *stubBackend) StartSession(string, string) (string, error) {
+	if b.startErr != nil {
+		return "", b.startErr
+	}
+	return "session-1", nil
+}
+func (*stubBackend) RecordSessionLog(string, string, bool) error { return nil }
+func (*stubBackend) EndSession(string) error                     { return nil }
+func (*stubBackend) SecretsForApp(string) (map[string]string, error) {
+	return nil, nil
+}
+func (*stubBackend) EgressAllowlist(string) ([]string, error) { return nil, nil }
+
 func buildTestBinary(t *testing.T, dir, pkg string, extraEnv []string) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "built")
@@ -153,8 +238,10 @@ func hasEnv(env []string, key string) bool {
 }
 
 type testChannel struct {
-	stdout lockedBuffer
-	stderr lockedBuffer
+	stdout   lockedBuffer
+	stderr   lockedBuffer
+	mu       sync.Mutex
+	statuses []uint32
 }
 
 func (c *testChannel) Read([]byte) (int, error)    { return 0, io.EOF }
@@ -162,9 +249,23 @@ func (c *testChannel) Write(p []byte) (int, error) { return c.stdout.Write(p) }
 func (c *testChannel) String() string              { return c.stdout.String() }
 func (c *testChannel) Close() error                { return nil }
 func (c *testChannel) CloseWrite() error           { return nil }
-func (c *testChannel) SendRequest(string, bool, []byte) (bool, error) {
+
+func (c *testChannel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
+	if name == "exit-status" && len(payload) == 4 {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.statuses = append(c.statuses, binary.LittleEndian.Uint32(payload))
+	}
 	return false, nil
 }
+
+// exitStatuses returns every exit-status request sent over the channel.
+func (c *testChannel) exitStatuses() []uint32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]uint32(nil), c.statuses...)
+}
+
 func (c *testChannel) Stderr() io.ReadWriter { return &c.stderr }
 
 type lockedBuffer struct {

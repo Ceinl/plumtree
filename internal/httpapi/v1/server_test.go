@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -215,4 +216,41 @@ func minimalWASM() []byte {
 		0x03, 0x02, 0x01, 0x00,
 		0x07, 0x0a, 0x01, 0x06, '_', 's', 't', 'a', 'r', 't', 0x00, 0x00,
 		0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b}
+}
+
+func TestNewIDPrefixesUniqueIdentifiers(t *testing.T) {
+	first, err := newID("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(first, "app_") || len(first) != len("app_")+32 {
+		t.Fatalf("newID = %q", first)
+	}
+	second, err := newID("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("newID repeated %q", first)
+	}
+}
+
+func TestInternalErrorsProduceTheInternalErrorProblem(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	rec := httptest.NewRecorder()
+	server.problemForError(rec, errors.New("generate app id: entropy exhausted"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body struct {
+		Type  string `json:"type"`
+		Code  string `json:"code"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != "internal_error" || body.Type != "urn:plumtree:problem:internal_error" || body.Title == "" {
+		t.Fatalf("problem body = %+v", body)
+	}
 }

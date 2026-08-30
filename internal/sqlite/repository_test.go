@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -103,9 +104,16 @@ func TestRepositorySchemaAndAtomicJourney(t *testing.T) {
 	if _, err := r.EndSession(context.Background(), "session-1"); err != nil {
 		t.Fatalf("end session: %v", err)
 	}
+	ended, err := r.EndSession(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("replayed end session: %v", err)
+	}
 	sessions, err := r.ListSessions(context.Background(), app.ID, 10)
 	if err != nil || len(sessions) != 1 || sessions[0].EndedAt == nil || sessions[0].Log != "hello" {
 		t.Fatalf("sessions: %#v, %v", sessions, err)
+	}
+	if !sessions[0].EndedAt.Equal(*ended) {
+		t.Fatalf("replayed end changed the end time: %v vs %v", sessions[0].EndedAt, ended)
 	}
 }
 
@@ -166,3 +174,64 @@ func hexForTest(value []byte) string {
 // WASMBytesForTest is intentionally always empty: metadata DTOs cannot carry
 // the blob. It keeps the separation assertion readable without exposing data.
 func (a ArtifactMetadata) WASMBytesForTest() []byte { return nil }
+
+// ResolveLeafRunnable must gate restricted apps on a registered access key or
+// the owner's own device, while public apps stay open to everyone.
+func TestResolveLeafRunnableEnforcesAccessMode(t *testing.T) {
+	r := newTestRepository(t)
+	a, d := registerTestAuthor(t, r)
+	wasm := []byte("wasm-bytes")
+	hash := sha256.Sum256(wasm)
+	digest := "sha256:" + hexForTest(hash[:])
+	artifact, err := r.PutArtifact(context.Background(), ArtifactInput{ID: "artifact-1", Digest: digest, WASM: wasm, ABIVersion: 1})
+	if err != nil {
+		t.Fatalf("artifact: %v", err)
+	}
+	for _, app := range []struct{ name, access string }{{"open", "public"}, {"closed", "restricted"}} {
+		created, err := r.CreateApp(context.Background(), AppInput{ID: "app-" + app.name, AuthorID: a.ID, Name: app.name, Kind: "cli", AccessMode: app.access})
+		if err != nil {
+			t.Fatalf("app %s: %v", app.name, err)
+		}
+		deployment, err := r.CreateDeployment(context.Background(), DeploymentInput{ID: "deployment-" + app.name, AppID: created.ID, ArtifactID: artifact.ID, DeployedByDeviceID: d.ID})
+		if err != nil {
+			t.Fatalf("deployment %s: %v", app.name, err)
+		}
+		if err := r.ActivateDeployment(context.Background(), created.ID, deployment.ID); err != nil {
+			t.Fatalf("activate %s: %v", app.name, err)
+		}
+	}
+	if _, err := r.AddAccessKey(context.Background(), AccessKeyInput{ID: "access-1", AppID: "app-closed", Name: "guest", PublicKey: "ssh-ed25519-guest", Fingerprint: "SHA256:guest", AddedByDeviceID: d.ID}); err != nil {
+		t.Fatalf("access key: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		handle           string
+		fingerprint      string
+		identityAuthorID string
+		allowed          bool
+	}{
+		{"public anonymous", "alice/open", "", "", true},
+		{"public unknown fingerprint", "alice/open", "SHA256:stranger", "", true},
+		{"restricted anonymous denied", "alice/closed", "", "", false},
+		{"restricted unknown fingerprint denied", "alice/closed", "SHA256:stranger", "", false},
+		{"restricted access key fingerprint allowed", "alice/closed", "SHA256:guest", "", true},
+		{"restricted owner device allowed", "alice/closed", d.Fingerprint, "", true},
+		{"restricted owner identity allowed", "alice/closed", "", a.ID, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			author, app, _ := strings.Cut(test.handle, "/")
+			runnable, err := r.ResolveLeafRunnable(context.Background(), author, app, test.fingerprint, test.identityAuthorID)
+			if test.allowed && err != nil {
+				t.Fatalf("allowed resolve failed: %v", err)
+			}
+			if !test.allowed && !errors.Is(err, ErrNotFound) {
+				t.Fatalf("denied resolve = %v, want ErrNotFound", err)
+			}
+			if test.allowed && string(runnable.WASM) != string(wasm) {
+				t.Fatalf("runnable WASM = %q", runnable.WASM)
+			}
+		})
+	}
+}

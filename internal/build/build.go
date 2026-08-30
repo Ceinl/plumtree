@@ -62,15 +62,33 @@ func (b LocalBuilder) Build(ctx context.Context, project Project) (Artifact, err
 	env := append([]string{}, os.Environ()...)
 	env = replaceEnv(env, "GOOS", "wasip1")
 	env = replaceEnv(env, "GOARCH", "wasm")
+	workspaceReady := false
 	if b.WorkspaceRoot != "" {
 		if work, workCleanup, ok := developmentWorkspace(project.Root, b.WorkspaceRoot); ok {
 			defer workCleanup()
 			env = replaceEnv(env, "GOWORK", work)
+			workspaceReady = true
 		}
+	}
+	if !workspaceReady {
+		bundle, err := Extract()
+		if err != nil {
+			return Artifact{}, fmt.Errorf("build app: extract embedded SDK: %w", err)
+		}
+		defer bundle.Cleanup()
+		work, workCleanup, ok := developmentWorkspace(project.Root, bundle.root)
+		if !ok {
+			return Artifact{}, errors.New("build app: create embedded SDK workspace")
+		}
+		defer workCleanup()
+		env = replaceEnv(env, "GOWORK", work)
+		env = replaceEnv(env, "GOPROXY", bundle.GoProxy)
+		env = replaceEnv(env, "GOSUMDB", "off")
 	}
 
 	cmd := exec.CommandContext(ctx, goBin, "build", "-o", outPath, "./app")
 	cmd.Dir = project.Root
+	env = replaceEnv(env, "PWD", project.Root)
 	cmd.Env = env
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

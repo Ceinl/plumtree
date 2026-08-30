@@ -1,8 +1,6 @@
 package gateway
 
 import (
-	"path/filepath"
-
 	"github.com/Ceinl/plumtree/internal/runner"
 )
 
@@ -11,46 +9,53 @@ import (
 // live sessions of this process). Both are keyed by app ID so concurrent
 // sessions of the same app see one instance. Secrets and egress are claimed-only:
 // only apps with an owner get Env and a Fetcher, and egress stays default-deny
-// unless the allowlist is non-empty.
+// unless the allowlist is non-empty. A capability source that cannot be read
+// fails closed: the capability is left absent and the operator sees why.
 func (s *Server) capsFor(appID, ownerID string) runner.Capabilities {
 	if appID == "" {
 		return runner.Capabilities{}
 	}
 	caps := runner.Capabilities{KV: s.kvFor(appID), Bus: s.busFor(appID), Goodbye: new(string)}
 	if ownerID != "" {
-		if s.AllowHostCommands {
-			caps.Exec = runner.LocalCommander{}
+		if s.EnableHostCommands && len(s.HostCommandAllowlist) > 0 {
+			caps.Exec = runner.LocalCommander{Allowlist: s.HostCommandAllowlist}
 		}
-		if secrets := s.Backend.SecretsForApp(appID); len(secrets) > 0 {
+		secrets, err := s.Backend.SecretsForApp(appID)
+		switch {
+		case err != nil:
+			s.logf("ERROR: secrets lookup for app %q failed; session runs without env: %v", appID, err)
+		case len(secrets) > 0:
 			caps.Env = runner.MapEnv(secrets)
 		}
-		if allow := s.Backend.EgressAllowlist(appID); len(allow) > 0 {
-			caps.Fetch = runner.NewAllowlistFetcher(allow)
+		allow, err := s.Backend.EgressAllowlist(appID)
+		switch {
+		case err != nil:
+			s.logf("ERROR: egress allowlist lookup for app %q failed; session runs default-deny: %v", appID, err)
+		case len(allow) > 0:
+			fetcher, ferr := runner.NewValidatedAllowlistFetcher(allow)
+			if ferr != nil {
+				s.logf("ERROR: egress allowlist for app %q rejected (%v); session runs default-deny", appID, ferr)
+				break
+			}
+			caps.Fetch = fetcher
 		}
 	}
 	return caps
 }
 
+// kvFor returns the app's durable KV store. Hosted sessions use the
+// repository-backed store when the backend exposes one; there is no file-based
+// fallback on this path (pt dev local profiles keep their own JSON store).
 func (s *Server) kvFor(appID string) runner.Store {
-	if s.StateDir == "" {
-		return nil
-	}
-	s.kvMu.Lock()
-	defer s.kvMu.Unlock()
-	if s.kvStores == nil {
-		s.kvStores = make(map[string]runner.Store)
-	}
-	if st, ok := s.kvStores[appID]; ok {
+	if source, ok := s.Backend.(KVSource); ok {
+		st, err := source.KVStore(appID)
+		if err != nil {
+			s.logf("ERROR: kv store for app %q unavailable; session runs without kv: %v", appID, err)
+			return nil
+		}
 		return st
 	}
-	path := filepath.Join(s.StateDir, "kv", appID+".json")
-	st, err := runner.NewFileStore(path, runner.DefaultMaxKeys, runner.DefaultMaxBytes)
-	if err != nil {
-		s.logf("kv store for %q unavailable: %v", appID, err)
-		return nil
-	}
-	s.kvStores[appID] = st
-	return st
+	return nil
 }
 
 func (s *Server) busFor(appID string) runner.Bus {

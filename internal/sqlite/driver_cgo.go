@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"runtime"
@@ -19,22 +18,22 @@ import (
 func newSQLiteDriver(key []byte, encrypted bool, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages int, trace TraceFunc) driver.Driver {
 	base := &sqlite3.SQLiteDriver{
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-			// The upstream driver applies only connection-local defaults before
-			// ConnectHook. Apply the SQLCipher key before Plumtree performs any
-			// schema read or pager-changing PRAGMA.
-			if err := keyConnection(conn, key, encrypted); err != nil {
-				return err
-			}
+			// Keyed drivers apply their key during sqlite3_open_v2, before the
+			// upstream driver runs connection PRAGMAs and reaches this hook.
 			if err := configureConnection(conn, encrypted, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages); err != nil {
 				return err
 			}
 			return nil
 		},
 	}
-	if trace == nil {
-		return base
+	var result driver.Driver = base
+	if encrypted {
+		result = wrapKeyedDriver(result, key)
 	}
-	return &tracingDriver{Driver: base, trace: trace}
+	if trace == nil {
+		return result
+	}
+	return &tracingDriver{Driver: result, trace: trace}
 }
 
 // tracingDriver keeps query observability in Plumtree instead of patching the
@@ -101,19 +100,6 @@ func configureConnection(conn *sqlite3.SQLiteConn, encrypted bool, busyTimeoutMS
 	}
 
 	return configurePragmas(conn, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages)
-}
-
-func keyConnection(conn *sqlite3.SQLiteConn, key []byte, encrypted bool) error {
-	if encrypted {
-		statement := `PRAGMA key = "x'` + hex.EncodeToString(key) + `'";`
-		if _, err := conn.Exec(statement, nil); err != nil {
-			return ErrKeyRejected
-		}
-		if value, err := pragmaValue(conn, "cipher_status"); err != nil || value != "1" {
-			return ErrKeyRejected
-		}
-	}
-	return nil
 }
 
 func configurePragmas(conn *sqlite3.SQLiteConn, busyTimeoutMS, cacheSizeKB, walAutoCheckpointPages int) error {
