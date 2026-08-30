@@ -175,14 +175,24 @@ all remaining commands are canceled when the session ends. See the complete
 ## Trusted host commands
 
 `hostexec.Run(name, args...)` executes a local program and returns its exit code,
-stdout, and stderr. Native development uses the current process context. The
-selected hosted server does not expose this capability. Hosted policy remains
-deny-by-default until the operator allowlist and shell refusal contract is
-implemented.
+stdout, and stderr. Native development uses the current process context.
+
+Hosted policy is deny-by-default: the server operator must configure an
+explicit executable allowlist (`runtime.hostCommandAllowlist` CSV, or
+PLUMTREE_HOST_COMMAND_ALLOWLIST), and only allowlisted programs run. Bare-name
+entries authorize bare-name requests resolved against a fixed sandbox PATH;
+absolute-path entries authorize exactly that cleaned path. Shell interpreters
+(sh, bash, zsh, dash, ksh, csh, fish, cmd, powershell, pwsh) are always
+refused — by name and by symlink-resolved path — because a shell turns bounded
+arguments back into arbitrary execution. Each command runs in a fresh temporary
+working directory with a minimal environment (PATH, HOME) under a per-exec
+timeout, so no gateway secrets or state reach the child process. Do not invoke
+commands through shells in apps that target hosted execution: dispatch your
+bounded argument vector directly instead.
 
 This capability is intended for trusted apps on private/self-hosted servers,
 including apps that invoke locally installed AI-agent CLIs during development.
-It grants the app the development process's OS authority.
+It grants the app the serving process's OS authority within the allowlist.
 
 Does not own: platform capability implementations, SSH serving, deploy storage.
 

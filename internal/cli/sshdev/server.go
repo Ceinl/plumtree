@@ -11,13 +11,8 @@
 package sshdev
 
 import (
-	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +21,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/Ceinl/plumtree/internal/hostkey"
 	execprotocol "github.com/Ceinl/plumtree/internal/protocol/exec"
 	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/internal/terminal"
@@ -42,7 +38,12 @@ type Server struct {
 	AppType string              // "tui" or "cli"
 	AppName string
 	MaxFPS  int
-	Logf    func(format string, args ...any)
+	// AllowNonloopback disables the loopback-only listen guard. Dev SSH
+	// authenticates no client, so anything it can reach — apps, KV, bus,
+	// owner identity — must not be exposed beyond loopback without an
+	// explicit operator override.
+	AllowNonloopback bool
+	Logf             func(format string, args ...any)
 }
 
 func (s *Server) logf(format string, args ...any) {
@@ -55,6 +56,9 @@ func (s *Server) logf(format string, args ...any) {
 // connection in its own goroutine. It returns the resolved listen address via
 // the ready callback (handy when addr uses port 0).
 func (s *Server) ListenAndServe(ctx context.Context, addr string, ready func(net.Addr)) error {
+	if err := CheckListenAddress(addr, s.AllowNonloopback); err != nil {
+		return err
+	}
 	if s.Runner == nil {
 		s.Runner = runner.New()
 	}
@@ -170,6 +174,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 				if err != nil {
 					req.Reply(true, nil)
 					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 					ch.Close()
 					cancel()
 					return
@@ -181,8 +186,8 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			}
 			started = true
 			go func() {
-				s.runSessionArgs(ctx, ch, size, winch, args)
-				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				status := s.runSessionArgs(ctx, ch, size, winch, args)
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
 				ch.Close()
 				cancel()
 			}()
@@ -197,24 +202,28 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 	cancel()
 }
 
-func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal) {
-	s.runSessionArgs(ctx, ch, size, winch, nil)
+func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal) uint32 {
+	return s.runSessionArgs(ctx, ch, size, winch, nil)
 }
 
-func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) {
+// runSessionArgs drives one guest to completion and returns the SSH
+// exit-status to report: 0 for a clean run or client disconnect, nonzero for a
+// guest failure.
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) uint32 {
 	caps := s.Caps
 	// Server capabilities are shared by every development connection. Keep the
 	// guest-written goodbye message session-local so concurrent clients cannot
 	// race or inherit one another's message.
 	caps.Goodbye = new(string)
 	if s.AppType == "cli" || len(args) > 0 {
-		if err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch); err != nil {
+		err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch)
+		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
 		}
 		if *caps.Goodbye != "" {
 			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
 		}
-		return
+		return runner.ExitStatus(err)
 	}
 
 	w, h := size()
@@ -241,53 +250,69 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 	}
 	sink := runner.NewTTYSinkWriter(w, h, s.MaxFPS, ch)
 
-	var logs bytes.Buffer
-	err := s.Runner.Run(ctx, s.Wasm, s.Limits, caps, src, sink, &logs)
+	// Guest output is retained only for post-mortem inspection, so keep the
+	// same bounded log the isolated worker path uses.
+	logs := runner.NewLogBuffer()
+	err := s.Runner.Run(ctx, s.Wasm, s.Limits, caps, src, sink, logs)
 	sink.Close()
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
 		// Clean exit or normal client disconnect — nothing to report.
+		return 0
 	default:
 		s.logf("session error: %v", err)
+		return 1
 	}
+}
+
+// CheckListenAddress refuses listen addresses that would expose the
+// unauthenticated dev SSH server beyond loopback. An empty host (every
+// interface) is refused; a hostname is allowed only when every address it
+// resolves to is loopback. allowNonloopback permits anything.
+func CheckListenAddress(address string, allowNonloopback bool) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid SSH listen address: %w", err)
+	}
+	refuse := func() error {
+		return fmt.Errorf("dev SSH listens without client authentication; address %q leaves loopback — pass --allow-nonloopback-ssh to override", address)
+	}
+	if allowNonloopback {
+		return nil
+	}
+	if host == "" {
+		return refuse()
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsLoopback() {
+			return refuse()
+		}
+		return nil
+	}
+	ips, err := net.LookupHost(host)
+	if err != nil || len(ips) == 0 {
+		return fmt.Errorf("dev SSH listen host %q does not resolve: %w", host, err)
+	}
+	for _, candidate := range ips {
+		if parsed := net.ParseIP(candidate); parsed == nil || !parsed.IsLoopback() {
+			return refuse()
+		}
+	}
+	return nil
 }
 
 // devHostKey returns a stable host key, persisted under the user config dir so
 // it does not change between runs — clients then trust it once instead of
-// needing StrictHostKeyChecking=no on every connect. Falls back to an ephemeral
-// key if the config dir is unavailable.
+// needing StrictHostKeyChecking=no on every connect. An existing-but-corrupt
+// key file is a hard error: regenerating would break clients' TOFU pins. Falls
+// back to an ephemeral key only when the config dir itself is unavailable.
 func devHostKey() (ssh.Signer, error) {
-	gen := func() (ssh.Signer, error) {
-		_, priv, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, err
-		}
-		return ssh.NewSignerFromSigner(priv)
-	}
-
 	cfgDir, err := os.UserConfigDir()
 	if err != nil {
-		return gen()
+		signer, _, err := hostkey.Generate("plumtree dev host key")
+		return signer, err
 	}
-	path := filepath.Join(cfgDir, "plumtree", "dev_host_ed25519")
-
-	if b, err := os.ReadFile(path); err == nil {
-		if signer, err := ssh.ParsePrivateKey(b); err == nil {
-			return signer, nil
-		}
-	}
-
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	if der, err := x509.MarshalPKCS8PrivateKey(priv); err == nil {
-		blk := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-		if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
-			_ = os.WriteFile(path, blk, 0o600)
-		}
-	}
-	return ssh.NewSignerFromSigner(priv)
+	return hostkey.LoadOrCreate(filepath.Join(cfgDir, "plumtree", "dev_host_ed25519"), "plumtree dev host key")
 }
 
 // ptyRequest is the SSH "pty-req" payload.
