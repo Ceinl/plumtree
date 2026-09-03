@@ -136,6 +136,8 @@ func (s *stubConn) last() time.Time {
 func TestActivityConnThrottlesDeadlineRefresh(t *testing.T) {
 	stub := &stubConn{}
 	conn := NewActivityConn(stub, 200*time.Millisecond)
+	now := time.Unix(100, 0)
+	conn.now = func() time.Time { return now }
 
 	conn.EnableIdleDeadline()
 	if got := stub.count(); got != 1 {
@@ -155,12 +157,29 @@ func TestActivityConnThrottlesDeadlineRefresh(t *testing.T) {
 		t.Fatalf("deadline updates after rapid activity = %d, want 1 (throttled)", got)
 	}
 
-	time.Sleep(120 * time.Millisecond)
+	now = now.Add(120 * time.Millisecond)
 	if _, err := conn.Write([]byte("hello")); err != nil {
 		t.Fatalf("write after refresh window: %v", err)
 	}
 	if got := stub.count(); got != 2 {
 		t.Fatalf("deadline updates after refresh window = %d, want 2", got)
+	}
+}
+
+func TestActivityConnDoesNotExpireEarlyDuringThrottleWindow(t *testing.T) {
+	stub := &stubConn{}
+	idle := 10 * time.Minute
+	conn := NewActivityConn(stub, idle)
+	now := time.Unix(100, 0)
+	conn.now = func() time.Time { return now }
+
+	conn.EnableIdleDeadline()
+	now = now.Add(idle/2 - time.Second)
+	if _, err := conn.Write([]byte("activity")); err != nil {
+		t.Fatalf("write during throttle window: %v", err)
+	}
+	if deadline := stub.last(); deadline.Before(now.Add(idle)) {
+		t.Fatalf("deadline %v expires before a full idle period after activity at %v", deadline, now)
 	}
 }
 

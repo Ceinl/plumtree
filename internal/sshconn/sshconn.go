@@ -83,29 +83,30 @@ func ClientIP(addr net.Addr) string {
 // interval so chatty sessions do not pay a timerfd rearm per frame.
 type ActivityConn struct {
 	net.Conn
-	idle        time.Duration
-	mu          sync.Mutex
-	on          bool
-	nextRefresh time.Time
+	idle                time.Duration
+	mu                  sync.Mutex
+	idleDeadlineEnabled bool
+	nextRefresh         time.Time
+	now                 func() time.Time
 }
 
 // NewActivityConn wraps conn with an idle deadline applied after
 // EnableIdleDeadline. A non-positive idle clears the deadline instead.
 func NewActivityConn(conn net.Conn, idle time.Duration) *ActivityConn {
-	return &ActivityConn{Conn: conn, idle: idle}
+	return &ActivityConn{Conn: conn, idle: idle, now: time.Now}
 }
 
 // EnableIdleDeadline starts activity-based refreshes with an immediate
 // deadline application.
 func (c *ActivityConn) EnableIdleDeadline() {
 	c.mu.Lock()
-	c.on = true
+	c.idleDeadlineEnabled = true
 	c.mu.Unlock()
 	c.refreshDeadline()
 }
 
-// Read reads from the wrapped connection, refreshing the idle deadline after
-// a successful read.
+// Read reads from the wrapped connection and requests a throttled idle-deadline
+// refresh after a successful read.
 func (c *ActivityConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	if n > 0 {
@@ -114,8 +115,8 @@ func (c *ActivityConn) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Write writes to the wrapped connection, refreshing the idle deadline after
-// a successful write.
+// Write writes to the wrapped connection and requests a throttled idle-deadline
+// refresh after a successful write.
 func (c *ActivityConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if n > 0 {
@@ -127,17 +128,20 @@ func (c *ActivityConn) Write(p []byte) (int, error) {
 func (c *ActivityConn) refreshDeadline() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.on {
+	if !c.idleDeadlineEnabled {
 		return
 	}
 	if c.idle <= 0 {
 		_ = c.Conn.SetDeadline(time.Time{})
 		return
 	}
-	now := time.Now()
+	now := c.now()
 	if now.Before(c.nextRefresh) {
 		return
 	}
-	c.nextRefresh = now.Add(c.idle / 2)
-	_ = c.Conn.SetDeadline(now.Add(c.idle))
+	refreshInterval := c.idle / 2
+	c.nextRefresh = now.Add(refreshInterval)
+	// The extra refresh interval is the bounded cost of throttling. It prevents
+	// activity just before nextRefresh from expiring before one full idle period.
+	_ = c.Conn.SetDeadline(now.Add(c.idle + refreshInterval))
 }
