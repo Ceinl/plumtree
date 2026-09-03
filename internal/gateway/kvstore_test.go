@@ -90,9 +90,13 @@ func TestSQLiteKVStoreSatisfiesRunnerStoreContract(t *testing.T) {
 // Hosted sessions must receive the repository-backed KV store, so state is
 // durable and encrypted at rest by the storage engine rather than living in
 // plaintext per-app JSON files.
-func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
+func TestAssembleHostCapabilitiesUsesRepositoryKV(t *testing.T) {
 	s, backend := openKVTestServer(t)
-	caps := s.capsFor("app-kv", "owner-kv")
+	app := Runnable{AppID: "app-kv", OwnerID: "owner-kv"}
+	caps, err := assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
 	if caps.KV == nil {
 		t.Fatal("hosted session ran without a KV store")
 	}
@@ -100,7 +104,11 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 		t.Fatalf("session set: %v", err)
 	}
 	// A second session of the same app shares one store through the repository.
-	if value, found, err := s.capsFor("app-kv", "owner-kv").KV.Get("from-session"); err != nil || !found || string(value) != "persisted" {
+	second, err := assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if value, found, err := second.KV.Get("from-session"); err != nil || !found || string(value) != "persisted" {
 		t.Fatalf("second session get = %q, %t, %v", value, found, err)
 	}
 	// The bytes live in the repository itself, not a StateDir/kv JSON file.
@@ -110,9 +118,13 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 }
 
 // Backends without a KV source keep the capability absent instead of failing.
-func TestCapsWithoutKVSourceHasNoKV(t *testing.T) {
+func TestAssembleHostCapabilitiesWithoutKVSourceHasNoKV(t *testing.T) {
 	s := &Server{Backend: &capsBackend{}}
-	if caps := s.capsFor("app-1", "owner-1"); caps.KV != nil {
+	caps, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if caps.KV != nil {
 		t.Fatalf("KV = %T, want nil without a KV source", caps.KV)
 	}
 }

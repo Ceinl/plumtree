@@ -3,30 +3,41 @@ package gateway
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/Ceinl/plumtree/internal/runner"
 )
 
+// assembleWith wires a server's operator options and capability sources into
+// the hosted assembler so tests drive the same path session setup uses.
+func assembleWith(s *Server, app Runnable, identity runner.Identity) (runner.Capabilities, error) {
+	return AssembleHostCapabilities(app, identity, s.hostCapabilityOptions(), s.hostCapabilitySources())
+}
+
 func TestHostCommandsRequireOperatorOptInAndClaimedApp(t *testing.T) {
 	backend := &countingBackend{}
+	app := Runnable{AppID: "app-1", OwnerID: "owner-1"}
+	identity := runner.Identity{User: "key", Kind: runner.IdentitySSHKey, Authenticated: true}
 
-	if caps := (&Server{Backend: backend}).capsFor("app-1", "owner-1"); caps.Exec != nil {
+	if caps, _ := assembleWith(&Server{Backend: backend}, app, identity); caps.Exec != nil {
 		t.Fatal("host commands available without operator opt-in")
 	}
 
 	server := &Server{Backend: backend, EnableHostCommands: true, HostCommandAllowlist: []string{"echo"}}
-	if caps := server.capsFor("app-1", ""); caps.Exec != nil {
+	if caps, _ := assembleWith(server, Runnable{AppID: "app-1"}, identity); caps.Exec != nil {
 		t.Fatal("host commands available to an unclaimed preview app")
 	}
-	if caps := server.capsFor("app-1", "owner-1"); caps.Exec == nil {
+	caps, err := assembleWith(server, app, identity)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if caps.Exec == nil {
 		t.Fatal("host commands unavailable to claimed app after operator opt-in")
 	}
-	cmd, ok := server.capsFor("app-1", "owner-1").Exec.(runner.LocalCommander)
+	cmd, ok := caps.Exec.(runner.LocalCommander)
 	if !ok {
-		t.Fatalf("exec capability = %T, want runner.LocalCommander", server.capsFor("app-1", "owner-1").Exec)
+		t.Fatalf("exec capability = %T, want runner.LocalCommander", caps.Exec)
 	}
 	if len(cmd.Allowlist) != 1 || cmd.Allowlist[0] != "echo" {
 		t.Fatalf("allowlist = %q", cmd.Allowlist)
@@ -58,75 +69,82 @@ func (b *capsBackend) EgressAllowlist(string) ([]string, error) {
 	return b.allow, b.egressErr
 }
 
-func withLog(t *testing.T) (*Server, *strings.Builder) {
-	t.Helper()
-	var log strings.Builder
-	s := &Server{Backend: &capsBackend{}, Logf: func(format string, args ...any) {
-		log.WriteString(fmt.Sprintf(format, args...) + "\n")
-	}}
-	return s, &log
-}
-
-// A capability-source failure must be indistinguishable from intentional config in
-// effect (capability absent) but loud in the operator's log.
-func TestCapsForFailsClosedWhenControlPlaneErrors(t *testing.T) {
+// A capability-source failure fails closed (capability absent) and is reported
+// as an error, never hidden as intentional absence.
+func TestAssembleHostCapabilitiesFailsClosedWhenControlPlaneErrors(t *testing.T) {
 	backend := &capsBackend{
 		secrets:    map[string]string{"TOKEN": "t"},
 		secretsErr: errors.New("control plane down"),
 	}
-	var log strings.Builder
-	s := &Server{Backend: backend, Logf: func(format string, args ...any) {
-		log.WriteString(fmt.Sprintf(format, args...) + "\n")
-	}}
+	s := &Server{Backend: backend}
+	app := Runnable{AppID: "app-1", OwnerID: "owner-1"}
 
-	caps := s.capsFor("app-1", "owner-1")
+	caps, err := assembleWith(s, app, runner.Identity{})
 	if caps.Env != nil {
 		t.Fatal("env granted despite a secrets lookup failure")
 	}
-	for _, want := range []string{"ERROR", "runs without env", "control plane down"} {
-		if !strings.Contains(log.String(), want) {
-			t.Errorf("log missing %q:\n%s", want, log.String())
+	if err == nil {
+		t.Fatal("secrets source failure returned no error")
+	}
+	for _, want := range []string{"runs without env", "control plane down"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
 		}
 	}
 
 	backend.secretsErr = nil
 	backend.egressErr = ErrCapsUnavailable
-	log.Reset()
-	caps = s.capsFor("app-1", "owner-1")
+	caps, err = assembleWith(s, app, runner.Identity{})
 	if caps.Fetch != nil {
 		t.Fatal("fetcher granted despite an egress lookup failure")
 	}
-	for _, want := range []string{"ERROR", "default-deny"} {
-		if !strings.Contains(log.String(), want) {
-			t.Errorf("log missing %q:\n%s", want, log.String())
-		}
+	if err == nil {
+		t.Fatal("egress source failure returned no error")
+	}
+	if !errors.Is(err, ErrCapsUnavailable) {
+		t.Fatalf("error = %v, want ErrCapsUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "default-deny") {
+		t.Errorf("error missing default-deny: %v", err)
 	}
 }
 
-func TestCapsForNilSecretsYieldsEmptyEnv(t *testing.T) {
-	s, _ := withLog(t)
-	if caps := s.capsFor("app-1", "owner-1"); caps.Env != nil {
+func TestAssembleHostCapabilitiesNilSecretsYieldsNoEnv(t *testing.T) {
+	s := &Server{Backend: &capsBackend{}}
+	caps, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if caps.Env != nil {
 		t.Fatalf("env = %v, want nil for a paired app with no secrets", caps.Env)
 	}
 }
 
-// A configured allowlist that fails validation is rejected loudly and egress
-// stays default-deny; a valid one wires the validated fetcher.
-func TestCapsForValidatesEgressAllowlist(t *testing.T) {
-	s, log := withLog(t)
-	s.Backend.(*capsBackend).allow = []string{"api.example.com", "bad host.com"}
-	if caps := s.capsFor("app-1", "owner-1"); caps.Fetch != nil {
+// A configured allowlist that fails validation is rejected and egress stays
+// default-deny; a valid one wires the validated fetcher.
+func TestAssembleHostCapabilitiesValidatesEgressAllowlist(t *testing.T) {
+	backend := &capsBackend{allow: []string{"api.example.com", "bad host.com"}}
+	s := &Server{Backend: backend}
+	app := Runnable{AppID: "app-1", OwnerID: "owner-1"}
+
+	caps, err := assembleWith(s, app, runner.Identity{})
+	if caps.Fetch != nil {
 		t.Fatal("fetcher built from an invalid allowlist")
 	}
-	for _, want := range []string{"ERROR", "rejected", "bad host.com"} {
-		if !strings.Contains(log.String(), want) {
-			t.Errorf("log missing %q:\n%s", want, log.String())
+	if err == nil {
+		t.Fatal("invalid allowlist returned no error")
+	}
+	for _, want := range []string{"rejected", "bad host.com"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
 		}
 	}
 
-	s.Backend.(*capsBackend).allow = []string{"api.example.com"}
-	log.Reset()
-	caps := s.capsFor("app-1", "owner-1")
+	backend.allow = []string{"api.example.com"}
+	caps, err = assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
 	if caps.Fetch == nil {
 		t.Fatal("valid allowlist did not wire a fetcher")
 	}
@@ -134,10 +152,141 @@ func TestCapsForValidatesEgressAllowlist(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected fetcher %T", caps.Fetch)
 	}
-	if _, err := runner.NewValidatedAllowlistFetcher(s.Backend.(*capsBackend).allow); err != nil {
-		t.Fatalf("allowlist should have validated: %v", err)
-	}
 	if len(af.Allow) != 1 || af.Allow[0] != "api.example.com" {
 		t.Fatalf("fetcher allow = %q", af.Allow)
+	}
+}
+
+// Claimed-only policy: unclaimed apps get no Env, Fetch, or Exec even when the
+// sources are configured, and that absence is intentional (no error). Claimed
+// apps with the same sources get all three.
+func TestAssembleHostCapabilitiesClaimedOnly(t *testing.T) {
+	backend := &capsBackend{
+		secrets: map[string]string{"TOKEN": "t"},
+		allow:   []string{"api.example.com"},
+	}
+	s := &Server{Backend: backend, EnableHostCommands: true, HostCommandAllowlist: []string{"echo"}}
+	identity := runner.Identity{User: "anon", Kind: runner.IdentityAnonymous}
+
+	unclaimed, err := assembleWith(s, Runnable{AppID: "app-1"}, identity)
+	if err != nil {
+		t.Fatalf("unclaimed assemble: %v", err)
+	}
+	if unclaimed.Env != nil || unclaimed.Fetch != nil || unclaimed.Exec != nil {
+		t.Fatalf("unclaimed app got claimed capabilities: env=%v fetch=%v exec=%v",
+			unclaimed.Env, unclaimed.Fetch, unclaimed.Exec)
+	}
+
+	claimed, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, identity)
+	if err != nil {
+		t.Fatalf("claimed assemble: %v", err)
+	}
+	if claimed.Env == nil {
+		t.Fatal("claimed app missing env")
+	}
+	if claimed.Fetch == nil {
+		t.Fatal("claimed app missing fetch")
+	}
+	if claimed.Exec == nil {
+		t.Fatal("claimed app missing exec")
+	}
+}
+
+// Default-deny egress: an empty allowlist wires no Fetcher without an error.
+func TestAssembleHostCapabilitiesDefaultDenyWithoutAllowlist(t *testing.T) {
+	s := &Server{Backend: &capsBackend{}}
+	caps, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if caps.Fetch != nil {
+		t.Fatalf("fetch = %v, want nil with no allowlist", caps.Fetch)
+	}
+}
+
+// Every session gets its identity and a fresh goodbye string from the single
+// assembly call; gateway code must not assign Auth afterwards.
+func TestAssembleHostCapabilitiesSetsAuthAndGoodbye(t *testing.T) {
+	s := &Server{Backend: &capsBackend{}}
+	identity := runner.Identity{User: "SHA256:abc", Kind: runner.IdentitySSHKey, Authenticated: true, OwnsApp: true}
+	app := Runnable{AppID: "app-1", OwnerID: "owner-1"}
+
+	first, err := assembleWith(s, app, identity)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	auth, ok := first.Auth.(runner.StaticAuth)
+	if !ok {
+		t.Fatalf("auth = %T, want runner.StaticAuth", first.Auth)
+	}
+	if auth.Identity != identity {
+		t.Fatalf("identity = %+v, want %+v", auth.Identity, identity)
+	}
+	if first.Goodbye == nil {
+		t.Fatal("goodbye is nil")
+	}
+
+	second, err := assembleWith(s, app, identity)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if second.Goodbye == nil || second.Goodbye == first.Goodbye {
+		t.Fatal("goodbye strings must be freshly allocated per session")
+	}
+}
+
+// Bus reuse: sessions of the same app share one bus instance through the
+// assembler.
+func TestAssembleHostCapabilitiesReusesBus(t *testing.T) {
+	s := &Server{Backend: &capsBackend{}}
+	app := Runnable{AppID: "app-1", OwnerID: "owner-1"}
+
+	first, err := assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	second, err := assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if first.Bus == nil || second.Bus == nil {
+		t.Fatal("bus is nil")
+	}
+	if first.Bus != second.Bus {
+		t.Fatal("same app got different bus instances")
+	}
+}
+
+func TestAssembleHostCapabilitiesRequiresAppID(t *testing.T) {
+	s := &Server{Backend: &capsBackend{}}
+	identity := runner.Identity{User: "local"}
+	caps, err := assembleWith(s, Runnable{}, identity)
+	if err == nil {
+		t.Fatal("empty app ID returned no error")
+	}
+	auth, ok := caps.Auth.(runner.StaticAuth)
+	if !ok || auth.Identity != identity {
+		t.Fatalf("auth = %+v, want identity %+v", caps.Auth, identity)
+	}
+	if caps.Goodbye == nil {
+		t.Fatal("goodbye is nil")
+	}
+}
+
+// A KV source failure fails closed with an error; tested here through the
+// assembler without a repository.
+func TestAssembleHostCapabilitiesKVFailureFailsClosed(t *testing.T) {
+	s := &Server{Backend: &capsBackend{}}
+	src := s.hostCapabilitySources()
+	src.KV = func(string) (runner.Store, error) { return nil, errors.New("disk gone") }
+
+	caps, err := AssembleHostCapabilities(
+		Runnable{AppID: "app-1", OwnerID: "owner-1"}, runner.Identity{},
+		s.hostCapabilityOptions(), src)
+	if caps.KV != nil {
+		t.Fatalf("KV = %T, want nil on source failure", caps.KV)
+	}
+	if err == nil || !strings.Contains(err.Error(), "without kv") {
+		t.Fatalf("error = %v, want kv failure", err)
 	}
 }
