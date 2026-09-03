@@ -69,10 +69,10 @@ func (b *identityBackend) ResolveIdentity(string) (runner.Identity, error) {
 // unauthenticated identity — never trust OwnerID on an unauthenticated reply.
 func TestIdentityFromConnDropsOwnerOnUnauthenticatedBackendReply(t *testing.T) {
 	var log strings.Builder
-	s := &Server{
+	s := mustNewServer(t, Config{
 		Backend: &identityBackend{identity: runner.Identity{User: "fp", Kind: runner.IdentitySSHKey, OwnerID: "own_1"}},
 		Logf:    func(format string, args ...any) { log.WriteString(fmt.Sprintf(format, args...)) },
-	}
+	})
 	c := &ssh.ServerConn{Permissions: &ssh.Permissions{Extensions: map[string]string{"pubkey-fp": "fp"}}}
 	id := s.identityFromConn(c)
 	if id.Authenticated || id.OwnerID != "" || id.OwnsApp {

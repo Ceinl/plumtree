@@ -686,7 +686,11 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: API: %w", err)
 	}
-	c.leaf = newLeafServer(repo, c.resolved.Config, c.gatewayToken)
+	c.leaf, err = newLeafServer(repo, c.resolved.Config, c.gatewayToken)
+	if err != nil {
+		_ = repo.Close()
+		return fmt.Errorf("clean server: leaf gateway: %w", err)
+	}
 	if err := c.leaf.Start(ctx); err != nil {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: leaf gateway: %w", err)
@@ -904,7 +908,7 @@ func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, handle stri
 	}
 }
 
-func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken []byte) *gateway.Server {
+func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken []byte) (*gateway.Server, error) {
 	limits := runner.Limits{
 		MemoryPages:     uint32(cfg.Limits.MemoryPages),
 		MaxEventsPerSec: cfg.Limits.MaxEventsPerSec,
@@ -912,13 +916,17 @@ func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken
 	}
 	limits.SessionTimeout, _ = time.ParseDuration(cfg.Limits.SessionTimeout)
 	limits.FrameTimeout, _ = time.ParseDuration(cfg.Limits.FrameTimeout)
+	handshakeTimeout, _ := time.ParseDuration(cfg.Limits.HandshakeTimeout)
+	idleTimeout, _ := time.ParseDuration(cfg.Limits.IdleTimeout)
 	allowlist := parseHostCommandAllowlist(cfg.Runtime.HostCommandAllowlist)
-	return &gateway.Server{
+	return gateway.New(gateway.Config{
 		Backend: gateway.NewSQLiteBackend(repo), Runner: runner.New(), Limits: limits,
 		MaxFPS: cfg.Limits.MaxFPS, MaxConcurrentSessions: cfg.Limits.MaxSessions,
+		HandshakeTimeout: handshakeTimeout, IdleTimeout: idleTimeout,
+		MaxConnections: cfg.Limits.MaxConnections, MaxConnectionsPerIP: cfg.Limits.MaxConnectionsPerIP,
 		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)),
 		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist,
-	}
+	})
 }
 
 // parseHostCommandAllowlist splits the operator's CSV allowlist, trimming

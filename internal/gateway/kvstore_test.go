@@ -29,7 +29,8 @@ func openKVTestServer(t *testing.T) (*Server, *SQLiteBackend) {
 		t.Fatalf("create app: %v", err)
 	}
 	backend := NewSQLiteBackend(repository)
-	return &Server{Backend: backend}, backend
+	s := mustNewServer(t, Config{Backend: backend})
+	return s, backend
 }
 
 // The SQLite backend's KV adapter must satisfy the full runner.Store contract:
@@ -111,7 +112,7 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 
 // Backends without a KV source keep the capability absent instead of failing.
 func TestCapsWithoutKVSourceHasNoKV(t *testing.T) {
-	s := &Server{Backend: &capsBackend{}}
+	s := mustNewServer(t, Config{Backend: &capsBackend{}})
 	if caps := s.capsFor("app-1", "owner-1"); caps.KV != nil {
 		t.Fatalf("KV = %T, want nil without a KV source", caps.KV)
 	}

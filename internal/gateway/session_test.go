@@ -75,7 +75,7 @@ func TestRunSessionProductionCLIUsesWorker(t *testing.T) {
 	}
 
 	ch := &testChannel{}
-	s := &Server{Runner: runner.New(), RunnerWorker: wrapper}
+	s := mustNewServer(t, Config{Backend: &stubBackend{}, Runner: runner.New(), RunnerWorker: wrapper})
 	s.runSession(context.Background(), ch, wasm, "cli", runner.Capabilities{KV: runner.NewMemStore(0, 0)}, nil, nil)
 
 	if _, err := os.Stat(marker); err != nil {
@@ -94,7 +94,7 @@ func TestRunSessionTUIEnablesAndDisablesMouse(t *testing.T) {
 	}
 	ch := &testChannel{}
 	goodbye := "safe\x1b[31mtext"
-	s := &Server{Runner: runner.New(), MaxFPS: 60}
+	s := mustNewServer(t, Config{Backend: &stubBackend{}, Runner: runner.New(), MaxFPS: 60})
 	s.runSession(context.Background(), ch, wasm, "tui", runner.Capabilities{Goodbye: &goodbye}, func() (int, int) { return 30, 10 }, nil)
 	got := ch.String()
 	if !strings.Contains(got, "\x1b[?1006h") || !strings.Contains(got, "\x1b[?1006l") {
@@ -118,7 +118,7 @@ func TestRunSessionCleanCLIUsesCLIForTUIApp(t *testing.T) {
 	}
 	goodbye := "clean CLI complete"
 	caps.Goodbye = &goodbye
-	s := &Server{Runner: runner.New()}
+	s := mustNewServer(t, Config{Backend: &stubBackend{}, Runner: runner.New()})
 	s.runSessionArgs(context.Background(), ch, wasm, "tui", caps, nil, nil, []string{"get_identity"})
 	if got := ch.String(); !strings.Contains(got, "authenticated=false") || strings.Contains(got, terminal.OPEN_ALT) || !strings.Contains(got, goodbye) {
 		t.Fatalf("clean CLI output = %q", got)
@@ -135,7 +135,7 @@ func TestRunSessionReportsGuestFailureExitStatus(t *testing.T) {
 	}
 
 	ch := &testChannel{}
-	s := &Server{Runner: runner.New()}
+	s := mustNewServer(t, Config{Backend: &stubBackend{}, Runner: runner.New()})
 	// The guest exits nonzero for an unknown command; the channel must carry it.
 	log, _, status := s.runSessionArgsStatus(context.Background(), ch, wasm, "cli", runner.Capabilities{}, nil, nil, []string{"not-a-command"})
 	if status == 0 {
@@ -149,20 +149,21 @@ func TestRunSessionReportsGuestFailureExitStatus(t *testing.T) {
 func TestStartSessionRejectsSendNonzeroExitStatus(t *testing.T) {
 	tests := []struct {
 		name    string
-		server  func(backend Backend) *Server
+		server  func(backend *stubBackend) *Server
 		backend *stubBackend
 	}{
-		{"runner at capacity", func(b Backend) *Server {
-			s := &Server{Backend: b, MaxConcurrentSessions: 1}
-			s.slots = make(chan struct{}, 1)
-			s.slots <- struct{}{} // occupy the only runner slot
+		{"runner at capacity", func(b *stubBackend) *Server {
+			s := mustNewServer(t, Config{Backend: b, MaxConcurrentSessions: 1})
+			if !s.acquireSlot() { // occupy the only runner slot
+				t.Fatal("could not occupy the only runner slot")
+			}
 			return s
 		}, &stubBackend{}},
-		{"resolve failure", func(b Backend) *Server {
-			return &Server{Backend: b}
+		{"resolve failure", func(b *stubBackend) *Server {
+			return mustNewServer(t, Config{Backend: b})
 		}, &stubBackend{resolveErr: errors.New("no such app")}},
-		{"start session failure", func(b Backend) *Server {
-			return &Server{Backend: b}
+		{"start session failure", func(b *stubBackend) *Server {
+			return mustNewServer(t, Config{Backend: b})
 		}, &stubBackend{startErr: errors.New("quota exceeded")}},
 	}
 	for _, test := range tests {
