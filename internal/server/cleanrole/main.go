@@ -53,6 +53,9 @@ func Run(args []string) error {
 // Execute runs a local config or bootstrap command, an operator command, or
 // the selected control role.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
+	if handled, err := routeCommandHelp(args, out); handled {
+		return err
+	}
 	if len(args) > 0 && args[0] == "config" {
 		return executeConfig(args[1:], environment, out)
 	}
