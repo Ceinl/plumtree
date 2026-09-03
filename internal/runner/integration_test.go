@@ -145,6 +145,28 @@ func TestRunCounterExample(t *testing.T) {
 	}
 }
 
+// A yield-free flood of repaint-only events must not starve the guest GC.
+// Regression test: the wasip1 present loop once allocated a full frame Clone
+// per recv without ever yielding the scheduler, so on GOOS=wasip1 (no async
+// preemption) GC workers never ran and the guest died at ~600 frames with
+// "out of memory" inside Frame.Clone. The loop now yields every iteration.
+func TestPresentFloodDoesNotStarveGuestGC(t *testing.T) {
+	wasm := buildGuest(t, "../../sdk/examples/counter")
+
+	const presents = 3000
+	events := make([]abi.Event, 0, presents+1)
+	events = append(events, abi.Event{Kind: abi.KindResize, W: 179, H: 40})
+	for i := 0; i < presents; i++ {
+		events = append(events, abi.Event{Kind: abi.KindNone})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	lim := Limits{MemoryPages: 512, SessionTimeout: 3 * time.Minute}
+	if err := Run(ctx, wasm, lim, Capabilities{}, &eventListSource{events: events}, TextSink{W: io.Discard}, io.Discard); err != nil {
+		t.Fatalf("present flood: %v", err)
+	}
+}
+
 type initialThenIdleSource struct {
 	sent bool
 }

@@ -68,6 +68,13 @@ func runPlatform(rt *Runtime) error {
 	}
 
 	for {
+		// Yield to the Go scheduler every iteration. GOOS=wasip1 has no
+		// async preemption, and the steady-state loop below performs no
+		// channel operations or blocking calls of its own: without this
+		// handoff, GC workers and subscription goroutines can starve while
+		// per-frame garbage (Clone, encoded frame) piles up until the
+		// linear-memory cap kills the guest. See spark/counter flood repro.
+		runtime.Gosched()
 		n := hostRecv(int32(uintptr(unsafe.Pointer(&eventBuffer[0]))), int32(len(eventBuffer)))
 		if n < 0 {
 			return rt.Err()
