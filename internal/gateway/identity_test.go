@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -61,7 +62,7 @@ type identityBackend struct {
 	identity runner.Identity
 }
 
-func (b *identityBackend) ResolveIdentity(string) (runner.Identity, error) {
+func (b *identityBackend) ResolveIdentity(context.Context, string) (runner.Identity, error) {
 	return b.identity, nil
 }
 
@@ -74,7 +75,7 @@ func TestIdentityFromConnDropsOwnerOnUnauthenticatedBackendReply(t *testing.T) {
 		Logf:    func(format string, args ...any) { log.WriteString(fmt.Sprintf(format, args...)) },
 	}
 	c := &ssh.ServerConn{Permissions: &ssh.Permissions{Extensions: map[string]string{"pubkey-fp": "fp"}}}
-	id := s.identityFromConn(c)
+	id := s.identityFromConn(context.Background(), c)
 	if id.Authenticated || id.OwnerID != "" || id.OwnsApp {
 		t.Fatalf("identity from hostile backend = %+v", id)
 	}

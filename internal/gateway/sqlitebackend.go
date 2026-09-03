@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -179,22 +180,50 @@ func (b *SQLiteBackend) logf(format string, args ...any) {
 	}
 }
 
-func (b *SQLiteBackend) ResolveIdentity(fingerprint string) (runner.Identity, error) {
-	device, err := b.Repository.DeviceByFingerprint(context.Background(), fingerprint)
+// requireRepo reports ErrNotConfigured when the backend was built without a
+// repository, distinguishing missing wiring from a control plane that failed
+// to answer (ErrCapsUnavailable).
+func (b *SQLiteBackend) requireRepo() error {
+	if b.Repository == nil {
+		return fmt.Errorf("%w: gateway backend has no repository", ErrNotConfigured)
+	}
+	return nil
+}
+
+// unavailable wraps an unexpected repository failure as ErrCapsUnavailable,
+// preserving input, not-found, conflict, suspension, quota, and context errors
+// verbatim so callers can distinguish user errors from control-plane outages.
+func unavailable(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sqlite.ErrInvalid) || errors.Is(err, sqlite.ErrNotFound) ||
+		errors.Is(err, sqlite.ErrConflict) || errors.Is(err, sqlite.ErrSuspended) ||
+		errors.Is(err, sqlite.ErrQuota) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w: %s: %v", ErrCapsUnavailable, op, err)
+}
+
+func (b *SQLiteBackend) ResolveIdentity(ctx context.Context, fingerprint string) (runner.Identity, error) {
+	if err := b.requireRepo(); err != nil {
+		return runner.Identity{}, err
+	}
+	device, err := b.Repository.DeviceByFingerprint(ctx, fingerprint)
 	if errors.Is(err, sqlite.ErrNotFound) {
 		return runner.Identity{User: fingerprint, Kind: runner.IdentitySSHKey}, nil
 	}
 	if err != nil {
-		return runner.Identity{}, err
+		return runner.Identity{}, unavailable("resolve identity", err)
 	}
 	return runner.Identity{User: fingerprint, Kind: runner.IdentitySSHKey, Authenticated: true, OwnerID: device.AuthorID}, nil
 }
 
-func (b *SQLiteBackend) ResolveRunnable(handle string) (Runnable, error) {
-	return b.ResolveRunnableFor(handle, runner.Identity{})
-}
-
-func (b *SQLiteBackend) ResolveRunnableFor(handle string, identity runner.Identity) (Runnable, error) {
+func (b *SQLiteBackend) ResolveRunnable(ctx context.Context, handle string, identity runner.Identity) (Runnable, error) {
+	if err := b.requireRepo(); err != nil {
+		return Runnable{}, err
+	}
 	author, app, ok := strings.Cut(handle, "/")
 	if !ok || author == "" || app == "" || strings.Contains(app, "/") {
 		return Runnable{}, sqlite.ErrNotFound
@@ -203,71 +232,104 @@ func (b *SQLiteBackend) ResolveRunnableFor(handle string, identity runner.Identi
 	if identity.Kind == runner.IdentitySSHKey {
 		fingerprint = identity.User
 	}
-	resolved, err := b.Repository.ResolveLeafRunnable(context.Background(), author, app, fingerprint, identity.OwnerID)
+	resolved, err := b.Repository.ResolveLeafRunnable(ctx, author, app, fingerprint, identity.OwnerID)
 	if errors.Is(err, sqlite.ErrSuspended) {
-		return Runnable{}, ErrSuspended
+		return Runnable{}, fmt.Errorf("%w: %v", ErrSuspended, err)
 	}
 	if err != nil {
-		return Runnable{}, err
+		if errors.Is(err, sqlite.ErrNotFound) || errors.Is(err, sqlite.ErrInvalid) {
+			return Runnable{}, err
+		}
+		return Runnable{}, unavailable("resolve runnable", err)
 	}
 	return Runnable{AppID: resolved.App.ID, AppName: resolved.App.Name, OwnerID: resolved.App.AuthorID,
 		DeployID: resolved.DeploymentID, ArtifactDigest: resolved.Artifact.Digest, AppType: resolved.App.Kind, WASM: resolved.WASM}, nil
 }
 
-func (b *SQLiteBackend) StartSession(appID, deployID string) (string, error) {
-	deployment, _, err := b.Repository.Deployment(context.Background(), deployID)
-	if err != nil {
+func (b *SQLiteBackend) StartSession(ctx context.Context, appID, deployID, artifactDigest, identitySummary string) (string, error) {
+	if err := b.requireRepo(); err != nil {
 		return "", err
 	}
-	if deployment.AppID != appID {
-		return "", sqlite.ErrNotFound
-	}
-	_, artifact, err := b.Repository.CurrentDeployment(context.Background(), appID)
-	if err != nil {
-		return "", err
-	}
-	return b.StartAccountedSession(appID, deployID, artifact.Digest, "")
-}
-
-func (b *SQLiteBackend) StartAccountedSession(appID, deployID, artifactDigest, identitySummary string) (string, error) {
 	id := randomSessionID()
-	err := b.Repository.StartSession(context.Background(), sqlite.Session{ID: id, AppID: appID, DeploymentID: deployID, ArtifactDigest: artifactDigest, LeafIdentitySummary: identitySummary})
+	err := b.Repository.StartSession(ctx, sqlite.Session{ID: id, AppID: appID, DeploymentID: deployID, ArtifactDigest: artifactDigest, LeafIdentitySummary: identitySummary})
 	if errors.Is(err, sqlite.ErrSuspended) {
-		return "", ErrSuspended
+		return "", fmt.Errorf("%w: %v", ErrSuspended, err)
 	}
 	if errors.Is(err, sqlite.ErrQuota) {
-		return "", ErrQuota
+		return "", fmt.Errorf("%w: %v", ErrQuota, err)
 	}
-	return id, err
-}
-
-func (b *SQLiteBackend) RecordSessionLog(sessionID, log string, truncated bool) error {
-	return b.Repository.RecordSessionLog(context.Background(), sessionID, log, truncated)
-}
-
-func (b *SQLiteBackend) EndSession(sessionID string) error {
-	_, err := b.Repository.EndSession(context.Background(), sessionID)
-	return err
-}
-
-func (b *SQLiteBackend) SecretsForApp(appID string) (map[string]string, error) {
-	metadata, err := b.Repository.ListSecrets(context.Background(), appID)
 	if err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) || errors.Is(err, sqlite.ErrInvalid) {
+			return "", err
+		}
+		return "", unavailable("start session", err)
+	}
+	return id, nil
+}
+
+func (b *SQLiteBackend) RecordSessionLog(ctx context.Context, sessionID, log string, truncated bool) error {
+	if err := b.requireRepo(); err != nil {
+		return err
+	}
+	if err := b.Repository.RecordSessionLog(ctx, sessionID, log, truncated); err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) || errors.Is(err, sqlite.ErrInvalid) {
+			return err
+		}
+		return unavailable("record session log", err)
+	}
+	return nil
+}
+
+func (b *SQLiteBackend) EndSession(ctx context.Context, sessionID string) error {
+	if err := b.requireRepo(); err != nil {
+		return err
+	}
+	if _, err := b.Repository.EndSession(ctx, sessionID); err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) || errors.Is(err, sqlite.ErrInvalid) {
+			return err
+		}
+		return unavailable("end session", err)
+	}
+	return nil
+}
+
+func (b *SQLiteBackend) SecretsForApp(ctx context.Context, appID string) (map[string]string, error) {
+	if err := b.requireRepo(); err != nil {
 		return nil, err
+	}
+	metadata, err := b.Repository.ListSecrets(ctx, appID)
+	if err != nil {
+		if errors.Is(err, sqlite.ErrInvalid) {
+			return nil, err
+		}
+		return nil, unavailable("secrets", err)
 	}
 	result := make(map[string]string, len(metadata))
 	for _, item := range metadata {
-		_, value, err := b.Repository.Secret(context.Background(), appID, item.Key)
+		_, value, err := b.Repository.Secret(ctx, appID, item.Key)
 		if err != nil {
-			return nil, err
+			if errors.Is(err, sqlite.ErrInvalid) || errors.Is(err, sqlite.ErrNotFound) {
+				return nil, err
+			}
+			return nil, unavailable("secrets", err)
 		}
 		result[item.Key] = string(value)
 	}
 	return result, nil
 }
 
-func (b *SQLiteBackend) EgressAllowlist(appID string) ([]string, error) {
-	return b.Repository.ListEgressHosts(context.Background(), appID)
+func (b *SQLiteBackend) EgressAllowlist(ctx context.Context, appID string) ([]string, error) {
+	if err := b.requireRepo(); err != nil {
+		return nil, err
+	}
+	allow, err := b.Repository.ListEgressHosts(ctx, appID)
+	if err != nil {
+		if errors.Is(err, sqlite.ErrInvalid) {
+			return nil, err
+		}
+		return nil, unavailable("egress", err)
+	}
+	return allow, nil
 }
 
 func randomSessionID() string {
@@ -277,6 +339,4 @@ func randomSessionID() string {
 }
 
 var _ Backend = (*SQLiteBackend)(nil)
-var _ IdentityAwareBackend = (*SQLiteBackend)(nil)
-var _ AccountedBackend = (*SQLiteBackend)(nil)
 var _ SuspensionSource = (*SQLiteBackend)(nil)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Ceinl/plumtree/internal/runner"
@@ -29,14 +31,14 @@ func openKVTestServer(t *testing.T) (*Server, *SQLiteBackend) {
 		t.Fatalf("create app: %v", err)
 	}
 	backend := NewSQLiteBackend(repository)
-	return &Server{Backend: backend}, backend
+	return &Server{Backend: backend, Suspensions: backend}, backend
 }
 
 // The SQLite backend's KV adapter must satisfy the full runner.Store contract:
 // CRUD, prefix list, CAS conflict/quota sentinels, and cross-store sharing.
 func TestSQLiteKVStoreSatisfiesRunnerStoreContract(t *testing.T) {
 	_, backend := openKVTestServer(t)
-	store, err := backend.KVStore("app-kv")
+	store, err := backend.KVStore(context.Background(), "app-kv")
 	if err != nil {
 		t.Fatalf("KVStore: %v", err)
 	}
@@ -92,7 +94,7 @@ func TestSQLiteKVStoreSatisfiesRunnerStoreContract(t *testing.T) {
 // plaintext per-app JSON files.
 func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 	s, backend := openKVTestServer(t)
-	caps := s.capsFor("app-kv", "owner-kv")
+	caps := s.capsFor(context.Background(), "app-kv", "owner-kv")
 	if caps.KV == nil {
 		t.Fatal("hosted session ran without a KV store")
 	}
@@ -100,7 +102,7 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 		t.Fatalf("session set: %v", err)
 	}
 	// A second session of the same app shares one store through the repository.
-	if value, found, err := s.capsFor("app-kv", "owner-kv").KV.Get("from-session"); err != nil || !found || string(value) != "persisted" {
+	if value, found, err := s.capsFor(context.Background(), "app-kv", "owner-kv").KV.Get("from-session"); err != nil || !found || string(value) != "persisted" {
 		t.Fatalf("second session get = %q, %t, %v", value, found, err)
 	}
 	// The bytes live in the repository itself, not a StateDir/kv JSON file.
@@ -109,10 +111,20 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 	}
 }
 
-// Backends without a KV source keep the capability absent instead of failing.
-func TestCapsWithoutKVSourceHasNoKV(t *testing.T) {
-	s := &Server{Backend: &capsBackend{}}
-	if caps := s.capsFor("app-1", "owner-1"); caps.KV != nil {
-		t.Fatalf("KV = %T, want nil without a KV source", caps.KV)
+// A KV source failure fails closed: the capability is absent and the operator
+// sees why, instead of silently running without durable state.
+func TestCapsKVUnavailableFailsClosed(t *testing.T) {
+	var log strings.Builder
+	backend := &capsBackend{kvErr: ErrCapsUnavailable}
+	s := &Server{Backend: backend, Suspensions: backend, Logf: func(format string, args ...any) {
+		log.WriteString(fmt.Sprintf(format, args...) + "\n")
+	}}
+	if caps := s.capsFor(context.Background(), "app-1", "owner-1"); caps.KV != nil {
+		t.Fatalf("KV = %T, want nil when the KV source fails", caps.KV)
+	}
+	for _, want := range []string{"ERROR", "kv store", "control plane unavailable"} {
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("log missing %q:\n%s", want, log.String())
+		}
 	}
 }
