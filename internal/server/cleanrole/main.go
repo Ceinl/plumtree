@@ -28,6 +28,7 @@ import (
 	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
 	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
 	"github.com/Ceinl/plumtree/internal/sqlite"
+	"github.com/Ceinl/plumtree/internal/sshconn"
 	statebundle "github.com/Ceinl/plumtree/internal/state"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
@@ -652,7 +653,7 @@ type controlComponent struct {
 	wg            sync.WaitGroup
 	connectionsMu sync.Mutex
 	connections   map[net.Conn]struct{}
-	admission     *connectionAdmission
+	admission     *sshconn.Admission
 	ready         func(string)
 }
 
@@ -699,7 +700,7 @@ func (c *controlComponent) Start(ctx context.Context) error {
 	c.sshConfig = authenticatedSSHConfig(signer)
 	c.errors = make(chan error, 1)
 	c.connections = make(map[net.Conn]struct{})
-	c.admission = newConnectionAdmission(c.resolved.Config.Limits.MaxConnections, c.resolved.Config.Limits.MaxConnectionsPerIP)
+	c.admission = sshconn.NewAdmission(c.resolved.Config.Limits.MaxConnections, c.resolved.Config.Limits.MaxConnectionsPerIP)
 	c.wg.Add(1)
 	go c.accept()
 	return nil
@@ -750,8 +751,8 @@ func (c *controlComponent) accept() {
 			}
 			return
 		}
-		clientIP := connectionIP(conn.RemoteAddr())
-		if !c.admission.acquire(clientIP) {
+		clientIP := sshconn.ClientIP(conn.RemoteAddr())
+		if !c.admission.Acquire(clientIP) {
 			_ = conn.Close()
 			continue
 		}
@@ -761,7 +762,7 @@ func (c *controlComponent) accept() {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			defer c.admission.release(clientIP)
+			defer c.admission.Release(clientIP)
 			defer func() {
 				c.connectionsMu.Lock()
 				delete(c.connections, conn)
@@ -811,7 +812,7 @@ func authenticatedSSHConfig(signer ssh.Signer) *ssh.ServerConfig {
 func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, leaf *gateway.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config) {
 	defer raw.Close()
 	idleTimeout, _ := time.ParseDuration(cfg.Limits.IdleTimeout)
-	connection := newActivityConn(raw, idleTimeout)
+	connection := sshconn.NewActivityConn(raw, idleTimeout)
 	if timeout, _ := time.ParseDuration(cfg.Limits.HandshakeTimeout); timeout > 0 {
 		_ = raw.SetDeadline(time.Now().Add(timeout))
 	}
@@ -819,7 +820,7 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 	if err != nil {
 		return
 	}
-	connection.enableIdleDeadline()
+	connection.EnableIdleDeadline()
 	defer serverConn.Close()
 	go ssh.DiscardRequests(requests)
 	fingerprint := ""
