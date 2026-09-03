@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/runner"
+	"github.com/Ceinl/plumtree/internal/sshconn"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -64,7 +65,7 @@ type Server struct {
 
 	sessions  *sessionRegistry
 	slots     chan struct{} // counting semaphore; nil when unlimited
-	admission *connectionAdmission
+	admission *sshconn.Admission
 
 	busMu     sync.Mutex
 	busById   map[string]*runner.MemBus // app ID -> shared pub/sub bus
@@ -95,6 +96,26 @@ const (
 	DefaultMaxConnections        = 1024
 	DefaultMaxConnectionsPerIP   = 32
 )
+
+func effectiveLimit(configured, fallback int) int {
+	if configured == 0 {
+		return fallback
+	}
+	if configured < 0 {
+		return 0
+	}
+	return configured
+}
+
+func effectiveDuration(configured, fallback time.Duration) time.Duration {
+	if configured == 0 {
+		return fallback
+	}
+	if configured < 0 {
+		return 0
+	}
+	return configured
+}
 
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	if err := s.Start(ctx); err != nil {
@@ -138,14 +159,14 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 			}
 			return err
 		}
-		clientIP := connectionIP(conn.RemoteAddr())
-		if !s.admission.acquire(clientIP) {
+		clientIP := sshconn.ClientIP(conn.RemoteAddr())
+		if !s.admission.Acquire(clientIP) {
 			s.logf("reject connection from %s: connection limit reached", conn.RemoteAddr())
 			_ = conn.Close()
 			continue
 		}
 		go func() {
-			defer s.admission.release(clientIP)
+			defer s.admission.Release(clientIP)
 			s.handleConn(ctx, conn, cfg)
 		}()
 	}
@@ -186,7 +207,7 @@ func (s *Server) start(ctx context.Context) error {
 		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
 	}
 	if s.admission == nil {
-		s.admission = newConnectionAdmission(
+		s.admission = sshconn.NewAdmission(
 			effectiveLimit(s.MaxConnections, DefaultMaxConnections),
 			effectiveLimit(s.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
 		)
@@ -233,7 +254,7 @@ func (s *Server) logf(format string, args ...any) {
 
 func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.ServerConfig) {
 	defer nConn.Close()
-	conn := newActivityConn(nConn, effectiveDuration(s.IdleTimeout, DefaultIdleTimeout))
+	conn := sshconn.NewActivityConn(nConn, effectiveDuration(s.IdleTimeout, DefaultIdleTimeout))
 	if timeout := effectiveDuration(s.HandshakeTimeout, DefaultHandshakeTimeout); timeout > 0 {
 		_ = nConn.SetDeadline(time.Now().Add(timeout))
 	}
@@ -242,7 +263,7 @@ func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 		s.logf("ssh handshake from %s failed: %v", nConn.RemoteAddr(), err)
 		return
 	}
-	conn.enableIdleDeadline()
+	conn.EnableIdleDeadline()
 	defer sshConn.Close()
 	go ssh.DiscardRequests(reqs)
 	identity := s.identityFromConn(sshConn)
