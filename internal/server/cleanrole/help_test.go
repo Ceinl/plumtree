@@ -15,8 +15,7 @@ func executeHelp(t *testing.T, args []string) (string, error) {
 }
 
 func TestEveryDispatchableCommandHasHelpTopic(t *testing.T) {
-	commands := []string{"serve", "bootstrap", "config", "state", "suspend", "unsuspend", "quota"}
-	for _, command := range commands {
+	for command := range commandHelp {
 		if err := writeHelp(&bytes.Buffer{}, command); err != nil {
 			t.Errorf("plumtree help %s: %v", command, err)
 		}
@@ -83,6 +82,12 @@ func TestHelpEntryPoints(t *testing.T) {
 func TestHelpRejectsUnknownCommands(t *testing.T) {
 	if _, err := executeHelp(t, []string{"bogus"}); err == nil || !strings.Contains(err.Error(), `unknown plumtree command "bogus"`) {
 		t.Fatalf("bogus command error = %v", err)
+	}
+	if _, err := executeHelp(t, []string{"author", "bogus"}); err == nil || !strings.Contains(err.Error(), `unknown plumtree author command "bogus"`) {
+		t.Fatalf("author bogus command error = %v", err)
+	}
+	if _, err := executeHelp(t, []string{"author"}); err == nil || !strings.Contains(err.Error(), "usage: plumtree author bootstrap") {
+		t.Fatalf("bare author command error = %v", err)
 	}
 	if _, err := executeHelp(t, []string{"help", "bogus"}); err == nil || !strings.Contains(err.Error(), `unknown plumtree help command "bogus"`) {
 		t.Fatalf("help bogus error = %v", err)

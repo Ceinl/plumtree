@@ -1,6 +1,7 @@
 package cleanrole
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -79,16 +80,16 @@ destructive and requires -yes. --config selects the file (or PLUMTREE_CONFIG).
 const suspendHelp = `Usage:
   plumtree suspend deploy <id> [-config PATH | -database PATH]
 
-Suspends one deployment. The gateway picks the change up live through its
-suspension watcher. Uses --config (or PLUMTREE_CONFIG) or a direct --database
-path, but not both.
+Suspends one deployment. The gateway suspension watcher applies the change
+immediately. Uses --config (or PLUMTREE_CONFIG) or a direct --database path,
+but not both.
 `
 
 const unsuspendHelp = `Usage:
   plumtree unsuspend deploy <id> [-config PATH | -database PATH]
 
-Lifts the suspension on one deployment. The gateway picks the change up live
-through its suspension watcher. Uses --config (or PLUMTREE_CONFIG) or a direct
+Lifts the suspension on one deployment. The gateway suspension watcher applies
+the change immediately. Uses --config (or PLUMTREE_CONFIG) or a direct
 --database path, but not both.
 `
 
@@ -100,48 +101,102 @@ non-negative integers. Uses --config (or PLUMTREE_CONFIG) or a direct
 --database path, but not both.
 `
 
+var commandHelp = map[string]string{
+	"serve":     serveHelp,
+	"bootstrap": bootstrapHelp,
+	"config":    configHelp,
+	"state":     stateHelp,
+	"suspend":   suspendHelp,
+	"unsuspend": unsuspendHelp,
+	"quota":     quotaHelp,
+}
+
 func isHelp(value string) bool { return value == "-h" || value == "--help" }
 
 func isKnownTopCommand(value string) bool {
-	switch value {
-	case "serve", "config", "bootstrap", "author", "state", "suspend", "unsuspend", "quota":
-		return true
-	}
-	return false
+	_, known := commandHelp[value]
+	return known || value == "author"
 }
 
 func normalizeHelpTopic(command string) string {
-	switch strings.TrimSpace(command) {
+	command = strings.TrimSpace(command)
+	switch command {
 	case "", "help":
 		return ""
 	case "author":
 		return "bootstrap"
 	default:
-		return strings.TrimSpace(command)
+		return command
 	}
 }
 
 func writeHelp(out io.Writer, command string) error {
+	topic := normalizeHelpTopic(command)
 	help := rootHelp
-	switch normalizeHelpTopic(command) {
-	case "":
-	case "serve":
-		help = serveHelp
-	case "bootstrap":
-		help = bootstrapHelp
-	case "config":
-		help = configHelp
-	case "state":
-		help = stateHelp
-	case "suspend":
-		help = suspendHelp
-	case "unsuspend":
-		help = unsuspendHelp
-	case "quota":
-		help = quotaHelp
-	default:
-		return fmt.Errorf("unknown plumtree help command %q", command)
+	if topic != "" {
+		var known bool
+		help, known = commandHelp[topic]
+		if !known {
+			return fmt.Errorf("unknown plumtree help command %q", command)
+		}
 	}
 	_, err := fmt.Fprint(out, help)
 	return err
+}
+
+// routeCommandHelp handles help forms and rejects commands that would
+// otherwise fall through to serve argument parsing.
+func routeCommandHelp(args []string, out io.Writer) (bool, error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	if isHelp(args[0]) {
+		return true, writeHelp(out, "")
+	}
+	if args[0] == "help" {
+		switch {
+		case len(args) == 1, len(args) == 2 && isHelp(args[1]):
+			return true, writeHelp(out, "")
+		case len(args) == 2:
+			return true, writeHelp(out, args[1])
+		case len(args) == 3 && args[1] == "author" && args[2] == "bootstrap":
+			return true, writeHelp(out, "bootstrap")
+		default:
+			return true, errors.New("usage: plumtree help [command]")
+		}
+	}
+	if args[0] == "author" {
+		if len(args) == 2 && isHelp(args[1]) {
+			return true, writeHelp(out, "bootstrap")
+		}
+		if len(args) < 2 {
+			return true, errors.New("usage: plumtree author bootstrap [flags]")
+		}
+		if args[1] != "bootstrap" {
+			return true, fmt.Errorf("unknown plumtree author command %q", args[1])
+		}
+		for _, arg := range args[2:] {
+			if isHelp(arg) {
+				return true, writeHelp(out, "bootstrap")
+			}
+		}
+		return false, nil
+	}
+	if isKnownTopCommand(args[0]) {
+		for _, arg := range args[1:] {
+			if isHelp(arg) {
+				return true, writeHelp(out, args[0])
+			}
+		}
+		return false, nil
+	}
+	if strings.HasPrefix(args[0], "-") {
+		for _, arg := range args {
+			if isHelp(arg) {
+				return true, writeHelp(out, "serve")
+			}
+		}
+		return false, nil
+	}
+	return true, fmt.Errorf("unknown plumtree command %q", args[0])
 }

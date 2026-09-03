@@ -53,41 +53,8 @@ func Run(args []string) error {
 // Execute runs a local config or bootstrap command, an operator command, or
 // the selected control role.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
-	if len(args) > 0 && isHelp(args[0]) {
-		return writeHelp(out, "")
-	}
-	if len(args) > 0 && args[0] == "help" {
-		if len(args) == 1 || (len(args) == 2 && isHelp(args[1])) {
-			return writeHelp(out, "")
-		}
-		if len(args) == 2 {
-			return writeHelp(out, args[1])
-		}
-		if len(args) == 3 && args[1] == "author" && args[2] == "bootstrap" {
-			return writeHelp(out, "bootstrap")
-		}
-		return errors.New("usage: plumtree help [command]")
-	}
-	if len(args) > 1 && isKnownTopCommand(args[0]) {
-		for _, arg := range args[1:] {
-			if isHelp(arg) {
-				topic := args[0]
-				if topic == "author" {
-					topic = "bootstrap"
-				}
-				return writeHelp(out, topic)
-			}
-		}
-	}
-	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
-		for _, arg := range args {
-			if isHelp(arg) {
-				return writeHelp(out, "serve")
-			}
-		}
-	}
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !isKnownTopCommand(args[0]) {
-		return fmt.Errorf("unknown plumtree command %q", args[0])
+	if handled, err := routeCommandHelp(args, out); handled {
+		return err
 	}
 	if len(args) > 0 && args[0] == "config" {
 		return executeConfig(args[1:], environment, out)
