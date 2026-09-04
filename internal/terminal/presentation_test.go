@@ -84,14 +84,23 @@ func TestWriteDevSSHSummaryKeepsGreppableConnect(t *testing.T) {
 	}
 }
 
-func TestWriteGatewaySummaryStaysPlainWithoutColor(t *testing.T) {
+func TestWriteRunnerSummaryDescribesTheBrokerWithoutClaimingSSHOrStorage(t *testing.T) {
 	var out bytes.Buffer
-	WriteGatewaySummary(&out, "0.0.0.0:2222", "https://control", "in-process sandbox", false)
-	if strings.ContainsRune(out.String(), '\x1b') {
-		t.Fatalf("plain gateway summary contains ANSI escapes: %q", out.String())
+	WriteRunnerSummary(&out, RunnerSummary{
+		Mode: "production", Endpoint: "unix:///run/plumtree/runner.sock",
+		Worker: "/usr/bin/runner-worker", Scratch: "/var/lib/plumtree/runner",
+		Next: "connect the control plane to this runner",
+	}, false)
+	got := out.String()
+	for _, want := range []string{"plumtree runner", "production", "| broker", "unix:///run/plumtree/runner.sock", "| worker", "| scratch", "| next"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("runner summary missing %q:\n%s", want, got)
+		}
 	}
-	if !strings.Contains(out.String(), "plumtree gateway") {
-		t.Fatalf("gateway summary missing brand:\n%s", out.String())
+	for _, unwanted := range []string{"| ssh", "| store"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("runner summary contains server-only row %q:\n%s", unwanted, got)
+		}
 	}
 }
 
@@ -121,9 +130,15 @@ func TestCompactDuration(t *testing.T) {
 }
 func TestWriteEventIsTimestamped(t *testing.T) {
 	var out bytes.Buffer
-	WriteEvent(&out, "connection open", false)
+	WriteEvent(&out, "connection \x1b[31mopen\x00\nforged", false)
 	got := out.String()
-	if !strings.Contains(got, "• connection open") {
+	if !strings.Contains(got, "• connection  [31mopen  forged") {
 		t.Fatalf("event line missing marker and message: %q", got)
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x00') {
+		t.Fatalf("event line contains terminal controls: %q", got)
+	}
+	if strings.Count(got, "\n") != 1 {
+		t.Fatalf("event message injected an extra log line: %q", got)
 	}
 }

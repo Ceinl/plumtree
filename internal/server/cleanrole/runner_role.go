@@ -105,11 +105,11 @@ func (c *runnerComponent) Ready(context.Context) error {
 	if cfg.Runtime.Production {
 		mode = "production"
 	}
-	plumterminal.WriteServerSummary(c.out, plumterminal.ServerSummary{
+	plumterminal.WriteRunnerSummary(c.out, plumterminal.RunnerSummary{
 		Mode:     mode,
-		Listen:   cfg.Runtime.RunnerEndpoint,
-		Database: cfg.Storage.DatabasePath,
-		KVRoot:   cfg.Storage.KVRoot,
+		Endpoint: cfg.Runtime.RunnerEndpoint,
+		Worker:   cfg.Runtime.RunnerWorker,
+		Scratch:  cfg.Runtime.RunnerScratchRoot,
 		Next:     "connect the control plane to this runner",
 	}, plumterminal.ColorFor(c.out))
 	return nil

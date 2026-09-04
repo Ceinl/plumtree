@@ -81,7 +81,7 @@ func TestNativeReleaseJourney(t *testing.T) {
 	configure("runtime.runnerScratchRoot", filepath.Join(root, "server", "runner-scratch"))
 	configure("runtime.production", "true")
 
-	bootstrapJSON := runOK(t, command{path: plumtree, env: baseEnv, args: []string{"bootstrap", "--config", configPath, "-handle", "alice", "-device", "laptop"}})
+	bootstrapJSON := runOK(t, command{path: plumtree, env: baseEnv, args: []string{"bootstrap", "--config", configPath, "-handle", "alice", "-device", "laptop", "--json"}})
 	var bootstrap struct {
 		ID     string `json:"bootstrapID"`
 		Secret string `json:"secret"`

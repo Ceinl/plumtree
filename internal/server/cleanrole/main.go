@@ -822,17 +822,17 @@ func (c *controlComponent) accept() {
 		c.connections[conn] = struct{}{}
 		c.connectionsMu.Unlock()
 		c.wg.Add(1)
-			logf := plumterminal.EventFunc(c.eventOut(), plumterminal.ColorFor(c.eventOut()))
-			go func() {
-				defer c.wg.Done()
-				defer c.admission.Release(clientIP)
-				defer func() {
-					c.connectionsMu.Lock()
-					delete(c.connections, conn)
-					c.connectionsMu.Unlock()
-				}()
-				serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.leaf, c.identity, c.resolved.ProductVersion, c.resolved.Config, logf)
+		logf := plumterminal.EventFunc(c.eventOut(), plumterminal.ColorFor(c.eventOut()))
+		go func() {
+			defer c.wg.Done()
+			defer c.admission.Release(clientIP)
+			defer func() {
+				c.connectionsMu.Lock()
+				delete(c.connections, conn)
+				c.connectionsMu.Unlock()
 			}()
+			serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.leaf, c.identity, c.resolved.ProductVersion, c.resolved.Config, logf)
+		}()
 	}
 }
 

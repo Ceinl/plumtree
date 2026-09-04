@@ -564,6 +564,7 @@ func flagsBeforePositionals(args []string, valueFlags map[string]bool) ([]string
 	}
 	return append(flags, positionals...), nil
 }
+
 // promptSecret prints the given prompt naming the expected value on errOut,
 // then reads one value: hidden when stdin is a terminal, plain line
 // otherwise. The prompt goes to stderr so --json stdout stays parseable, and
