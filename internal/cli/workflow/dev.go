@@ -142,30 +142,38 @@ func validateDevOptions(memoryPages uint, frameTimeout time.Duration, maxFPS, wi
 func (r Runner) runSSH(ctx context.Context, wasm []byte, limits runner.Limits, caps runner.Capabilities, manifest Manifest, address string, allowNonloopback bool, maxFPS int, alias string, noSSHConfig bool, out, errOut io.Writer) error {
 	engine := runner.New()
 	defer engine.Close(context.Background())
+	eventColor := plumterminal.ColorFor(errOut)
 	server := &sshdev.Server{Wasm: wasm, Runner: engine, Limits: limits, Caps: caps, AppType: manifest.Type, AppName: manifest.Name, MaxFPS: maxFPS, AllowNonloopback: allowNonloopback,
 		Logf: func(format string, values ...any) {
-			message := fmt.Sprintf(format, values...)
-			_, _ = fmt.Fprintln(errOut, runner.SanitizeTerminalText(message))
+			message := runner.SanitizeTerminalText(fmt.Sprintf(format, values...))
+			plumterminal.WriteEvent(errOut, message, eventColor)
 		},
+	}
+	summaryColor := plumterminal.ColorFor(out)
+	announce := func(resolved net.Addr, command, configPath string) {
+		plumterminal.WriteDevSSHSummary(out, plumterminal.DevSSHSummary{
+			Name: manifest.Name, AppType: manifest.Type,
+			Listen: resolved.String(), Command: command, ConfigPath: configPath,
+		}, summaryColor)
 	}
 	return server.ListenAndServe(ctx, address, func(resolved net.Addr) {
 		host, port, err := net.SplitHostPort(resolved.String())
 		if err != nil {
-			_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\n", manifest.Name, manifest.Type, resolved)
+			announce(resolved, resolved.String(), "")
 			return
 		}
 		connectHost := localConnectHost(host)
 		if noSSHConfig {
-			_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s\n", manifest.Name, manifest.Type, resolved, port, manifest.Name, connectHost)
+			announce(resolved, fmt.Sprintf("ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s", port, manifest.Name, connectHost), "")
 			return
 		}
 		configPath, installErr := installDevSSHConfig(alias, connectHost, port)
 		if installErr != nil {
-			_, _ = fmt.Fprintf(errOut, "could not install the %q ssh config alias (%v); use the raw command\n", alias, installErr)
-			_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s\n", manifest.Name, manifest.Type, resolved, port, manifest.Name, connectHost)
+			plumterminal.WriteEvent(errOut, runner.SanitizeTerminalText(fmt.Sprintf("could not install the %q ssh config alias (%v); use the raw command", alias, installErr)), eventColor)
+			announce(resolved, fmt.Sprintf("ssh -p %s -o StrictHostKeyChecking=accept-new %s@%s", port, manifest.Name, connectHost), "")
 			return
 		}
-		_, _ = fmt.Fprintf(out, "pt dev --ssh · %s (%s) · %s\nConnect: ssh %s (alias installed in %s)\n", manifest.Name, manifest.Type, resolved, alias, configPath)
+		announce(resolved, fmt.Sprintf("ssh %s", alias), configPath)
 	})
 }
 

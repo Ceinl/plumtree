@@ -544,6 +544,22 @@ func TestDevSSHNoSSHConfigLeavesDiskUntouched(t *testing.T) {
 	}
 }
 
+// TestPromptSecretPrintsTheFullPromptAndReadsOneLine covers the interactive
+// prompt: the label is announced on stderr and one piped line is consumed.
+func TestPromptSecretPrintsTheFullPromptAndReadsOneLine(t *testing.T) {
+	errOut := &bytes.Buffer{}
+	got, err := promptSecret(strings.NewReader("phrase-123\n"), errOut, "pairing phrase (secret from 'plumtree bootstrap')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "phrase-123" {
+		t.Fatalf("secret = %q", got)
+	}
+	if want := "pairing phrase (secret from 'plumtree bootstrap'): \n"; errOut.String() != want {
+		t.Fatalf("prompt = %q, want %q", errOut.String(), want)
+	}
+}
+
 // TestEveryDispatchableCommandHasHelpTopic mirrors the switch cases in
 // Runner.Run so a new command cannot ship without documentation.
 func TestEveryDispatchableCommandHasHelpTopic(t *testing.T) {

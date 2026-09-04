@@ -15,11 +15,13 @@ import (
 
 	"github.com/Ceinl/plumtree/internal/runner"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
+	plumterminal "github.com/Ceinl/plumtree/internal/terminal"
 )
 
 type runnerComponent struct {
 	projection serverconfig.RoleProjection
 	out        io.Writer
+	errOut     io.Writer
 	environ    []string
 	listener   net.Listener
 	errors     chan error
@@ -79,7 +81,7 @@ func (c *runnerComponent) Start(ctx context.Context) error {
 	broker := &runner.Broker{
 		WorkerPath: cfg.Runtime.RunnerWorker, Token: strings.TrimSpace(string(c.projection.Secret())),
 		MaxSessions: cfg.Limits.MaxSessions, WorkerUIDBase: uint32(cfg.Runtime.WorkerUIDBase), ScratchRoot: cfg.Runtime.RunnerScratchRoot,
-		Logf: func(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format+"\n", args...) },
+		Logf: plumterminal.EventFunc(c.eventOut(), plumterminal.ColorFor(c.eventOut())),
 	}
 	go func() {
 		err := broker.Serve(ctx, listener)
@@ -98,8 +100,27 @@ func (c *runnerComponent) Ready(context.Context) error {
 	if c.listener == nil {
 		return errors.New("clean server: runner role is not ready")
 	}
-	_, _ = fmt.Fprintf(c.out, "plumtree runner ready on %s\n", c.projection.Config().Runtime.RunnerEndpoint)
+	cfg := c.projection.Config()
+	mode := "development"
+	if cfg.Runtime.Production {
+		mode = "production"
+	}
+	plumterminal.WriteRunnerSummary(c.out, plumterminal.RunnerSummary{
+		Mode:     mode,
+		Endpoint: cfg.Runtime.RunnerEndpoint,
+		Worker:   cfg.Runtime.RunnerWorker,
+		Scratch:  cfg.Runtime.RunnerScratchRoot,
+		Next:     "connect the control plane to this runner",
+	}, plumterminal.ColorFor(c.out))
 	return nil
+}
+
+// eventOut defaults to io.Discard so zero-value components stay silent.
+func (c *runnerComponent) eventOut() io.Writer {
+	if c.errOut == nil {
+		return io.Discard
+	}
+	return c.errOut
 }
 
 func (c *runnerComponent) Stop(ctx context.Context) error {

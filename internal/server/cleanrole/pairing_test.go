@@ -21,11 +21,47 @@ import (
 func TestBootstrapCommandPrintsOneUseAuthorityWithoutVerifier(t *testing.T) {
 	var out bytes.Buffer
 	database := filepath.Join(t.TempDir(), "plumtree.db")
-	if err := runBootstrap(context.Background(), []string{"-database", database, "-handle", "alice", "-device", "laptop", "-ttl", "2m"}, nil, &out); err != nil {
+	if err := runBootstrap(context.Background(), []string{"-database", database, "-handle", "alice", "-device", "laptop", "-ttl", "2m", "--json"}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(out.Bytes(), []byte(`"bootstrapID"`)) || !bytes.Contains(out.Bytes(), []byte(`"secret"`)) || bytes.Contains(out.Bytes(), []byte("verifier")) {
 		t.Fatalf("output=%s", out.Bytes())
+	}
+}
+
+func TestBootstrapCommandPrintsHumanSummaryByDefault(t *testing.T) {
+	var out bytes.Buffer
+	database := filepath.Join(t.TempDir(), "plumtree.db")
+	if err := runBootstrap(context.Background(), []string{"-database", database, "-handle", "alice", "-ttl", "2m"}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"~ plumtree bootstrap", "● ok", "alice", "bootstrap_", "pt pair --bootstrap bootstrap_"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "verifier") || strings.Contains(got, "{") {
+		t.Fatalf("summary leaked machine output:\n%s", got)
+	}
+}
+
+func TestPairHostSuggestsDialablePairEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want string
+	}{
+		{"127.0.0.1:2222", "127.0.0.1:2222"},
+		{":2222", "localhost:2222"},
+		{"0.0.0.0:2222", "localhost:2222"},
+		{"[::]:2222", "localhost:2222"},
+		{"example.com:2222", "example.com:2222"},
+		{"", "HOST"},
+		{"not-an-address", "HOST"},
+	} {
+		if got := pairHost(tc.in); got != tc.want {
+			t.Fatalf("pairHost(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
