@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 
 	"github.com/Ceinl/plumtree/internal/runner"
 	"github.com/Ceinl/plumtree/internal/sqlite"
@@ -63,11 +62,11 @@ func (s *sqliteKVStore) CompareAndSwap(key string, expected [sha256.Size]byte, v
 
 // KVStore returns the repository-backed store for one app.
 func (b *SQLiteBackend) KVStore(ctx context.Context, appID string) (runner.Store, error) {
-	if b.Repository == nil {
-		return nil, fmt.Errorf("%w: KV store has no repository", ErrNotConfigured)
+	if err := b.requireRepo(); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("%w: kv store: %v", ErrCapsUnavailable, err)
+		return nil, unavailable("kv store", err)
 	}
 	return &sqliteKVStore{repo: b.Repository, appID: appID}, nil
 }

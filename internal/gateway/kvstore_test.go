@@ -89,6 +89,16 @@ func TestSQLiteKVStoreSatisfiesRunnerStoreContract(t *testing.T) {
 	}
 }
 
+func TestSQLiteKVStorePreservesContextCancellation(t *testing.T) {
+	_, backend := openKVTestServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := backend.KVStore(ctx, "app-kv"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("KVStore error = %v, want context.Canceled", err)
+	}
+}
+
 // Hosted sessions must receive the repository-backed KV store, so state is
 // durable and encrypted at rest by the storage engine rather than living in
 // plaintext per-app JSON files.

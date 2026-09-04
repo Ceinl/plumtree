@@ -10,8 +10,9 @@ that hosts Go TUI/CLI apps compiled to WASM and streamed over SSH — "Lakebed f
 the terminal." The root module now owns `internal/cli`, `internal/build`,
 `internal/server/controlrole`, `internal/runner`, `internal/control`,
 `internal/httpapi`, `internal/auth`, `internal/gatewaybackend`, and
-`internal/gateway` (SSH front end and control client). Temporary legacy callers
-remain under `pt` and `control-plane`; `build-worker` remains an isolated module.
+`internal/gateway` (SSH front end and embedded backend adapter). Temporary
+legacy callers remain under `pt` and `control-plane`; `build-worker` remains an
+isolated module.
 Architecture, subrepo map, and status are all now
 consolidated in the root `README.md` (the old `PLATFORM_SPEC.md`/`PLAN.md`/
 `REPOS.md` were folded into it and deleted 2026-06-27). Now a single top-level git
@@ -37,8 +38,8 @@ worker (`--build-url`); deploy-claim rate limiting (`--max-deploys-per-hour`);
 anonymous preview run (`--anonymous-preview`, `ssh preview-<deployID>@host`,
 ownerless tightest sandbox). Module paths were renamed to
 `github.com/Ceinl/plumtree/<sub>` (was `plumtree.dev/*`). The SSH gateway now
-runs either embedded in the control plane or through the standalone root-owned
-gateway role. Remaining: moderation at scale, `ctx.DB`. See
+runs only as an embedded part of the root server; the incomplete standalone
+transport is not supported. Remaining: moderation at scale, `ctx.DB`. See
 [[plumtree-next-capabilities]].
 
 Note: `sdk/plums` is an independent checkout (github.com/Ceinl/plums, the

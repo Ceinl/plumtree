@@ -93,7 +93,7 @@ var (
 	ErrSuspended = errors.New("gateway: app suspended")
 	// ErrQuota means the app has reached its connection/session limit.
 	ErrQuota = errors.New("gateway: quota exceeded")
-	// ErrCapsUnavailable means control-plane data could not be read (secrets,
+	// ErrCapsUnavailable means authoritative backend data could not be read (secrets,
 	// egress allowlist, KV, identity, resolution, or accounting). Owner
 	// capabilities must fail closed: an error here is never equivalent to "no
 	// secrets configured".

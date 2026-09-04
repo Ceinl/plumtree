@@ -192,7 +192,7 @@ func (b *SQLiteBackend) requireRepo() error {
 
 // unavailable wraps an unexpected repository failure as ErrCapsUnavailable,
 // preserving input, not-found, conflict, suspension, quota, and context errors
-// verbatim so callers can distinguish user errors from control-plane outages.
+// verbatim so callers can distinguish user errors from backend outages.
 func unavailable(op string, err error) error {
 	if err == nil {
 		return nil

@@ -230,7 +230,7 @@ func TestSQLiteBackendSatisfiesSessionContract(t *testing.T) {
 	}
 }
 
-// Missing wiring and control-plane outages are distinct typed errors: a nil
+// Missing wiring and backend outages are distinct typed errors: a nil
 // repository reports ErrNotConfigured, while unexpected storage failures
 // report ErrCapsUnavailable.
 func TestSQLiteBackendDistinguishesNotConfiguredFromUnavailable(t *testing.T) {
@@ -261,7 +261,7 @@ func TestSQLiteBackendDistinguishesNotConfiguredFromUnavailable(t *testing.T) {
 		t.Fatalf("EndSession without repository = %v, want ErrNotConfigured", err)
 	}
 
-	// A closed repository is a control-plane outage, not missing wiring.
+	// A closed repository is a storage outage, not missing wiring.
 	closed := openSuspensionTestBackend(t)
 	if err := closed.Repository.Close(); err != nil {
 		t.Fatal(err)
