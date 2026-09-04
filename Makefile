@@ -7,11 +7,13 @@ PT_DIR ?= $(CURDIR)
 SSH_ADDR ?= 127.0.0.1:2222
 PRODUCT_VERSION ?= dev
 # Shared dev server home: one config and one state dir for every worktree, so
-# `make run-server` from any checkout serves the same dev server identity.
-DEV_HOME ?= $(HOME)/.config/plumtree
-CONFIG ?= $(DEV_HOME)/dev.json
+# `make run-server` from any checkout serves the same dev server identity
+# without sharing state with the default ~/.config/plumtree/config.json server.
+DEV_HOME ?= $(HOME)/.config/plumtree/dev
+CONFIG ?= $(DEV_HOME)/config.json
 DATABASE ?= $(DEV_HOME)/plumtree.db
 HOST_KEY ?= $(DEV_HOME)/plumtree_host_key
+KV_ROOT ?= $(DEV_HOME)/plumtree-data
 
 # Public and local pt builds are generic. `make pt-local` supplies temporary
 # address/token overrides matching run-server without changing user config.
@@ -23,10 +25,10 @@ help:
 	@printf '%s\n' \
 		'Targets:' \
 		'  make test-root          Run root module tests' \
-		             '  make run-server         Run the native SSH/SQLite server' \
-		             '  make config-local       Persist local serve settings into the shared dev config' \
-             '  make bootstrap          Mint a one-use first-author authority (HANDLE=$(USER))' \
-             '  make pair               Pair this device (BOOTSTRAP_ID=<id> [SECRET=<phrase>])' \
+	'  make run-server         Run the native SSH/SQLite server' \
+	'  make config-local       Persist local serve settings into the shared dev config' \
+	'  make bootstrap          Mint a one-use first-author authority (HANDLE=$(USER))' \
+	'  make pair               Pair this device (BOOTSTRAP_ID=<id> [SECRET=<phrase>])' \
 		'  make clear-server       Delete local native server state' \
 		'  make build-pt           Build generic ./pt-bin' \
 		'  make install-pt         Install generic pt; configure it at runtime' \
@@ -70,12 +72,11 @@ pair:
 
 clear-server:
 	rm -f "$(DATABASE)" "$(HOST_KEY)" "$(CONFIG)" "$(CONFIG).lock"
-
-build-pt: $(PT_BIN)
+	rm -rf "$(KV_ROOT)"
 
 PT_BIN ?= $(CURDIR)/pt-bin
 
-$(PT_BIN):
+build-pt:
 	GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(PT_BIN)" ./cmd/pt
 	@echo "built clean pt-bin; pair it with a Plumtree server before using remote commands"
 

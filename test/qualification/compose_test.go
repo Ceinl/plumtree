@@ -91,7 +91,7 @@ func TestComposeReleaseJourney(t *testing.T) {
 	}
 	runOK(t, compose(10*time.Minute, "build", "--pull"))
 
-	bootstrapJSON := runOK(t, compose(2*time.Minute, "run", "--rm", "--no-deps", "plumtree", "bootstrap", "--config", "/etc/plumtree/config.json", "-handle", "alice", "-device", "laptop"))
+	bootstrapJSON := runOK(t, compose(2*time.Minute, "run", "--rm", "--no-deps", "plumtree", "bootstrap", "--config", "/etc/plumtree/config.json", "-handle", "alice", "-device", "laptop", "--json"))
 	var bootstrap struct {
 		ID     string `json:"bootstrapID"`
 		Secret string `json:"secret"`

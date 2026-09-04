@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Presentation constants and writers for operator-facing terminal output.
@@ -14,12 +16,12 @@ import (
 // This is the single source of truth for the compact startup summaries and
 // timestamped runtime events first introduced for the operator presentation
 // pass: one rule for color detection, one summary style, and one event line
-// shape shared by the server, the gateway, and pt dev. Summaries stay
-// minimal on purpose: a plum left edge, a green readiness marker, plain text
-// otherwise, so the output reads the same on a TTY, in a pipe, and in a log
-// file. Callers pass
-// an explicit color flag resolved with Enabled or ColorFor so tests can force
-// plain output with buffers while processes honor the terminal.
+// shape shared by the server, the runner, the gateway, and pt dev. Summaries
+// stay minimal on purpose: a plum left edge, a green readiness marker, plain
+// text otherwise, so the output reads the same on a TTY, in a pipe, and in a
+// log file. Callers pass an explicit color flag resolved with Enabled or
+// ColorFor so tests can force plain output with buffers while processes honor
+// the terminal.
 const (
 	ansiReset = "\x1b[0m"
 	ansiGreen = "\x1b[38;5;42m"
@@ -80,12 +82,26 @@ func displayPath(path string) string {
 	return path
 }
 
+// SanitizeText neutralizes control characters and invalid UTF-8 in untrusted
+// terminal text while preserving readable newlines and tabs.
+func SanitizeText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r == utf8.RuneError || unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(s, "�"))
+}
+
 // WriteEvent writes one timestamped runtime event line: a dim clock, a
-// green marker, then the caller-supplied message. Messages must already be
-// sanitized when they can carry untrusted text.
+// green marker, then the sanitized caller-supplied message.
 func WriteEvent(w io.Writer, message string, color bool) {
 	stamp := tone(time.Now().Format("15:04:05"), ansiDim, color)
 	marker := tone("•", ansiGreen, color)
+	message = strings.ReplaceAll(SanitizeText(message), "\n", " ")
 	_, _ = io.WriteString(w, stamp+"  "+marker+" "+message+"\n")
 }
 
@@ -133,19 +149,31 @@ func WriteServerSummary(w io.Writer, s ServerSummary, color bool) {
 	_, _ = io.WriteString(w, b.String())
 }
 
-// WriteGatewaySummary renders the standalone gateway startup summary. The
-// embedded leaf gateway shares the server summary instead; this stays for any
-// standalone front end so it cannot drift into a second style.
-func WriteGatewaySummary(w io.Writer, listen, control, runner string, color bool) {
+// RunnerSummary is the operator-facing startup summary for the isolated
+// runner broker. Unlike ServerSummary, it does not imply an SSH listener or
+// persistent application storage.
+type RunnerSummary struct {
+	Mode     string
+	Endpoint string
+	Worker   string
+	Scratch  string
+	Next     string
+}
+
+// WriteRunnerSummary renders the runner broker's role-specific startup state.
+func WriteRunnerSummary(w io.Writer, s RunnerSummary, color bool) {
 	edge := tone("~", ansiPlum, color)
 	bar := tone("|", ansiPlum, color)
 	ready := tone("● ready", ansiGreen, color)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s plumtree gateway %s\n", edge, ready)
-	fmt.Fprintf(&b, "%s listen  %s\n", bar, listen)
-	fmt.Fprintf(&b, "%s control %s\n", bar, control)
-	fmt.Fprintf(&b, "%s runner  %s\n", bar, runner)
+	fmt.Fprintf(&b, "%s plumtree runner %s (%s)\n", edge, ready, s.Mode)
+	fmt.Fprintf(&b, "%s broker  %s\n", bar, s.Endpoint)
+	fmt.Fprintf(&b, "%s worker  %s\n", bar, displayPath(s.Worker))
+	if s.Scratch != "" {
+		fmt.Fprintf(&b, "%s scratch %s\n", bar, displayPath(s.Scratch))
+	}
+	fmt.Fprintf(&b, "%s next    %s\n", bar, s.Next)
 	_, _ = io.WriteString(w, b.String())
 }
 

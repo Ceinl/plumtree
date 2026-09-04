@@ -11,7 +11,7 @@ const rootHelp = `plumtree — Plumtree server and operator CLI
 
 Usage:
   plumtree [serve] [--config PATH] [--field-name VALUE]...
-  plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m]
+  plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m] [--json]
   plumtree config show|set|unset ...
   plumtree state inventory|backup|restore ...
   plumtree suspend deploy <id> [-config PATH | -database PATH]
@@ -42,7 +42,7 @@ creates the strict configuration; config changes take effect after restart.
 `
 
 const bootstrapHelp = `Usage:
-  plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m]
+  plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m] [--json]
 
 Creates a one-use, time-bounded first-author authority and prints a human
 summary with the ID, the secret, and the next pairing command. The secret is
@@ -54,6 +54,7 @@ Flags:
   --handle HANDLE  author handle bound to this authority (required)
   --device NAME    first device name (default device)
   --ttl DURATION   authority lifetime between 1m and 1h (default 10m)
+  --json           emit stable JSON instead of the human summary
 
 The legacy spelling "plumtree author bootstrap" is accepted with the same flags.
 `
