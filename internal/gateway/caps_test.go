@@ -170,10 +170,10 @@ func TestAssembleHostCapabilitiesValidatesEgressAllowlist(t *testing.T) {
 	}
 }
 
-// Claimed-only policy: unclaimed apps get no Env, Fetch, or Exec even when the
-// sources are configured, and that absence is intentional (no error). Claimed
+// Owner-gated policy: unowned apps get no Env, Fetch, or Exec even when the
+// sources are configured, and that absence is intentional (no error). Owned
 // apps with the same sources get all three.
-func TestAssembleHostCapabilitiesClaimedOnly(t *testing.T) {
+func TestAssembleHostCapabilitiesOwnerGated(t *testing.T) {
 	backend := &capsBackend{
 		secrets: map[string]string{"TOKEN": "t"},
 		allow:   []string{"api.example.com"},
@@ -181,27 +181,27 @@ func TestAssembleHostCapabilitiesClaimedOnly(t *testing.T) {
 	s := mustNewServer(t, Config{Backend: backend, EnableHostCommands: true, HostCommandAllowlist: []string{"echo"}})
 	identity := runner.Identity{User: "anon", Kind: runner.IdentityAnonymous}
 
-	unclaimed, err := assembleWith(s, Runnable{AppID: "app-1"}, identity)
+	unowned, err := assembleWith(s, Runnable{AppID: "app-1"}, identity)
 	if err != nil {
-		t.Fatalf("unclaimed assemble: %v", err)
+		t.Fatalf("unowned assemble: %v", err)
 	}
-	if unclaimed.Env != nil || unclaimed.Fetch != nil || unclaimed.Exec != nil {
-		t.Fatalf("unclaimed app got claimed capabilities: env=%v fetch=%v exec=%v",
-			unclaimed.Env, unclaimed.Fetch, unclaimed.Exec)
+	if unowned.Env != nil || unowned.Fetch != nil || unowned.Exec != nil {
+		t.Fatalf("unowned app got owner-gated capabilities: env=%v fetch=%v exec=%v",
+			unowned.Env, unowned.Fetch, unowned.Exec)
 	}
 
-	claimed, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, identity)
+	owned, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, identity)
 	if err != nil {
-		t.Fatalf("claimed assemble: %v", err)
+		t.Fatalf("owned assemble: %v", err)
 	}
-	if claimed.Env == nil {
-		t.Fatal("claimed app missing env")
+	if owned.Env == nil {
+		t.Fatal("owned app missing env")
 	}
-	if claimed.Fetch == nil {
-		t.Fatal("claimed app missing fetch")
+	if owned.Fetch == nil {
+		t.Fatal("owned app missing fetch")
 	}
-	if claimed.Exec == nil {
-		t.Fatal("claimed app missing exec")
+	if owned.Exec == nil {
+		t.Fatal("owned app missing exec")
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 // start so hosted policy reads one value instead of reaching back into server
 // state.
 type HostCapabilityOptions struct {
-	// EnableHostCommands gives claimed apps the ability to execute allowlisted
+	// EnableHostCommands gives owned apps the ability to execute allowlisted
 	// programs as the gateway OS user. Server.Start refuses enablement with an
 	// empty allowlist; the assembler still denies unless both are set.
 	EnableHostCommands bool
@@ -41,18 +41,18 @@ type HostCapabilitySources struct {
 //   - KV availability: a missing or failing source fails closed (absent plus an
 //     error).
 //   - Bus reuse: one shared bus per app ID via the provided source.
-//   - Claimed-only Env/Fetch/Exec: only apps with an owner ID get secrets,
-//     egress, or host commands. Unclaimed apps get none, without an error.
+//   - Owner-gated Env/Fetch/Exec: only apps with an owner ID get secrets,
+//     egress, or host commands. Unowned apps get none, without an error.
 //   - Default-deny fetch: empty allowlists wire no Fetcher; an invalid
 //     allowlist stays default-deny and reports an error.
-//   - Host-command rules: Exec requires a claimed app plus operator opt-in with
+//   - Host-command rules: Exec requires an owned app plus operator opt-in with
 //     a non-empty allowlist.
 //   - Goodbye allocation and Auth: every session gets a fresh Goodbye string
 //     and a StaticAuth for the app-relative identity.
 //
 // Source failures are returned as a joined error so the caller can log them for
 // the operator. They are never hidden as intentional absence: a nil error means
-// every absent capability is intentional (unclaimed or empty), a non-nil
+// every absent capability is intentional (unowned or empty), a non-nil
 // error means the returned set is degraded fail-closed and the session still
 // runs with the absent capability.
 func AssembleHostCapabilities(ctx context.Context, app Runnable, identity runner.Identity, opts HostCapabilityOptions, src HostCapabilitySources) (runner.Capabilities, error) {
@@ -80,8 +80,8 @@ func AssembleHostCapabilities(ctx context.Context, app Runnable, identity runner
 			caps.KV = store
 		}
 	}
-	// Secrets, egress, and host commands are claimed-only: only apps with an
-	// owner get Env, a Fetcher, or Exec. Unclaimed preview apps get none.
+	// Secrets, egress, and host commands are owner-gated: only apps with an
+	// owner get Env, a Fetcher, or Exec. Unowned preview apps get none.
 	if app.OwnerID == "" {
 		return caps, errors.Join(errs...)
 	}
@@ -128,7 +128,7 @@ func (s *Server) hostCapabilityOptions() HostCapabilityOptions {
 }
 
 // hostCapabilitySources wires the required capability sources out of the server:
-// control-plane config and durable KV from the Backend, and the per-app shared
+// authoritative config and durable KV from the Backend, and the per-app shared
 // bus with reuse across the process.
 func (s *Server) hostCapabilitySources() HostCapabilitySources {
 	return HostCapabilitySources{
