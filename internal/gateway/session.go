@@ -152,7 +152,7 @@ func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch
 
 func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal, args []string) {
 	if !s.acquireSlot() {
-		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.MaxConcurrentSessions)
+		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.maxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
 		sendExitStatus(ch, 1)
 		ch.Close()
@@ -211,10 +211,10 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	// Teardown must outlive session cancellation (kill switch, disconnect):
 	// detach the accounting context so logs and slot release still land.
 	teardown := context.WithoutCancel(ctx)
-	if err := s.Backend.RecordSessionLog(teardown, sessionID, log, truncated); err != nil {
+	if err := s.backend.RecordSessionLog(teardown, sessionID, log, truncated); err != nil {
 		s.logf("record session log %q: %v", sessionID, err)
 	}
-	if err := s.Backend.EndSession(teardown, sessionID); err != nil {
+	if err := s.backend.EndSession(teardown, sessionID); err != nil {
 		s.logf("end session %q: %v", sessionID, err)
 	}
 	s.logf("session end id=%s app=%q duration=%s log=%dB truncated=%t", sessionID, run.AppName, sessionDuration.Round(time.Millisecond), len(log), truncated)
@@ -240,10 +240,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 }
 
 func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool, uint32) {
-	lim := s.Limits
-	if lim.MemoryPages == 0 {
-		lim = runner.DefaultLimits
-	}
+	lim := s.limits
 	if appType == "cli" || len(args) > 0 {
 		logs := newCapWriter(maxSessionLogBytes)
 		output := io.MultiWriter(ch, logs)
@@ -251,7 +248,7 @@ func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm 
 		if isolated := s.isolatedRunner(); isolated != nil {
 			err = isolated.RunCLI(ctx, wasm, lim, caps, args, output)
 		} else {
-			err = s.Runner.RunCLI(ctx, wasm, lim, caps, args, output)
+			err = s.runner.RunCLI(ctx, wasm, lim, caps, args, output)
 		}
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %s\r\n", runner.SanitizeTerminalText(err.Error()))
@@ -281,7 +278,7 @@ func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm 
 		Refresh: runner.DefaultRefresh,
 		Size:    size,
 	}
-	sink := runner.NewTTYSinkWriter(w, h, s.MaxFPS, ch)
+	sink := runner.NewTTYSinkWriter(w, h, s.maxFPS, ch)
 
 	logs := newCapWriter(maxSessionLogBytes)
 	// When a worker binary is configured, isolate the WASM sandbox in a separate
@@ -290,7 +287,7 @@ func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm 
 	if isolated := s.isolatedRunner(); isolated != nil {
 		err = isolated.Run(ctx, wasm, lim, caps, src, sink, logs)
 	} else {
-		err = s.Runner.Run(ctx, wasm, lim, caps, src, sink, logs)
+		err = s.runner.Run(ctx, wasm, lim, caps, src, sink, logs)
 	}
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
@@ -301,22 +298,22 @@ func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm 
 }
 
 func (s *Server) resolveRunnable(ctx context.Context, handle string, identity runner.Identity) (Runnable, error) {
-	return s.Backend.ResolveRunnable(ctx, handle, identity)
+	return s.backend.ResolveRunnable(ctx, handle, identity)
 }
 
 func (s *Server) startAccountedSession(ctx context.Context, run Runnable, identity runner.Identity) (string, error) {
 	summary, _ := json.Marshal(map[string]any{"user": identity.User, "kind": identity.Kind, "authenticated": identity.Authenticated, "ownsApp": identity.OwnsApp})
-	return s.Backend.StartSession(ctx, run.AppID, run.DeployID, run.ArtifactDigest, string(summary))
+	return s.backend.StartSession(ctx, run.AppID, run.DeployID, run.ArtifactDigest, string(summary))
 }
 
 func (s *Server) isolatedRunner() *runner.ProcessRunner {
-	if s.RunnerEndpoint != "" {
-		pr := runner.NewRemoteProcessRunner(s.RunnerEndpoint, s.RunnerToken)
+	if s.runnerEndpoint != "" {
+		pr := runner.NewRemoteProcessRunner(s.runnerEndpoint, s.runnerToken)
 		pr.Logf = s.logf
 		return pr
 	}
-	if s.RunnerWorker != "" {
-		return runner.NewProcessRunner(s.RunnerWorker)
+	if s.runnerWorker != "" {
+		return runner.NewProcessRunner(s.runnerWorker)
 	}
 	return nil
 }

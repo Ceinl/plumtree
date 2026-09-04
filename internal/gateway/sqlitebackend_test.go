@@ -271,25 +271,23 @@ func TestSQLiteBackendDistinguishesNotConfiguredFromUnavailable(t *testing.T) {
 	}
 }
 
-// A gateway without its suspension dependency fails closed at Start, not by
+// A gateway without its suspension dependency fails closed at construction, not by
 // silently running without a kill switch.
-func TestServerStartRequiresSuspensionSource(t *testing.T) {
+func TestNewRequiresSuspensionSource(t *testing.T) {
 	repository, err := sqlite.OpenRepository(filepath.Join(t.TempDir(), "susp-required.db"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repository.Close() })
 	backend := NewSQLiteBackend(repository)
-	s := &Server{Backend: backend}
-	if err := s.Start(context.Background()); !errors.Is(err, ErrNotConfigured) {
-		t.Fatalf("Start without suspensions = %v, want ErrNotConfigured", err)
+	if _, err := New(Config{Backend: backend}); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("New without suspensions = %v, want ErrNotConfigured", err)
 	}
 }
 
-func TestServerStartRequiresBackend(t *testing.T) {
+func TestNewRequiresBackend(t *testing.T) {
 	backend := openSuspensionTestBackend(t)
-	s := &Server{Suspensions: backend}
-	if err := s.Start(context.Background()); !errors.Is(err, ErrNotConfigured) {
-		t.Fatalf("Start without backend = %v, want ErrNotConfigured", err)
+	if _, err := New(Config{Suspensions: backend}); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("New without backend = %v, want ErrNotConfigured", err)
 	}
 }

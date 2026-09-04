@@ -19,17 +19,17 @@ func (s *Server) capsFor(ctx context.Context, appID, ownerID string) runner.Capa
 	}
 	caps := runner.Capabilities{KV: s.kvFor(ctx, appID), Bus: s.busFor(appID), Goodbye: new(string)}
 	if ownerID != "" {
-		if s.EnableHostCommands && len(s.HostCommandAllowlist) > 0 {
-			caps.Exec = runner.LocalCommander{Allowlist: s.HostCommandAllowlist}
+		if s.enableHostCommands && len(s.hostCommandAllowlist) > 0 {
+			caps.Exec = runner.LocalCommander{Allowlist: s.hostCommandAllowlist}
 		}
-		secrets, err := s.Backend.SecretsForApp(ctx, appID)
+		secrets, err := s.backend.SecretsForApp(ctx, appID)
 		switch {
 		case err != nil:
 			s.logf("ERROR: secrets lookup for app %q failed; session runs without env: %v", appID, err)
 		case len(secrets) > 0:
 			caps.Env = runner.MapEnv(secrets)
 		}
-		allow, err := s.Backend.EgressAllowlist(ctx, appID)
+		allow, err := s.backend.EgressAllowlist(ctx, appID)
 		switch {
 		case err != nil:
 			s.logf("ERROR: egress allowlist lookup for app %q failed; session runs default-deny: %v", appID, err)
@@ -49,7 +49,7 @@ func (s *Server) capsFor(ctx context.Context, appID, ownerID string) runner.Capa
 // repository-backed store; there is no file-based fallback on this path
 // (pt dev local profiles keep their own JSON store).
 func (s *Server) kvFor(ctx context.Context, appID string) runner.Store {
-	st, err := s.Backend.KVStore(ctx, appID)
+	st, err := s.backend.KVStore(ctx, appID)
 	if err != nil {
 		s.logf("ERROR: kv store for app %q unavailable; session runs without kv: %v", appID, err)
 		return nil
@@ -60,9 +60,6 @@ func (s *Server) kvFor(ctx context.Context, appID string) runner.Store {
 func (s *Server) busFor(appID string) runner.Bus {
 	s.busMu.Lock()
 	defer s.busMu.Unlock()
-	if s.busById == nil {
-		s.busById = make(map[string]*runner.MemBus)
-	}
 	if b, ok := s.busById[appID]; ok {
 		return b
 	}
