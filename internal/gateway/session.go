@@ -204,8 +204,10 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	startedAt := time.Now()
 	s.logf("session start id=%s app=%q deploy=%s identity=%q", sessionID, run.AppName, run.DeployID, identityLogValue(identity))
 
-	caps := s.capsFor(ctx, run.AppID, run.OwnerID)
-	caps.Auth = runner.StaticAuth{Identity: identity}
+	caps, capsErr := AssembleHostCapabilities(ctx, run, identity, s.hostCapabilityOptions(), s.hostCapabilitySources())
+	if capsErr != nil {
+		s.logf("ERROR: hosted capabilities degraded for app %q: %v; session runs fail-closed", run.AppName, capsErr)
+	}
 	log, truncated, exitStatus := s.runSessionArgsStatus(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
 	sessionDuration := time.Since(startedAt)
 	// Teardown must outlive session cancellation (kill switch, disconnect):
