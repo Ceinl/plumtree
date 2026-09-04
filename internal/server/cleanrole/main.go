@@ -913,8 +913,9 @@ func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken
 	limits.SessionTimeout, _ = time.ParseDuration(cfg.Limits.SessionTimeout)
 	limits.FrameTimeout, _ = time.ParseDuration(cfg.Limits.FrameTimeout)
 	allowlist := parseHostCommandAllowlist(cfg.Runtime.HostCommandAllowlist)
+	backend := gateway.NewSQLiteBackend(repo)
 	return &gateway.Server{
-		Backend: gateway.NewSQLiteBackend(repo), Runner: runner.New(), Limits: limits,
+		Backend: backend, Suspensions: backend, Runner: runner.New(), Limits: limits,
 		MaxFPS: cfg.Limits.MaxFPS, MaxConcurrentSessions: cfg.Limits.MaxSessions,
 		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)),
 		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist,

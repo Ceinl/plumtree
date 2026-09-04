@@ -222,10 +222,10 @@ A multi-module Go workspace (`go.work`) with the root product module:
 | `internal/build/` | `github.com/Ceinl/plumtree/internal/build`| Root-owned local WASM build and source packaging.              |
 | `cmd/runner-worker/` | `github.com/Ceinl/plumtree/cmd/runner-worker` | Root-owned isolated WASM worker boundary. |
 | `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
-| `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | Retained hosted-runner qualification harness. |
+| `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | Embedded SSH leaf frontend and session lifecycle. |
 | `internal/httpapi/v1/` | `github.com/Ceinl/plumtree/internal/httpapi/v1` | Clean authenticated control and artifact API. |
 | `internal/sqlite/` | `github.com/Ceinl/plumtree/internal/sqlite` | Root-owned strict SQLite/SQLCipher repository. |
-| `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, gateway, and exec contracts. |
+| `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, control, pairing, build, and exec contracts. |
 | `internal/server/cleanrole/` | `github.com/Ceinl/plumtree/internal/server/cleanrole` | Root native SSH/SQLite assembly. |
 
 ## Status
