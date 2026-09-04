@@ -137,8 +137,9 @@ APP_HANDLE is owner/app or app — the same handle used to connect.
           [--secret PHRASE] [--next-recovery-secret PHRASE] [--yes] HOST
 
 Pairs this device with a server. Exactly one of --bootstrap ID (first author)
-or --token ID (additional device) is required. The pairing phrase is read from
-stdin when --secret is absent. The displayed SSH host key must be confirmed,
+or --token ID (additional device) is required. The pairing phrase — the secret
+printed by plumtree bootstrap — is read from stdin when --secret is absent.
+The displayed SSH host key must be confirmed,
 or --yes accepts it. HOST may include an explicit port (HOST:PORT).
 `
 	case "recover":

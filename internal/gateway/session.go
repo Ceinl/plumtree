@@ -202,7 +202,7 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	})
 	defer s.sessions.remove(sessionID)
 	startedAt := time.Now()
-	s.logf("session start id=%s app=%q deploy=%s identity=%q", sessionID, run.AppName, run.DeployID, identityLogValue(identity))
+	        s.logf("session start id=%s app=%q deploy=%s identity=%q", sessionID, run.AppName, run.DeployID, IdentityLogValue(identity))
 
 	caps, capsErr := AssembleHostCapabilities(ctx, run, identity, s.hostCapabilityOptions(), s.hostCapabilitySources())
 	if capsErr != nil {

@@ -44,8 +44,9 @@ creates the strict configuration; config changes take effect after restart.
 const bootstrapHelp = `Usage:
   plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m]
 
-Creates a one-use, time-bounded first-author authority and prints its ID and
-secret as JSON. The secret is shown once; only its verifier is stored.
+Creates a one-use, time-bounded first-author authority and prints a human
+summary with the ID, the secret, and the next pairing command. The secret is
+shown once; only its verifier is stored. Pass --json for stable output.
 
 Flags:
   --config PATH    typed config file path (uses its database and key)

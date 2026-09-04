@@ -137,6 +137,55 @@ func TestResolveServeAcceptsHostCommandAllowlistFlagAndEnvironment(t *testing.T)
 	}
 }
 
+func TestResolveServeReportsGeneratedConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gen.json")
+	first, err := ResolveServe([]string{"serve", "--config", path}, nil, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.ConfigCreated {
+		t.Fatal("first resolve did not report a generated config")
+	}
+	second, err := ResolveServe([]string{"serve", "--config", path}, nil, 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ConfigCreated {
+		t.Fatal("second resolve reported a generated config for an existing file")
+	}
+}
+
+func TestExecuteWarnsWhenConfigIsGenerated(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fresh.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(channelWriter, 1)
+	errOut := &bytes.Buffer{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Execute(ctx, []string{"serve", "--config", path, "--exposure-ssh-address", "127.0.0.1:0"}, nil, ready, errOut)
+	}()
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not become ready")
+	}
+	if got := errOut.String(); !strings.Contains(got, "warning: no config found at "+path) {
+		t.Fatalf("stderr missing generation warning: %q", got)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("shutdown error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not drain")
+	}
+}
+
 func TestLoadOrCreateHostKeyRefusesCorruptFileAndLeavesItUntouched(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "host_key")
 	corrupt := []byte("definitely not a private key\n")
@@ -172,7 +221,7 @@ func TestExecuteAnnouncesReadinessAndDrainsOnCancellation(t *testing.T) {
 	}()
 	select {
 	case message := <-ready:
-		if !strings.Contains(message, "ready on") {
+		if !strings.Contains(message, "● ready") {
 			t.Fatalf("readiness message = %q", message)
 		}
 	case <-time.After(5 * time.Second):
