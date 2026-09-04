@@ -31,7 +31,8 @@ func openKVTestServer(t *testing.T) (*Server, *SQLiteBackend) {
 		t.Fatalf("create app: %v", err)
 	}
 	backend := NewSQLiteBackend(repository)
-	return &Server{Backend: backend, Suspensions: backend}, backend
+	s := mustNewServer(t, Config{Backend: backend})
+	return s, backend
 }
 
 // The SQLite backend's KV adapter must satisfy the full runner.Store contract:
@@ -126,9 +127,9 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 func TestCapsKVUnavailableFailsClosed(t *testing.T) {
 	var log strings.Builder
 	backend := &capsBackend{kvErr: ErrCapsUnavailable}
-	s := &Server{Backend: backend, Suspensions: backend, Logf: func(format string, args ...any) {
+	s := mustNewServer(t, Config{Backend: backend, Logf: func(format string, args ...any) {
 		log.WriteString(fmt.Sprintf(format, args...) + "\n")
-	}}
+	}})
 	if caps := s.capsFor(context.Background(), "app-1", "owner-1"); caps.KV != nil {
 		t.Fatalf("KV = %T, want nil when the KV source fails", caps.KV)
 	}

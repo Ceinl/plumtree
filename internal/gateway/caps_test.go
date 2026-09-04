@@ -13,11 +13,12 @@ import (
 func TestHostCommandsRequireOperatorOptInAndClaimedApp(t *testing.T) {
 	backend := &countingBackend{}
 
-	if caps := (&Server{Backend: backend, Suspensions: backend}).capsFor(context.Background(), "app-1", "owner-1"); caps.Exec != nil {
+	plain := mustNewServer(t, Config{Backend: backend})
+	if caps := plain.capsFor(context.Background(), "app-1", "owner-1"); caps.Exec != nil {
 		t.Fatal("host commands available without operator opt-in")
 	}
 
-	server := &Server{Backend: backend, Suspensions: backend, EnableHostCommands: true, HostCommandAllowlist: []string{"echo"}}
+	server := mustNewServer(t, Config{Backend: backend, EnableHostCommands: true, HostCommandAllowlist: []string{"echo"}})
 	if caps := server.capsFor(context.Background(), "app-1", ""); caps.Exec != nil {
 		t.Fatal("host commands available to an unclaimed preview app")
 	}
@@ -33,11 +34,11 @@ func TestHostCommandsRequireOperatorOptInAndClaimedApp(t *testing.T) {
 	}
 }
 
-// Enabling host commands without an allowlist must refuse startup entirely.
-func TestStartRefusesHostCommandsWithEmptyAllowlist(t *testing.T) {
-	s := &Server{Backend: &stubBackend{}, Suspensions: &stubBackend{}, EnableHostCommands: true}
-	if err := s.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "empty allowlist") {
-		t.Fatalf("start err = %v, want empty-allowlist refusal", err)
+// Enabling host commands without an allowlist fails during construction.
+func TestNewRefusesHostCommandsWithEmptyAllowlist(t *testing.T) {
+	backend := &stubBackend{}
+	if _, err := New(Config{Backend: backend, Suspensions: backend, EnableHostCommands: true}); err == nil || !strings.Contains(err.Error(), "empty allowlist") {
+		t.Fatalf("New err = %v, want empty-allowlist refusal", err)
 	}
 }
 
@@ -70,14 +71,14 @@ func (b *capsBackend) EgressAllowlist(context.Context, string) ([]string, error)
 	return b.allow, b.egressErr
 }
 
-func withLog(t *testing.T) (*Server, *strings.Builder) {
+func withLog(t *testing.T) (*Server, *capsBackend, *strings.Builder) {
 	t.Helper()
 	var log strings.Builder
 	backend := &capsBackend{}
-	s := &Server{Backend: backend, Suspensions: backend, Logf: func(format string, args ...any) {
+	s := mustNewServer(t, Config{Backend: backend, Logf: func(format string, args ...any) {
 		log.WriteString(fmt.Sprintf(format, args...) + "\n")
-	}}
-	return s, &log
+	}})
+	return s, backend, &log
 }
 
 // A capability-source failure must be indistinguishable from intentional config in
@@ -88,9 +89,9 @@ func TestCapsForFailsClosedWhenControlPlaneErrors(t *testing.T) {
 		secretsErr: errors.New("control plane down"),
 	}
 	var log strings.Builder
-	s := &Server{Backend: backend, Logf: func(format string, args ...any) {
+	s := mustNewServer(t, Config{Backend: backend, Logf: func(format string, args ...any) {
 		log.WriteString(fmt.Sprintf(format, args...) + "\n")
-	}}
+	}})
 
 	caps := s.capsFor(context.Background(), "app-1", "owner-1")
 	if caps.Env != nil {
@@ -117,7 +118,7 @@ func TestCapsForFailsClosedWhenControlPlaneErrors(t *testing.T) {
 }
 
 func TestCapsForNilSecretsYieldsEmptyEnv(t *testing.T) {
-	s, _ := withLog(t)
+	s, _, _ := withLog(t)
 	if caps := s.capsFor(context.Background(), "app-1", "owner-1"); caps.Env != nil {
 		t.Fatalf("env = %v, want nil for a paired app with no secrets", caps.Env)
 	}
@@ -126,8 +127,8 @@ func TestCapsForNilSecretsYieldsEmptyEnv(t *testing.T) {
 // A configured allowlist that fails validation is rejected loudly and egress
 // stays default-deny; a valid one wires the validated fetcher.
 func TestCapsForValidatesEgressAllowlist(t *testing.T) {
-	s, log := withLog(t)
-	s.Backend.(*capsBackend).allow = []string{"api.example.com", "bad host.com"}
+	s, backend, log := withLog(t)
+	backend.allow = []string{"api.example.com", "bad host.com"}
 	if caps := s.capsFor(context.Background(), "app-1", "owner-1"); caps.Fetch != nil {
 		t.Fatal("fetcher built from an invalid allowlist")
 	}
@@ -137,7 +138,7 @@ func TestCapsForValidatesEgressAllowlist(t *testing.T) {
 		}
 	}
 
-	s.Backend.(*capsBackend).allow = []string{"api.example.com"}
+	backend.allow = []string{"api.example.com"}
 	log.Reset()
 	caps := s.capsFor(context.Background(), "app-1", "owner-1")
 	if caps.Fetch == nil {
@@ -147,7 +148,7 @@ func TestCapsForValidatesEgressAllowlist(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected fetcher %T", caps.Fetch)
 	}
-	if _, err := runner.NewValidatedAllowlistFetcher(s.Backend.(*capsBackend).allow); err != nil {
+	if _, err := runner.NewValidatedAllowlistFetcher(backend.allow); err != nil {
 		t.Fatalf("allowlist should have validated: %v", err)
 	}
 	if len(af.Allow) != 1 || af.Allow[0] != "api.example.com" {

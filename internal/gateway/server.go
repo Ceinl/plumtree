@@ -19,16 +19,21 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-type Server struct {
+// Config is the static construction-time configuration for a gateway Server.
+// It mirrors the previous exported Server fields so existing call sites read
+// naturally; New validates the combinations the type alone cannot express and
+// resolves zero/negative sentinels to their effective values.
+type Config struct {
 	// Backend is the port to the control plane (required).
 	Backend Backend
 	// Suspensions streams administrative suspension events to the kill switch
 	// (required). It is explicit so a backend cannot compile while missing
 	// kill-switch behavior.
 	Suspensions SuspensionSource
-	Runner      *runner.Runner
-	Limits      runner.Limits
-	MaxFPS      int
+	// Runner reuses compiled WASM across sessions. When nil, New creates one.
+	Runner *runner.Runner
+	Limits runner.Limits
+	MaxFPS int
 	// HostKey signs the SSH host key. When nil, a persistent dev host key under
 	// the OS config dir is loaded or generated.
 	HostKey ssh.Signer
@@ -46,7 +51,7 @@ type Server struct {
 	RunnerToken    string
 	// EnableHostCommands gives claimed apps the ability to execute allowlisted
 	// programs as the gateway OS user. It is off by default and intended only
-	// for trusted apps on private/self-hosted servers. Startup fails closed
+	// for trusted apps on private/self-hosted servers. New fails closed
 	// when it is enabled without a non-empty HostCommandAllowlist.
 	EnableHostCommands bool
 	// HostCommandAllowlist is the operator's executable allowlist consulted by
@@ -67,39 +72,124 @@ type Server struct {
 	MaxConnectionsPerIP int
 	Logf                func(format string, args ...any)
 	Ready               func(net.Addr)
+}
+
+// Server serves deployed apps over SSH. Construct it with New so every
+// instance starts in one valid state: configuration is validated and resolved
+// once, and the session registry, capacity slots, connection admission, and
+// bus state are initialized before any session is handled.
+type Server struct {
+	backend     Backend
+	suspensions SuspensionSource
+	runner      *runner.Runner
+	limits      runner.Limits
+	maxFPS      int
+	hostKey     ssh.Signer
+
+	runnerWorker   string
+	runnerEndpoint string
+	runnerToken    string
+
+	enableHostCommands   bool
+	hostCommandAllowlist []string
+
+	maxConcurrentSessions int
+
+	// handshakeTimeout and idleTimeout hold the resolved deadlines: zero
+	// selected the secure default in New, a negative value disabled the
+	// deadline (resolved to 0, meaning no deadline), otherwise the configured
+	// value.
+	handshakeTimeout time.Duration
+	idleTimeout      time.Duration
+
+	logger func(format string, args ...any)
+	ready  func(net.Addr)
 
 	sessions  *sessionRegistry
 	slots     chan struct{} // counting semaphore; nil when unlimited
 	admission *sshconn.Admission
 
-	busMu     sync.Mutex
-	busById   map[string]*runner.MemBus // app ID -> shared pub/sub bus
+	busMu   sync.Mutex
+	busById map[string]*runner.MemBus // app ID -> shared pub/sub bus
+
 	startOnce sync.Once
 	startErr  error
 }
 
+// New validates static configuration, applies defaults, and initializes the
+// runner, session registry, capacity slots, connection admission, and bus
+// state, so the returned Server is ready for concurrent session handling.
+// Only context-bound lifecycle work (registering the suspension watcher)
+// remains for Start.
+func New(c Config) (*Server, error) {
+	if c.Backend == nil {
+		return nil, fmt.Errorf("%w: backend is required", ErrNotConfigured)
+	}
+	if c.Suspensions == nil {
+		return nil, fmt.Errorf("%w: suspension source is required", ErrNotConfigured)
+	}
+	if c.RunnerEndpoint != "" && c.RunnerWorker != "" {
+		return nil, errors.New("gateway: configure either runner endpoint or local runner worker, not both")
+	}
+	if c.RunnerEndpoint != "" && c.RunnerToken == "" {
+		return nil, errors.New("gateway: runner token is required with runner endpoint")
+	}
+	if c.EnableHostCommands && len(c.HostCommandAllowlist) == 0 {
+		return nil, errors.New("gateway: host commands enabled with an empty allowlist; refusing to start")
+	}
+	eng := c.Runner
+	if eng == nil {
+		eng = runner.New()
+	}
+	lim := c.Limits
+	if lim.MemoryPages == 0 {
+		lim = runner.DefaultLimits
+	}
+	var slots chan struct{}
+	if c.MaxConcurrentSessions > 0 {
+		slots = make(chan struct{}, c.MaxConcurrentSessions)
+	}
+	return &Server{
+		backend:               c.Backend,
+		suspensions:           c.Suspensions,
+		runner:                eng,
+		limits:                lim,
+		maxFPS:                c.MaxFPS,
+		hostKey:               c.HostKey,
+		runnerWorker:          c.RunnerWorker,
+		runnerEndpoint:        c.RunnerEndpoint,
+		runnerToken:           c.RunnerToken,
+		enableHostCommands:    c.EnableHostCommands,
+		hostCommandAllowlist:  append([]string(nil), c.HostCommandAllowlist...),
+		maxConcurrentSessions: c.MaxConcurrentSessions,
+		handshakeTimeout:      effectiveDuration(c.HandshakeTimeout, DefaultHandshakeTimeout),
+		idleTimeout:           effectiveDuration(c.IdleTimeout, DefaultIdleTimeout),
+		logger:                c.Logf,
+		ready:                 c.Ready,
+		sessions:              newSessionRegistry(),
+		slots:                 slots,
+		admission: sshconn.NewAdmission(
+			effectiveLimit(c.MaxConnections, DefaultMaxConnections),
+			effectiveLimit(c.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
+		),
+		busById: make(map[string]*runner.MemBus),
+	}, nil
+}
+
 // HandleSession runs one already-authenticated SSH session channel. The root
 // server uses this seam to multiplex leaf shell/exec with its private control
-// and pairing subsystems on one public SSH listener.
+// and pairing subsystems on one public SSH listener. The Server must be
+// constructed with New; HandleSession performs no initialization and is safe
+// for concurrent use.
 func (s *Server) HandleSession(ctx context.Context, ch ssh.Channel, requests <-chan *ssh.Request, handle string, identity runner.Identity) {
-	if s.Runner == nil {
-		s.Runner = runner.New()
-	}
-	if s.sessions == nil {
-		s.sessions = newSessionRegistry()
-	}
-	if s.slots == nil && s.MaxConcurrentSessions > 0 {
-		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
-	}
 	s.handleSession(ctx, ch, requests, handle, identity)
 }
 
 const (
-	DefaultMaxConcurrentSessions = 64
-	DefaultHandshakeTimeout      = 10 * time.Second
-	DefaultIdleTimeout           = 5 * time.Minute
-	DefaultMaxConnections        = 1024
-	DefaultMaxConnectionsPerIP   = 32
+	DefaultHandshakeTimeout    = 10 * time.Second
+	DefaultIdleTimeout         = 5 * time.Minute
+	DefaultMaxConnections      = 1024
+	DefaultMaxConnectionsPerIP = 32
 )
 
 func effectiveLimit(configured, fallback int) int {
@@ -133,7 +223,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	// "none" cannot be enabled here: clients use it to discover auth methods, so
 	// accepting it would make even key-bearing clients anonymous.
 	cfg := optionalAuthConfig()
-	signer := s.HostKey
+	signer := s.hostKey
 	if signer == nil {
 		var err error
 		signer, err = devHostKey()
@@ -148,8 +238,8 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		return err
 	}
 	defer ln.Close()
-	if s.Ready != nil {
-		s.Ready(ln.Addr())
+	if s.ready != nil {
+		s.ready(ln.Addr())
 	}
 
 	go func() {
@@ -177,48 +267,15 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	}
 }
 
-// Start prepares runner capacity and the suspension kill-switch before a
-// listener admits leaf sessions. It is safe to call more than once.
+// Start registers the suspension kill-switch before a listener admits leaf
+// sessions. All static validation and initialization already happened in New;
+// Start performs only this context-bound lifecycle work. It is safe to call
+// more than once.
 func (s *Server) Start(ctx context.Context) error {
-	s.startOnce.Do(func() { s.startErr = s.start(ctx) })
+	s.startOnce.Do(func() {
+		s.startErr = s.suspensions.StartSuspensionWatcher(ctx, s.handleSuspension)
+	})
 	return s.startErr
-}
-
-func (s *Server) start(ctx context.Context) error {
-	if s.Backend == nil {
-		return fmt.Errorf("%w: backend is required", ErrNotConfigured)
-	}
-	if s.Suspensions == nil {
-		return fmt.Errorf("%w: suspension source is required", ErrNotConfigured)
-	}
-	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
-		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
-	}
-	if s.RunnerEndpoint != "" && s.RunnerToken == "" {
-		return errors.New("gateway: runner token is required with runner endpoint")
-	}
-	if s.EnableHostCommands && len(s.HostCommandAllowlist) == 0 {
-		return errors.New("gateway: host commands enabled with an empty allowlist; refusing to start")
-	}
-	if s.Runner == nil {
-		s.Runner = runner.New()
-	}
-	if s.sessions == nil {
-		s.sessions = newSessionRegistry()
-	}
-	if err := s.Suspensions.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
-		return err
-	}
-	if s.slots == nil && s.MaxConcurrentSessions > 0 {
-		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
-	}
-	if s.admission == nil {
-		s.admission = sshconn.NewAdmission(
-			effectiveLimit(s.MaxConnections, DefaultMaxConnections),
-			effectiveLimit(s.MaxConnectionsPerIP, DefaultMaxConnectionsPerIP),
-		)
-	}
-	return nil
 }
 
 func optionalAuthConfig() *ssh.ServerConfig {
@@ -253,15 +310,15 @@ func (s *Server) handleSuspension(ctx context.Context, event Suspension) error {
 }
 
 func (s *Server) logf(format string, args ...any) {
-	if s.Logf != nil {
-		s.Logf(format, args...)
+	if s.logger != nil {
+		s.logger(format, args...)
 	}
 }
 
 func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.ServerConfig) {
 	defer nConn.Close()
-	conn := sshconn.NewActivityConn(nConn, effectiveDuration(s.IdleTimeout, DefaultIdleTimeout))
-	if timeout := effectiveDuration(s.HandshakeTimeout, DefaultHandshakeTimeout); timeout > 0 {
+	conn := sshconn.NewActivityConn(nConn, s.idleTimeout)
+	if timeout := s.handshakeTimeout; timeout > 0 {
 		_ = nConn.SetDeadline(time.Now().Add(timeout))
 	}
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, cfg)
@@ -307,7 +364,7 @@ func identityLogValue(identity runner.Identity) string {
 func (s *Server) identityFromConn(ctx context.Context, c *ssh.ServerConn) runner.Identity {
 	if c.Permissions != nil {
 		if fp := c.Permissions.Extensions["pubkey-fp"]; fp != "" {
-			identity, err := s.Backend.ResolveIdentity(ctx, fp)
+			identity, err := s.backend.ResolveIdentity(ctx, fp)
 			if err == nil && identity.User != "" {
 				// Defense in depth: owner metadata on an unauthenticated
 				// identity carries no authority and must never reach the

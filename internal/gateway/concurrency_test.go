@@ -8,8 +8,7 @@ import (
 )
 
 func TestAcquireSlotRespectsCap(t *testing.T) {
-	s := &Server{MaxConcurrentSessions: 2}
-	s.slots = make(chan struct{}, s.MaxConcurrentSessions)
+	s := mustNewServer(t, Config{Backend: &countingBackend{}, MaxConcurrentSessions: 2})
 
 	if !s.acquireSlot() || !s.acquireSlot() {
 		t.Fatal("first two slots should be granted")
@@ -26,9 +25,10 @@ func TestAcquireSlotRespectsCap(t *testing.T) {
 
 func TestStartSessionAcquiresCapacityBeforeResolvingArtifact(t *testing.T) {
 	backend := &countingBackend{}
-	s := &Server{Backend: backend, MaxConcurrentSessions: 1}
-	s.slots = make(chan struct{}, 1)
-	s.slots <- struct{}{} // occupy the only runner slot
+	s := mustNewServer(t, Config{Backend: backend, MaxConcurrentSessions: 1})
+	if !s.acquireSlot() { // occupy the only runner slot
+		t.Fatal("could not occupy the only runner slot")
+	}
 	ch := &testChannel{}
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -67,7 +67,7 @@ func (*countingBackend) StartSuspensionWatcher(context.Context, func(context.Con
 }
 
 func TestAcquireSlotUnlimited(t *testing.T) {
-	s := &Server{} // MaxConcurrentSessions == 0, slots nil
+	s := mustNewServer(t, Config{Backend: &countingBackend{}}) // MaxConcurrentSessions == 0, slots nil
 	for i := 0; i < 1000; i++ {
 		if !s.acquireSlot() {
 			t.Fatal("unlimited server must always grant slots")
