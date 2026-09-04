@@ -1,13 +1,14 @@
 // Package gateway serves deployed Plumtree apps over SSH. It owns the SSH front
 // end, the PTY/session lifecycle, and the per-session WASM sandbox, delegating
-// all authoritative platform state to a Backend. It runs either embedded in the
-// control plane (in-process Backend) or as its own deployable (HTTP Backend).
+// all authoritative platform state to a Backend. It runs embedded in the
+// control plane with an in-process Backend.
 package gateway
 
 import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -21,9 +22,13 @@ import (
 type Server struct {
 	// Backend is the port to the control plane (required).
 	Backend Backend
-	Runner  *runner.Runner
-	Limits  runner.Limits
-	MaxFPS  int
+	// Suspensions streams administrative suspension events to the kill switch
+	// (required). It is explicit so a backend cannot compile while missing
+	// kill-switch behavior.
+	Suspensions SuspensionSource
+	Runner      *runner.Runner
+	Limits      runner.Limits
+	MaxFPS      int
 	// HostKey signs the SSH host key. When nil, a persistent dev host key under
 	// the OS config dir is loaded or generated.
 	HostKey ssh.Signer
@@ -181,7 +186,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 func (s *Server) start(ctx context.Context) error {
 	if s.Backend == nil {
-		return errors.New("gateway: backend is required")
+		return fmt.Errorf("%w: backend is required", ErrNotConfigured)
+	}
+	if s.Suspensions == nil {
+		return fmt.Errorf("%w: suspension source is required", ErrNotConfigured)
 	}
 	if s.RunnerEndpoint != "" && s.RunnerWorker != "" {
 		return errors.New("gateway: configure either runner endpoint or local runner worker, not both")
@@ -198,10 +206,8 @@ func (s *Server) start(ctx context.Context) error {
 	if s.sessions == nil {
 		s.sessions = newSessionRegistry()
 	}
-	if source, ok := s.Backend.(SuspensionSource); ok {
-		if err := source.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
-			return err
-		}
+	if err := s.Suspensions.StartSuspensionWatcher(ctx, s.handleSuspension); err != nil {
+		return err
 	}
 	if s.slots == nil && s.MaxConcurrentSessions > 0 {
 		s.slots = make(chan struct{}, s.MaxConcurrentSessions)
@@ -266,7 +272,7 @@ func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.Server
 	conn.EnableIdleDeadline()
 	defer sshConn.Close()
 	go ssh.DiscardRequests(reqs)
-	identity := s.identityFromConn(sshConn)
+	identity := s.identityFromConn(ctx, sshConn)
 	s.logf("connection open app=%q identity=%q auth=%s from=%s", sshConn.User(), identityLogValue(identity), identity.Kind, nConn.RemoteAddr())
 
 	for newCh := range chans {
@@ -298,10 +304,10 @@ func identityLogValue(identity runner.Identity) string {
 // authenticated identity; an unregistered, proved key is a stable but
 // unauthenticated key identity; and a connection using no key is anonymous with
 // an ephemeral per-connection id.
-func (s *Server) identityFromConn(c *ssh.ServerConn) runner.Identity {
+func (s *Server) identityFromConn(ctx context.Context, c *ssh.ServerConn) runner.Identity {
 	if c.Permissions != nil {
 		if fp := c.Permissions.Extensions["pubkey-fp"]; fp != "" {
-			identity, err := s.Backend.ResolveIdentity(fp)
+			identity, err := s.Backend.ResolveIdentity(ctx, fp)
 			if err == nil && identity.User != "" {
 				// Defense in depth: owner metadata on an unauthenticated
 				// identity carries no authority and must never reach the

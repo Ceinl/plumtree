@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"context"
+
 	"github.com/Ceinl/plumtree/internal/runner"
 )
 
@@ -11,23 +13,23 @@ import (
 // only apps with an owner get Env and a Fetcher, and egress stays default-deny
 // unless the allowlist is non-empty. A capability source that cannot be read
 // fails closed: the capability is left absent and the operator sees why.
-func (s *Server) capsFor(appID, ownerID string) runner.Capabilities {
+func (s *Server) capsFor(ctx context.Context, appID, ownerID string) runner.Capabilities {
 	if appID == "" {
 		return runner.Capabilities{}
 	}
-	caps := runner.Capabilities{KV: s.kvFor(appID), Bus: s.busFor(appID), Goodbye: new(string)}
+	caps := runner.Capabilities{KV: s.kvFor(ctx, appID), Bus: s.busFor(appID), Goodbye: new(string)}
 	if ownerID != "" {
 		if s.EnableHostCommands && len(s.HostCommandAllowlist) > 0 {
 			caps.Exec = runner.LocalCommander{Allowlist: s.HostCommandAllowlist}
 		}
-		secrets, err := s.Backend.SecretsForApp(appID)
+		secrets, err := s.Backend.SecretsForApp(ctx, appID)
 		switch {
 		case err != nil:
 			s.logf("ERROR: secrets lookup for app %q failed; session runs without env: %v", appID, err)
 		case len(secrets) > 0:
 			caps.Env = runner.MapEnv(secrets)
 		}
-		allow, err := s.Backend.EgressAllowlist(appID)
+		allow, err := s.Backend.EgressAllowlist(ctx, appID)
 		switch {
 		case err != nil:
 			s.logf("ERROR: egress allowlist lookup for app %q failed; session runs default-deny: %v", appID, err)
@@ -44,18 +46,15 @@ func (s *Server) capsFor(appID, ownerID string) runner.Capabilities {
 }
 
 // kvFor returns the app's durable KV store. Hosted sessions use the
-// repository-backed store when the backend exposes one; there is no file-based
-// fallback on this path (pt dev local profiles keep their own JSON store).
-func (s *Server) kvFor(appID string) runner.Store {
-	if source, ok := s.Backend.(KVSource); ok {
-		st, err := source.KVStore(appID)
-		if err != nil {
-			s.logf("ERROR: kv store for app %q unavailable; session runs without kv: %v", appID, err)
-			return nil
-		}
-		return st
+// repository-backed store; there is no file-based fallback on this path
+// (pt dev local profiles keep their own JSON store).
+func (s *Server) kvFor(ctx context.Context, appID string) runner.Store {
+	st, err := s.Backend.KVStore(ctx, appID)
+	if err != nil {
+		s.logf("ERROR: kv store for app %q unavailable; session runs without kv: %v", appID, err)
+		return nil
 	}
-	return nil
+	return st
 }
 
 func (s *Server) busFor(appID string) runner.Bus {

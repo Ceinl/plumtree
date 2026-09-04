@@ -41,20 +41,30 @@ func TestStartSessionAcquiresCapacityBeforeResolvingArtifact(t *testing.T) {
 
 type countingBackend struct{ resolveCalls int }
 
-func (*countingBackend) ResolveIdentity(fingerprint string) (runner.Identity, error) {
-	return runner.Identity{User: fingerprint}, nil
+func (*countingBackend) ResolveIdentity(_ context.Context, fingerprint string) (runner.Identity, error) {
+	return runner.Identity{User: fingerprint, Kind: runner.IdentitySSHKey}, nil
 }
-func (b *countingBackend) ResolveRunnable(string) (Runnable, error) {
+func (b *countingBackend) ResolveRunnable(context.Context, string, runner.Identity) (Runnable, error) {
 	b.resolveCalls++
 	return Runnable{}, nil
 }
-func (*countingBackend) StartSession(string, string) (string, error) { return "", nil }
-func (*countingBackend) RecordSessionLog(string, string, bool) error { return nil }
-func (*countingBackend) EndSession(string) error                     { return nil }
-func (*countingBackend) SecretsForApp(string) (map[string]string, error) {
+func (*countingBackend) StartSession(context.Context, string, string, string, string) (string, error) {
+	return "", nil
+}
+func (*countingBackend) RecordSessionLog(context.Context, string, string, bool) error { return nil }
+func (*countingBackend) EndSession(context.Context, string) error                     { return nil }
+func (*countingBackend) SecretsForApp(context.Context, string) (map[string]string, error) {
 	return nil, nil
 }
-func (*countingBackend) EgressAllowlist(string) ([]string, error) { return nil, nil }
+func (*countingBackend) EgressAllowlist(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+func (*countingBackend) KVStore(context.Context, string) (runner.Store, error) {
+	return nil, ErrCapsUnavailable
+}
+func (*countingBackend) StartSuspensionWatcher(context.Context, func(context.Context, Suspension) error) error {
+	return nil
+}
 
 func TestAcquireSlotUnlimited(t *testing.T) {
 	s := &Server{} // MaxConcurrentSessions == 0, slots nil

@@ -9,19 +9,16 @@ import (
 	"github.com/Ceinl/plumtree/internal/sqlite"
 )
 
-// KVSource is implemented by backends that expose durable per-app guest KV
-// backed by the encrypted repository, replacing the legacy per-app JSON files.
-type KVSource interface {
-	// KVStore returns the shared runner.Store for one app's sessions.
-	KVStore(appID string) (runner.Store, error)
-}
-
 var _ runner.Store = (*sqliteKVStore)(nil)
 
 // sqliteKVStore adapts the repository's KV tables to the runner.Store
 // contract for a single app. All state lives in the repository, so sessions
 // of the same app share data across processes and inherit SQLCipher at-rest
 // encryption from the storage engine itself.
+//
+// runner.Store has no context parameter, so operations use a background
+// context detached from any single session: KV writes must outlive the SSH
+// request context that created the store.
 type sqliteKVStore struct {
 	repo  *sqlite.Repository
 	appID string
@@ -64,9 +61,12 @@ func (s *sqliteKVStore) CompareAndSwap(key string, expected [sha256.Size]byte, v
 }
 
 // KVStore returns the repository-backed store for one app.
-func (b *SQLiteBackend) KVStore(appID string) (runner.Store, error) {
-	if b.Repository == nil {
-		return nil, errors.New("gateway: backend has no repository")
+func (b *SQLiteBackend) KVStore(ctx context.Context, appID string) (runner.Store, error) {
+	if err := b.requireRepo(); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, unavailable("kv store", err)
 	}
 	return &sqliteKVStore{repo: b.Repository, appID: appID}, nil
 }

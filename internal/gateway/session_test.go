@@ -186,27 +186,35 @@ type stubBackend struct {
 	startErr   error
 }
 
-func (*stubBackend) ResolveIdentity(fingerprint string) (runner.Identity, error) {
-	return runner.Identity{User: fingerprint}, nil
+func (*stubBackend) ResolveIdentity(_ context.Context, fingerprint string) (runner.Identity, error) {
+	return runner.Identity{User: fingerprint, Kind: runner.IdentitySSHKey}, nil
 }
-func (b *stubBackend) ResolveRunnable(string) (Runnable, error) {
+func (b *stubBackend) ResolveRunnable(context.Context, string, runner.Identity) (Runnable, error) {
 	if b.resolveErr != nil {
 		return Runnable{}, b.resolveErr
 	}
-	return Runnable{AppID: "app-1", AppName: "tool", OwnerID: "author-1", DeployID: "deployment-1"}, nil
+	return Runnable{AppID: "app-1", AppName: "tool", OwnerID: "author-1", DeployID: "deployment-1", ArtifactDigest: "digest-1"}, nil
 }
-func (b *stubBackend) StartSession(string, string) (string, error) {
+func (b *stubBackend) StartSession(context.Context, string, string, string, string) (string, error) {
 	if b.startErr != nil {
 		return "", b.startErr
 	}
 	return "session-1", nil
 }
-func (*stubBackend) RecordSessionLog(string, string, bool) error { return nil }
-func (*stubBackend) EndSession(string) error                     { return nil }
-func (*stubBackend) SecretsForApp(string) (map[string]string, error) {
+func (*stubBackend) RecordSessionLog(context.Context, string, string, bool) error { return nil }
+func (*stubBackend) EndSession(context.Context, string) error                     { return nil }
+func (*stubBackend) SecretsForApp(context.Context, string) (map[string]string, error) {
 	return nil, nil
 }
-func (*stubBackend) EgressAllowlist(string) ([]string, error) { return nil, nil }
+func (*stubBackend) EgressAllowlist(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+func (*stubBackend) KVStore(context.Context, string) (runner.Store, error) {
+	return nil, ErrCapsUnavailable
+}
+func (*stubBackend) StartSuspensionWatcher(context.Context, func(context.Context, Suspension) error) error {
+	return nil
+}
 
 func buildTestBinary(t *testing.T, dir, pkg string, extraEnv []string) string {
 	t.Helper()

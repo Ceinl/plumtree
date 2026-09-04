@@ -45,8 +45,8 @@ lone 0x9b/0x9d/0x90 (8-bit CSI/OSC/DCS) can no longer reach the terminal while
 legitimate multibyte UTF-8 survives. Tests in internal/runner/devhost_test.go.
 
 Update (2026-07-10): the ssh-gateway operator kill switch is wired end to end.
-Owner/app/deploy suspension events fan out to embedded and standalone gateways,
-cancel matching sessions, wait for deregistration, and acknowledge completion
+Owner/app/deploy suspension events reach the embedded gateway, cancel matching
+sessions, wait for deregistration, and acknowledge completion
 before the control-plane operation returns. The same hardening pass added SSH
 connection admission/deadlines, bounded terminal dimensions, worker isolation
 for CLI apps, bounded build admission, encrypted control-plane snapshots, and
