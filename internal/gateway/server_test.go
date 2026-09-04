@@ -135,9 +135,12 @@ func TestNewResolvesZeroAndNegativeSentinels(t *testing.T) {
 
 func TestNewCopiesHostCommandAllowlist(t *testing.T) {
 	allow := []string{"echo"}
-	s := mustNewServer(t, Config{Backend: &stubBackend{}, EnableHostCommands: true, HostCommandAllowlist: allow})
+	s := mustNewServer(t, Config{Backend: &capsBackend{}, EnableHostCommands: true, HostCommandAllowlist: allow})
 	allow[0] = "mutated"
-	caps := s.capsFor(context.Background(), "app-1", "owner-1")
+	caps, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble capabilities: %v", err)
+	}
 	cmd, ok := caps.Exec.(runner.LocalCommander)
 	if !ok {
 		t.Fatalf("exec capability = %T, want runner.LocalCommander", caps.Exec)

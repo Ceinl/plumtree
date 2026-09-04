@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Ceinl/plumtree/internal/runner"
@@ -103,9 +101,13 @@ func TestSQLiteKVStorePreservesContextCancellation(t *testing.T) {
 // Hosted sessions must receive the repository-backed KV store, so state is
 // durable and encrypted at rest by the storage engine rather than living in
 // plaintext per-app JSON files.
-func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
+func TestAssembleHostCapabilitiesUsesRepositoryKV(t *testing.T) {
 	s, backend := openKVTestServer(t)
-	caps := s.capsFor(context.Background(), "app-kv", "owner-kv")
+	app := Runnable{AppID: "app-kv", OwnerID: "owner-kv"}
+	caps, err := assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
 	if caps.KV == nil {
 		t.Fatal("hosted session ran without a KV store")
 	}
@@ -113,7 +115,11 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 		t.Fatalf("session set: %v", err)
 	}
 	// A second session of the same app shares one store through the repository.
-	if value, found, err := s.capsFor(context.Background(), "app-kv", "owner-kv").KV.Get("from-session"); err != nil || !found || string(value) != "persisted" {
+	second, err := assembleWith(s, app, runner.Identity{})
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if value, found, err := second.KV.Get("from-session"); err != nil || !found || string(value) != "persisted" {
 		t.Fatalf("second session get = %q, %t, %v", value, found, err)
 	}
 	// The bytes live in the repository itself, not a StateDir/kv JSON file.
@@ -122,20 +128,16 @@ func TestCapsForHostedSessionUsesRepositoryKV(t *testing.T) {
 	}
 }
 
-// A KV source failure fails closed: the capability is absent and the operator
-// sees why, instead of silently running without durable state.
-func TestCapsKVUnavailableFailsClosed(t *testing.T) {
-	var log strings.Builder
+// A KV source failure fails closed: the capability is absent and the
+// assembler reports why instead of hiding unavailable durable state.
+func TestAssembleHostCapabilitiesKVUnavailableFailsClosed(t *testing.T) {
 	backend := &capsBackend{kvErr: ErrCapsUnavailable}
-	s := mustNewServer(t, Config{Backend: backend, Logf: func(format string, args ...any) {
-		log.WriteString(fmt.Sprintf(format, args...) + "\n")
-	}})
-	if caps := s.capsFor(context.Background(), "app-1", "owner-1"); caps.KV != nil {
+	s := mustNewServer(t, Config{Backend: backend})
+	caps, err := assembleWith(s, Runnable{AppID: "app-1", OwnerID: "owner-1"}, runner.Identity{})
+	if caps.KV != nil {
 		t.Fatalf("KV = %T, want nil when the KV source fails", caps.KV)
 	}
-	for _, want := range []string{"ERROR", "kv store", "control plane unavailable"} {
-		if !strings.Contains(log.String(), want) {
-			t.Errorf("log missing %q:\n%s", want, log.String())
-		}
+	if !errors.Is(err, ErrCapsUnavailable) {
+		t.Fatalf("error = %v, want ErrCapsUnavailable", err)
 	}
 }
