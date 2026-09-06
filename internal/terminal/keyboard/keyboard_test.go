@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestMouseReportsDoNotBecomeKeyEvents(t *testing.T) {
@@ -50,13 +51,36 @@ func TestSplitMouseAndUnicodeInput(t *testing.T) {
 }
 
 func TestUnsupportedReportsAreConsumed(t *testing.T) {
-	for _, report := range []string{"\x1b[?1;2c", "\x1b[<0;0;1M", "\x1b[<0;;1M"} {
+	for _, report := range []string{"\x1b[?1;2c", "\x1b[<0;0;1M", "\x1b[<0;;1M", "\x1b[" + strings.Repeat("1", 64) + "q", "\x1b[" + strings.Repeat("1", 128) + "q"} {
 		var got []Event
 		for ev := range ListenReader(context.Background(), strings.NewReader(report+"q")) {
 			got = append(got, ev)
 		}
 		if len(got) != 1 || got[0].Ch != 'q' {
 			t.Fatalf("%q leaked into keys: %+v", report, got)
+		}
+	}
+}
+
+func TestInvalidUnicodePreservesFollowingInput(t *testing.T) {
+	for _, input := range []string{"\xe2q", "\xe2\x82q", "\xffq"} {
+		for _, split := range []bool{false, true} {
+			var reader io.Reader = strings.NewReader(input)
+			if split {
+				var parts []io.Reader
+				for i := range input {
+					parts = append(parts, strings.NewReader(input[i:i+1]))
+				}
+				reader = io.MultiReader(parts...)
+			}
+			var got []rune
+			for event := range ListenReader(context.Background(), reader) {
+				got = append(got, event.Ch)
+			}
+			want := strings.Repeat(string(utf8.RuneError), len(input)-1) + "q"
+			if string(got) != want {
+				t.Fatalf("input %x split=%v: got %q, want %q", input, split, string(got), want)
+			}
 		}
 	}
 }

@@ -34,25 +34,22 @@ func benchScript(n int) []byte {
 }
 
 // BenchmarkKeyboardPipeline measures the full listen → parse → deliver path for
-// one script of keystrokes (8 events per unit), read from a bytes.Reader.
+// one script of keystrokes (12 events from 8 input units), read from a bytes.Reader.
 func BenchmarkKeyboardPipeline(b *testing.B) {
-	const events = 8
-	input := benchScript(events)
+	const units, expectedEvents = 8, 12
+	input := benchScript(units)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		eventsCh := ListenReader(ctx, bytes.NewReader(input))
 		got := 0
-		for got < events {
-			if _, ok := <-eventsCh; !ok {
-				break
-			}
+		for range eventsCh {
 			got++
 		}
 		cancel()
-		if got != events {
-			b.Fatalf("got %d events, want %d", got, events)
+		if got != expectedEvents {
+			b.Fatalf("got %d events, want %d", got, expectedEvents)
 		}
 	}
 }

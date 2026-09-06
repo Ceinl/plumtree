@@ -79,3 +79,15 @@ func TestFlushOmitsRepeatedStylesAndAdjacentASCIICursors(t *testing.T) {
 		t.Fatalf("missing explicit position after Unicode: %q", w.String())
 	}
 }
+
+func TestFlushRepositionsWithinSameStyleAfterUnicode(t *testing.T) {
+	var out bytes.Buffer
+	screen := NewScreenWithOutput(3, 1, &out)
+	for x, ch := range []rune{'a', '界', 'z'} {
+		screen.Set(x, 0, abi.Cell{Ch: ch})
+	}
+	screen.Flush()
+	if !strings.Contains(out.String(), "a界\x1b[1;3Hz") {
+		t.Fatalf("wrong cell position: %q", out.String())
+	}
+}

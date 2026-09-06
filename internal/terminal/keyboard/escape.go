@@ -10,12 +10,15 @@ const continuationTimeout = 10 * time.Millisecond
 // bytes must never become ordinary keys and trigger one redraw per byte.
 func readCSI(read func() (byte, bool)) Event {
 	var params [64]byte
-	for n := 0; n < len(params); n++ {
+	for n := 0; ; {
 		b, ok := read()
 		if !ok {
 			return Event{Type: KeyUnknown}
 		}
 		if b >= 0x40 && b <= 0x7e {
+			if n == len(params) {
+				return Event{Type: KeyUnknown}
+			}
 			if n > 0 && params[0] == '<' {
 				return parseMouse(params[1:n], b)
 			}
@@ -47,9 +50,11 @@ func readCSI(read func() (byte, bool)) Event {
 			}
 			return Event{Type: KeyUnknown}
 		}
-		params[n] = b
+		if n < len(params) {
+			params[n] = b
+			n++
+		}
 	}
-	return Event{Type: KeyUnknown}
 }
 
 // SGR mouse reports are the format enabled by the SSH terminal setup.

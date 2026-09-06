@@ -155,7 +155,11 @@ func (s *byteStream) parse(b byte) Event {
 			raw[n] = next
 			n++
 		}
-		ch, _ := utf8.DecodeRune(raw[:n])
+		ch, size := utf8.DecodeRune(raw[:n])
+		if size < n {
+			// Invalid input consumes one byte; return the rest to the stream.
+			s.cur = append(raw[size:n:n], s.cur...)
+		}
 		return Event{Type: KeyRune, Ch: ch}
 	}
 }

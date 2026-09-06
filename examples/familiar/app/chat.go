@@ -149,7 +149,7 @@ func mapPresence(msg bus.Message) app.Event {
 	if json.Unmarshal(msg.Data, &payload) != nil || payload.From == "" {
 		return presenceEvent{}
 	}
-	return presenceEvent{From: payload.From, Name: payload.Name, Text: payload.Text}
+	return presenceEvent{From: payload.From, Name: payload.Name, Text: "asked a question"}
 }
 
 func (m *model) Update(event app.Event) app.Command {
@@ -309,7 +309,6 @@ func (m *model) ask(text string, appendUser bool) app.Command {
 		From: m.uid,
 		Name: m.label(),
 		Kind: "ask",
-		Text: truncateRunes(text, 80),
 	}.encode()).Ignore()
 	ask := m.complete(m.cfg, apiHistory(m.history), m.memories)
 	if appendUser {
@@ -398,10 +397,11 @@ func (m *model) slash(text string) app.Command {
 			shown = shown[:3]
 			extra = " … +" + strconv.Itoa(len(m.memories)-3) + " more"
 		}
+		numbered := make([]string, len(shown))
 		for i, memory := range shown {
-			shown[i] = strconv.Itoa(i+1) + ". " + memory
+			numbered[i] = strconv.Itoa(i+1) + ". " + memory
 		}
-		m.setNotice(strings.Join(shown, "\n")+extra, ui.Muted)
+		m.setNotice(strings.Join(numbered, "\n")+extra, ui.Muted)
 	case "/retry":
 		if m.phase != phaseIdle {
 			return app.Noop()
@@ -513,7 +513,6 @@ type presencePayload struct {
 	From string `json:"from"`
 	Name string `json:"name,omitempty"`
 	Kind string `json:"kind"`
-	Text string `json:"text"`
 }
 
 func (p presencePayload) encode() []byte {

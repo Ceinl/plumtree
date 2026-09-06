@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -16,7 +17,7 @@ import (
 )
 
 // Secrets the leaf reads. GLM_API_KEY is required; the rest fall back to
-// defaults so a bare deployment only needs one secret.
+// defaults. Hosted curl also requires operator approval in the host allowlist.
 const (
 	secretAPIKey    = "GLM_API_KEY"
 	secretModel     = "GLM_MODEL"
@@ -39,10 +40,10 @@ const (
 // Transports. The clean fetch capability sends no request headers by design
 // (abi.FetchRequest v1), so an Authorization header cannot ride through it:
 //
-//   - transportFetch (default): use the gated egress capability. Choose
+//   - transportFetch: use the gated egress capability. Choose
 //     endpoints that need no key or take it in the URL — put {key} anywhere
 //     in GLM_BASE_URL and the API key is substituted there.
-//   - transportCurl: run `curl` through the host-command capability, which
+//   - transportCurl (default): run `curl` through the host-command capability, which
 //     can send headers. Requires the operator to allowlist curl.
 const (
 	transportFetch     = "fetch"
@@ -92,7 +93,7 @@ func identityWhoami(ctx context.Context) (identity.Identity, error) {
 // loadConfig assembles completion config from secrets. Capability failures
 // and missing keys become hints instead of errors.
 func loadConfig(ctx context.Context, lookup lookupFunc) config {
-	cfg := config{BaseURL: defaultBaseURL, Model: defaultModel, Persona: defaultPersona(), Transport: transportFetch}
+	cfg := config{BaseURL: defaultBaseURL, Model: defaultModel, Persona: defaultPersona(), Transport: transportCurl}
 	if value, found, err := lookup(ctx, secretModel); err == nil && found && strings.TrimSpace(value) != "" {
 		cfg.Model = strings.TrimSpace(value)
 	}
@@ -102,8 +103,11 @@ func loadConfig(ctx context.Context, lookup lookupFunc) config {
 	if value, found, err := lookup(ctx, secretPersona); err == nil && found && strings.TrimSpace(value) != "" {
 		cfg.Persona = strings.TrimSpace(value)
 	}
-	if value, found, err := lookup(ctx, secretTransport); err == nil && found && strings.TrimSpace(value) == transportCurl {
-		cfg.Transport = transportCurl
+	if value, found, err := lookup(ctx, secretTransport); err == nil && found {
+		switch strings.TrimSpace(value) {
+		case transportFetch, transportCurl, transportAnthropic:
+			cfg.Transport = strings.TrimSpace(value)
+		}
 	}
 	key, found, err := lookup(ctx, secretAPIKey)
 	switch {
@@ -137,6 +141,15 @@ func realComplete(ctx context.Context, cfg config, history []message, memories [
 	}
 	if !cfg.HasKey {
 		return completion{Err: cfg.Hint}
+	}
+	endpoint, err := url.Parse(strings.ReplaceAll(cfg.BaseURL, keyPlaceholder, "key"))
+	if err != nil || endpoint.Host == "" {
+		return completion{Err: "GLM_BASE_URL must be a valid HTTPS URL"}
+	}
+	// Permit HTTP only on numeric loopback addresses for local development.
+	loopback := net.ParseIP(endpoint.Hostname()).IsLoopback()
+	if endpoint.Scheme != "https" && !(endpoint.Scheme == "http" && loopback) {
+		return completion{Err: "GLM_BASE_URL must use HTTPS (HTTP is allowed only on loopback)"}
 	}
 	switch cfg.Transport {
 	case transportAnthropic:

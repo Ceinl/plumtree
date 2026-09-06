@@ -111,6 +111,9 @@ func (s *Screen) Flush() {
 			start, style := x, curRow[x]
 			for x < s.w && curRow[x] != oldRow[x] && curRow[x].Fg == style.Fg && curRow[x].Bg == style.Bg && curRow[x].Decor == style.Decor {
 				x++
+				if ch := curRow[x-1].Ch; ch < ' ' || ch > '~' {
+					break
+				}
 			}
 			if cursorX != start || cursorY != y {
 				b = append(b, "\x1b["...)

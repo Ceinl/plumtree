@@ -30,6 +30,3 @@ sdk/fetchcheck
 .branch/
 .claude/
 pt-bin
-
-# Examples
-examples/

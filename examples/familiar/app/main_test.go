@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -322,13 +323,13 @@ func TestAPIHistoryBudget(t *testing.T) {
 }
 
 func TestMapPresence(t *testing.T) {
-	valid, err := json.Marshal(presencePayload{From: "abc", Name: "mira", Kind: "ask", Text: "hello"})
+	valid, err := json.Marshal(presencePayload{From: "abc", Name: "mira", Kind: "ask"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	event := mapPresence(bus.Message{Topic: presenceTopic, Data: valid})
 	got, ok := event.(presenceEvent)
-	if !ok || got.From != "abc" || got.Name != "mira" || got.Text != "hello" {
+	if !ok || got.From != "abc" || got.Name != "mira" || got.Text != "asked a question" {
 		t.Fatalf("mapped = %+v", event)
 	}
 	if event := mapPresence(bus.Message{Data: []byte("not json")}); event.(presenceEvent).From != "" {
@@ -401,7 +402,7 @@ func TestCLIHistoryClearStatus(t *testing.T) {
 	statusTree := buildCLI(unexpectedCompletion, fakeLookup)
 	status := plumtest.InvokeCLI(t, statusTree, plumtest.Shell("status"))
 	status.ExpectExit(0)
-	for _, want := range []string{"model     test-model\n", "endpoint  mock.local\n", "transport fetch\n", "api key   set\n", "persona   default\n", "identity  local\n", "uid       " + uid + "\n"} {
+	for _, want := range []string{"model     test-model\n", "endpoint  mock.local\n", "transport curl\n", "api key   set\n", "persona   default\n", "identity  local\n", "uid       " + uid + "\n"} {
 		if !strings.Contains(status.Stdout(), want) {
 			t.Fatalf("stdout %q missing %q", status.Stdout(), want)
 		}
@@ -592,5 +593,81 @@ func TestParseAnthropicReply(t *testing.T) {
 	done = parseAnthropicReply(cfg, 200, []byte(`{"content":[]}`))
 	if !strings.Contains(done.Err, "empty reply") {
 		t.Fatalf("empty = %q", done.Err)
+	}
+}
+
+func TestMemoriesDisplayDoesNotChangeStoredNotes(t *testing.T) {
+	m, mem := testModel(t, "answer", "")
+	runtime := plumtest.Start(t, m, plumtest.Viewport(80, 24))
+	for _, command := range []string{"/remember likes tea", "/memories", "/memories", "/remember likes Go"} {
+		typeRunes(runtime, command)
+		runtime.Key(app.KeyEnter)
+	}
+	want := []string{"likes tea", "likes Go"}
+	if !slices.Equal(m.memories, want) {
+		t.Fatalf("notes changed: %q", m.memories)
+	}
+	var stored []string
+	if err := json.Unmarshal(mem.Value(memKey(m.uid)), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(stored, want) {
+		t.Fatalf("stored notes changed: %q", stored)
+	}
+}
+
+func TestConversationBoundsEncodedBytesWithoutChangingCaller(t *testing.T) {
+	for _, content := range []string{strings.Repeat("x", convMaxBytes*2), strings.Repeat("界", convMaxBytes), strings.Repeat("\x00", convMaxBytes)} {
+		for _, count := range []int{1, 2} {
+			mem := kv.NewMemory(nil)
+			ctx := kv.WithAdapter(context.Background(), mem)
+			history := make([]message, count)
+			for i := range history {
+				history[i] = message{Role: "assistant", Content: content}
+			}
+			if err := saveConversation(ctx, "uid", history); err != nil {
+				t.Fatal(err)
+			}
+			if raw := mem.Value(convKey("uid")); len(raw) > convMaxBytes {
+				t.Fatalf("stored %d bytes", len(raw))
+			}
+			if len(loadConversation(ctx, "uid")) != count {
+				t.Fatal("lost retained turns")
+			}
+			for _, msg := range history {
+				if msg.Content != content {
+					t.Fatal("caller history changed")
+				}
+			}
+		}
+	}
+}
+
+func TestConfiguredTransports(t *testing.T) {
+	for _, transport := range []string{"", transportFetch, transportCurl, transportAnthropic} {
+		cfg := loadConfig(context.Background(), func(ctx context.Context, key string) (string, bool, error) {
+			if key == secretTransport {
+				return transport, transport != "", nil
+			}
+			return fakeLookup(ctx, key)
+		})
+		want := transport
+		if want == "" {
+			want = transportCurl
+		}
+		if cfg.Transport != want {
+			t.Fatalf("transport %q: got %q", transport, cfg.Transport)
+		}
+	}
+}
+
+func TestCompletionRejectsInsecureRemoteEndpoints(t *testing.T) {
+	for _, transport := range []string{transportFetch, transportCurl, transportAnthropic} {
+		for _, endpoint := range []string{"http://example.com/{key}", "file:///tmp/key", "https:///missing-host"} {
+			done := realComplete(context.Background(), config{HasKey: true, APIKey: "secret", BaseURL: endpoint, Transport: transport}, nil, nil)
+			if !strings.Contains(done.Err, "HTTPS") {
+				t.Fatalf("%s %s: %+v", transport, endpoint, done)
+			}
+		}
 	}
 }

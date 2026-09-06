@@ -65,10 +65,6 @@ func buildCLI(complete completeFunc, lookup lookupFunc) cli.Command {
 				history := session.history
 				if fresh {
 					history = nil
-				} else {
-					if err := saveConversation(call, session.uid, history); err != nil {
-						fmt.Fprintf(call.Stderr, "warn: could not save conversation: %v\n", err)
-					}
 				}
 				history = append(history, message{Role: "user", Content: question})
 				done := complete(call, session.cfg, apiHistory(history), session.memories)

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 
 	"github.com/Ceinl/plumtree/sdk/kv"
@@ -67,10 +69,24 @@ func saveConversation(ctx context.Context, uid string, history []message) error 
 		if err != nil {
 			return err
 		}
-		if len(raw) <= convMaxBytes || len(history) <= 2 {
+		if len(raw) <= convMaxBytes {
 			return kv.Set(convKey(uid), raw).Run(ctx).Err
 		}
-		history = history[1:]
+		if len(history) > 2 {
+			history = history[1:]
+			continue
+		}
+		// Work on a copy and recheck encoded bytes, including JSON escaping.
+		history = slices.Clone(history)
+		shrunk := false
+		for i := range history {
+			runes := []rune(history[i].Content)
+			shrunk = shrunk || len(runes) > 0
+			history[i].Content = string(runes[:len(runes)/2])
+		}
+		if !shrunk {
+			return errors.New("conversation metadata exceeds storage limit")
+		}
 	}
 }
 
@@ -97,7 +113,14 @@ func loadMemories(ctx context.Context, uid string) []string {
 }
 
 func saveMemories(ctx context.Context, uid string, memories []string) error {
-	raw, err := json.Marshal(memories)
+	if len(memories) > memMax {
+		memories = memories[:memMax]
+	}
+	bounded := make([]string, len(memories))
+	for i, memory := range memories {
+		bounded[i] = truncateRunes(memory, memMaxRunes)
+	}
+	raw, err := json.Marshal(bounded)
 	if err != nil {
 		return err
 	}
