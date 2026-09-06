@@ -59,9 +59,14 @@ func (r Runner) pairServer(args []string, requestedPurpose protocol.Purpose) err
 	}
 	secret := []byte(*secretFlag)
 	if len(secret) == 0 {
-		value, err := readSecret(r.In)
+		phrase, prompt := "pairing", "pairing phrase (secret from 'plumtree bootstrap')"
+		if requestedPurpose == protocol.PurposeOfflineRecovery {
+			phrase, prompt = "recovery", "recovery phrase"
+		}
+		_, _, errOut := r.streams()
+		value, err := promptSecret(r.In, errOut, prompt)
 		if err != nil {
-			return fmt.Errorf("read pairing phrase: %w", err)
+			return fmt.Errorf("read %s phrase: %w", phrase, err)
 		}
 		secret = []byte(value)
 	}
