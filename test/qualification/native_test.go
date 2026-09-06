@@ -375,9 +375,9 @@ type managedProcess struct {
 
 func startServer(t *testing.T, binary, runnerWorker, config string, env []string) *liveServer {
 	t.Helper()
-	runner, _ := startReadyProcess(t, binary, []string{"serve", "--config", config, "--roles-control=false", "--roles-gateway=false", "--roles-runner=true", "--runtime-runner-worker", runnerWorker, "--product-version", "qualification"}, env, "plumtree runner ready on ")
+	runner, _ := startReadyProcess(t, binary, []string{"serve", "--config", config, "--roles-control=false", "--roles-gateway=false", "--roles-runner=true", "--runtime-runner-worker", runnerWorker, "--product-version", "qualification"}, env, "plumtree runner ● ready")
 	t.Cleanup(func() { _ = runner.stop() })
-	control, line := startReadyProcess(t, binary, []string{"serve", "--config", config, "--product-version", "qualification"}, env, " ready on ")
+	control, line := startReadyProcess(t, binary, []string{"serve", "--config", config, "--product-version", "qualification"}, env, "| ssh   ")
 	fields := strings.Fields(line)
 	endpoint := fields[len(fields)-1]
 	if _, _, err := net.SplitHostPort(endpoint); err != nil {
