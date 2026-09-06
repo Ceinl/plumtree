@@ -15,11 +15,22 @@ const EventLen = 13
 //
 //	[13:15] topicLen uint16  [15:15+t] topic  [..:..+4] dataLen uint32  [..] data
 func EncodeEvent(e Event) []byte {
+	return AppendEvent(nil, e)
+}
+
+// AppendEvent serializes e into dst, reusing dst's allocation when it has
+// enough capacity. Hosts delivering a steady stream of events append into one
+// buffer per session instead of allocating a new slice per event.
+func AppendEvent(dst []byte, e Event) []byte {
 	tail := 0
 	if e.Kind == KindMessage {
 		tail = 2 + len(e.Topic) + 4 + len(e.Data)
 	}
-	b := make([]byte, EventLen+tail)
+	size := EventLen + tail
+	if cap(dst) < size {
+		dst = make([]byte, size)
+	}
+	b := dst[:size]
 	b[0] = magicEvent
 	b[1] = Version
 	b[2] = byte(e.Kind)

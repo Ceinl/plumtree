@@ -5,6 +5,11 @@
 **/.plumtree/
 .env.plumtree.server.local
 **/.env.plumtree.server.local
+/plumtree.db
+/plumtree.db-*
+/plumtree_host_key
+/config.local.json
+/config.local.json.lock
 
 # Build/test output
 bin/

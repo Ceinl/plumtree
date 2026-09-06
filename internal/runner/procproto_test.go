@@ -52,19 +52,19 @@ func TestReadWorkerMessageRejectsOperationOversizeBeforePayload(t *testing.T) {
 	var header [5]byte
 	header[0] = byte(opKVGet)
 	binary.LittleEndian.PutUint32(header[1:], abi.KVMaxKey+1)
-	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
+	if _, _, err := readMsgBoundedInto(&procSession{}, bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
 		t.Fatalf("oversized key error = %v, want protocol error", err)
 	}
 
 	header[0] = 0xff
 	binary.LittleEndian.PutUint32(header[1:], 1)
-	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
+	if _, _, err := readMsgBoundedInto(&procSession{}, bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
 		t.Fatalf("unknown operation error = %v, want protocol error", err)
 	}
 
 	header[0] = byte(opInput)
 	binary.LittleEndian.PutUint32(header[1:], 5)
-	if _, _, err := readMsgBounded(bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
+	if _, _, err := readMsgBoundedInto(&procSession{}, bytes.NewReader(header[:]), maxWorkerPayload); !errors.Is(err, errProtocol) {
 		t.Fatalf("oversized input request error = %v, want protocol error", err)
 	}
 }

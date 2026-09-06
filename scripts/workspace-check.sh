@@ -27,8 +27,10 @@ workspace_modules=(
   .
   sdk
   examples/agentboard
+  examples/afterimage
   examples/ascii-saver
   examples/chat
+  examples/familiar
   examples/tic-tac-toe
 )
 

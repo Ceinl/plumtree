@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +59,7 @@ type TTYSink struct {
 	mu    sync.Mutex
 	scr   *terminal.Screen
 	w, h  int
+	row   []abi.Cell // sanitizing scratch for one frame row
 	thr   throttle
 	dirty bool
 	timer *time.Timer
@@ -71,26 +74,44 @@ func NewTTYSink(w, h, maxFPS int) *TTYSink {
 // NewTTYSinkWriter is like NewTTYSink but flushes to out (e.g. an SSH channel).
 // A nil out renders to stdout.
 func NewTTYSinkWriter(w, h, maxFPS int, out io.Writer) *TTYSink {
-	scr := terminal.NewScreen(w, h)
-	if out != nil {
-		scr = terminal.NewScreenWithOutput(w, h, out)
+	if out == nil {
+		out = os.Stdout
 	}
+	scr := terminal.NewScreenWithOutput(w, h, out)
 	return &TTYSink{scr: scr, w: w, h: h, thr: newThrottle(maxFPS)}
 }
 
-func (s *TTYSink) Present(f abi.Frame) {
+// Healthy reports whether the last flush fully reached the terminal. Callers
+// may use it to suppress work that would be a visual no-op: while unhealthy the
+// screen must repaint identical frames to heal a failed write.
+func (s *TTYSink) Healthy() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.scr.Healthy()
+}
+
+func (s *TTYSink) Present(f abi.Frame) {
+	if f.W < 1 || f.W > terminal.MaxWidth || f.H < 1 || f.H > terminal.MaxHeight || len(f.Cells) != f.W*f.H {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cap(s.row) < f.W {
+		s.row = make([]abi.Cell, f.W)
+	}
+	s.row = s.row[:f.W]
 	if f.W != s.w || f.H != s.h {
 		s.scr.Resize(f.W, f.H)
 		s.w, s.h = f.W, f.H
 	}
 	for y := 0; y < f.H; y++ {
-		for x := 0; x < f.W; x++ {
-			c := f.At(x, y)
-			s.scr.Set(x, y, sanitizeRune(c.Ch),
-				fgSGR(c.Fg), bgSGR(c.Bg), abi.DecorSGR(c.Decor))
+		src := f.Cells[y*f.W : y*f.W+f.W]
+		for x := range src {
+			c := src[x]
+			c.Ch = sanitizeRune(c.Ch)
+			s.row[x] = c
 		}
+		s.scr.SetRow(y, s.row)
 	}
 	now := time.Now()
 	if s.thr.allow(now) {
@@ -135,18 +156,24 @@ func (s *TTYSink) Close() {
 	}
 }
 
-func fgSGR(c abi.RGB) string {
-	if c == (abi.RGB{}) {
-		return terminal.DefaultFg
+// frameDedup suppresses frames byte-identical to the last one handed to the
+// sink. A guest that re-presents an unchanged frame (timers, mouse moves, bus
+// traffic over an unchanged view) then costs no decode, no cell copy, and no
+// diff. Suppression is gated on the sink being healthy: a failed flush leaves
+// the viewer stale, so suppressed frames must resume repainting until the
+// screen heals. Sinks without health reporting are never suppressed.
+type frameDedup struct{ last []byte }
+
+func (d *frameDedup) suppressed(raw []byte, sink Sink) bool {
+	if len(raw) != len(d.last) || !bytes.Equal(raw, d.last) {
+		return false
 	}
-	return abi.FgSGR(c)
+	h, ok := sink.(interface{ Healthy() bool })
+	return ok && h.Healthy()
 }
 
-func bgSGR(c abi.RGB) string {
-	if c == (abi.RGB{}) {
-		return terminal.DefaultBg
-	}
-	return abi.BgSGR(c)
+func (d *frameDedup) observe(raw []byte) {
+	d.last = append(d.last[:0], raw...)
 }
 
 // throttle caps how often frames are flushed (output rate limiting).

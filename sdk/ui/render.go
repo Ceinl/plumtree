@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"unicode/utf8"
 )
 
 // Cell is one structured terminal cell. It contains no raw terminal control
@@ -26,23 +27,8 @@ func Render(node Node, width, height int) Frame {
 
 // RenderWithTheme renders with a caller-provided semantic theme.
 func RenderWithTheme(node Node, width, height int, theme Theme) Frame {
-	if width < 0 {
-		width = 0
-	}
-	if height < 0 {
-		height = 0
-	}
-	frame := Frame{width: width, height: height, root: node, cells: make([][]Cell, height)}
-	for y := range frame.cells {
-		frame.cells[y] = make([]Cell, width)
-		for x := range frame.cells[y] {
-			frame.cells[y][x].Rune = ' '
-		}
-	}
-	if node != nil && width > 0 && height > 0 {
-		renderNode(&frame, node, 0, 0, width, height, theme)
-	}
-	return frame
+	var renderer Renderer
+	return renderer.RenderWithTheme(node, width, height, theme)
 }
 
 // Width returns the frame width.
@@ -136,30 +122,41 @@ func renderNode(frame *Frame, node Node, x, y, width, height int, theme Theme) {
 	}
 }
 
+// intrinsicBufLen sizes a stack scratch for per-container intrinsic widths, so
+// the common layout pass allocates nothing. Containers with more children fall
+// back to the heap transparently.
+const intrinsicBufLen = 64
+
 func renderChildren(frame *Frame, base *nodeBase, x, y, width, height int, theme Theme) {
-	children := make([]Node, 0, len(base.children))
-	for _, child := range base.children {
+	children := base.children
+	count := 0
+	for _, child := range children {
 		if child != nil {
-			children = append(children, child)
+			count++
 		}
 	}
-	if len(children) == 0 {
+	if count == 0 {
 		return
 	}
 	mainSize := width
 	if base.direction == ColumnLayout {
 		mainSize = height
 	}
-	gaps := max(0, len(children)-1) * base.gap
+	gaps := max(0, count-1) * base.gap
 	remaining := max(0, mainSize-gaps)
-	intrinsic := make([]int, len(children))
+	var buf [intrinsicBufLen]int
+	intrinsic := buf[:0]
 	fillCount := 0
-	for index, child := range children {
-		intrinsic[index] = intrinsicMain(child, base.direction, width, height)
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		measured := intrinsicMain(child, base.direction, width, height)
+		intrinsic = append(intrinsic, measured)
 		if child.nodeData().fill {
 			fillCount++
 		} else {
-			remaining -= intrinsic[index]
+			remaining -= measured
 		}
 	}
 	fillSize := 0
@@ -167,10 +164,16 @@ func renderChildren(frame *Frame, base *nodeBase, x, y, width, height int, theme
 		fillSize = max(0, remaining) / fillCount
 	}
 	contentSize := gaps
-	for index, child := range children {
-		contentSize += intrinsic[index]
+	index := 0
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		measured := intrinsic[index]
+		index++
+		contentSize += measured
 		if child.nodeData().fill {
-			contentSize += fillSize - intrinsic[index]
+			contentSize += fillSize - measured
 		}
 	}
 	position := 0
@@ -181,13 +184,18 @@ func renderChildren(frame *Frame, base *nodeBase, x, y, width, height int, theme
 	case End:
 		position = free
 	}
-	for index, child := range children {
+	index = 0
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
 		size := intrinsic[index]
+		index++
 		if child.nodeData().fill {
 			size = fillSize
-		}
-		if index == len(children)-1 && child.nodeData().fill {
-			size = max(0, mainSize-position)
+			if index == count {
+				size = max(0, mainSize-position)
+			}
 		}
 		size = min(size, max(0, mainSize-position))
 		crossSize := intrinsicCross(child, base.direction, width, height)
@@ -226,7 +234,7 @@ func intrinsicMain(node Node, direction Direction, width, height int) int {
 	if direction == ColumnLayout {
 		switch base.kind {
 		case kindText, kindButton:
-			return max(1, len(strings.Split(base.text, "\n")))
+			return max(1, strings.Count(base.text, "\n")+1)
 		case kindCanvas:
 			return max(1, node.(*CanvasNode).height)
 		default:
@@ -245,35 +253,59 @@ func intrinsicMain(node Node, direction Direction, width, height int) int {
 	}
 }
 
+// longestLine counts the widest line in runes without allocating: lines are
+// visited with IndexByte and counted with RuneCountInString.
 func longestLine(value string) int {
 	result := 0
-	for _, line := range strings.Split(value, "\n") {
-		if len([]rune(line)) > result {
-			result = len([]rune(line))
+	for len(value) > 0 {
+		line := value
+		if i := strings.IndexByte(value, '\n'); i >= 0 {
+			line, value = value[:i], value[i+1:]
+		} else {
+			value = ""
+		}
+		if n := utf8.RuneCountInString(line); n > result {
+			result = n
 		}
 	}
 	return result
 }
 
+// drawText writes text lines rune by rune. Iterating the string directly keeps
+// the per-render path allocation-free, including for multi-byte runes.
 func drawText(frame *Frame, x, y, width, height int, text string, style Style) {
-	for lineIndex, line := range strings.Split(text, "\n") {
+	lineIndex := 0
+	for len(text) > 0 {
 		if lineIndex >= height {
 			break
 		}
+		line := text
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			line, text = text[:i], text[i+1:]
+		} else {
+			text = ""
+		}
 		if y+lineIndex < 0 || y+lineIndex >= frame.height {
+			lineIndex++
 			continue
 		}
-		runes := []rune(line)
-		for offset := 0; offset < len(runes) && offset < width; offset++ {
+		row := frame.cells[y+lineIndex]
+		offset := 0
+		for _, value := range line {
+			if offset >= width {
+				break
+			}
 			if x+offset < 0 || x+offset >= frame.width {
+				offset++
 				continue
 			}
-			value := runes[offset]
 			if !safeRune(value) {
 				value = '\ufffd'
 			}
-			frame.cells[y+lineIndex][x+offset] = Cell{Rune: value, Style: style}
+			row[x+offset] = Cell{Rune: value, Style: style}
+			offset++
 		}
+		lineIndex++
 	}
 }
 

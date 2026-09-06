@@ -128,7 +128,7 @@ func TestBusSubCapCrossesProcessBoundary(t *testing.T) {
 				close(parentErr)
 				return
 			}
-			if err := pr.serve(context.Background(), parentToWorkerW, o, payload,
+			if err := pr.serve(context.Background(), parentToWorkerW, o, payload, &procSession{},
 				Capabilities{Bus: bus}, nil, nil, sub, CLIStreams{}); err != nil {
 				parentErr <- err
 				return

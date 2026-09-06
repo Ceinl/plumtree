@@ -13,7 +13,7 @@ import (
 
 // RunWorker is the entry point of the runner-worker process. It reads the
 // session parameters from in, runs the guest in this process's wazero sandbox
-// via the normal Run, and forwards every host call to the parent over out using
+// and forwards every host call to the parent over out using
 // the procproto. It returns when the guest finishes; the result is reported to
 // the parent as the final opDone message.
 //
@@ -69,7 +69,7 @@ func RunWorker(in io.Reader, out io.Writer) error {
 			Stderr: proxyOutput{rpc: rpc, stderr: true},
 		})
 	} else {
-		runErr = Run(context.Background(), wasm, lim, caps, &proxySource{rpc}, &proxySink{rpc}, logs)
+		runErr = runGuestEncoded(context.Background(), nil, wasm, lim, caps, &proxySource{rpc}, rpc.present, logs)
 	}
 
 	errStr := ""
@@ -93,17 +93,20 @@ type LogBuffer struct {
 func NewLogBuffer() *LogBuffer { return &LogBuffer{boundedBuffer{max: maxSessionLog}} }
 
 // workerRPC performs one lock-step request/response over the worker's pipes. The
-// guest runs single-threaded, so calls are naturally serialized.
+// guest runs single-threaded, so calls are naturally serialized. Replies use
+// buf as scratch storage and remain valid until the next call.
 type workerRPC struct {
 	in  io.Reader
 	out io.Writer
+	buf []byte
 }
 
 func (r *workerRPC) call(o op, payload []byte) ([]byte, error) {
 	if err := writeMsg(r.out, o, payload); err != nil {
 		return nil, err
 	}
-	ro, rp, err := readMsg(r.in)
+	ro, rp, err := readMsgInto(r.in, r.buf)
+	r.buf = rp
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +130,11 @@ func (s *proxySource) Next(context.Context) (abi.Event, bool) {
 	return ev, true
 }
 
-type proxySink struct{ rpc *workerRPC }
-
-func (s *proxySink) Present(f abi.Frame) { _, _ = s.rpc.call(opPresent, abi.EncodeFrame(f)) }
+// present forwards bytes while the guest is paused. The parent validates and
+// decodes the frame before replying, so no guest-memory copy is needed here.
+func (r *workerRPC) present(raw []byte) {
+	_, _ = r.call(opPresent, raw)
+}
 
 type proxyTimers struct{ rpc *workerRPC }
 

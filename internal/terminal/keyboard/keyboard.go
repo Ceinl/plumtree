@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"unicode/utf8"
 )
 
 type Event struct {
@@ -38,7 +39,13 @@ const (
 	KeyMouseLeftDown
 	KeyMouseLeftDrag
 	KeyMouseLeftUp
+	KeyUnknown
 )
+
+// chunkLen bounds one read's worth of forwarded input. Keystrokes arrive in
+// bursts (a whole escape sequence, a paste), so one channel send per chunk
+// replaces the per-byte send of the naive design.
+const chunkLen = 4096
 
 func Listen(ctx context.Context) <-chan Event { return ListenReader(ctx, os.Stdin) }
 
@@ -46,46 +53,75 @@ func ListenReader(ctx context.Context, input io.Reader) <-chan Event {
 	out := make(chan Event)
 	go func() {
 		defer close(out)
-		bytes := make(chan byte, 64)
+		chunks := make(chan []byte, 4)
 		go func() {
-			defer close(bytes)
-			buf := []byte{0}
+			defer close(chunks)
+			buf := make([]byte, chunkLen)
 			for {
 				n, err := input.Read(buf)
-				if err != nil || n == 0 {
-					return
+				if n > 0 {
+					// The read buffer is reused, so the chunk gets its own copy.
+					chunk := make([]byte, n)
+					copy(chunk, buf[:n])
+					select {
+					case chunks <- chunk:
+					case <-ctx.Done():
+						return
+					}
 				}
-				select {
-				case bytes <- buf[0]:
-				case <-ctx.Done():
+				if err != nil {
 					return
 				}
 			}
 		}()
+		s := &byteStream{ctx: ctx, chunks: chunks}
 		for {
+			b, ok := s.next()
+			if !ok {
+				return
+			}
+			event := s.parse(b)
+			if event.Type == KeyUnknown {
+				continue
+			}
 			select {
+			case out <- event:
 			case <-ctx.Done():
 				return
-			case b, ok := <-bytes:
-				if !ok {
-					return
-				}
-				event := parseByte(ctx, bytes, b)
-				if event.Type == KeyEscape && event.Ch == 0 {
-					continue
-				}
-				select {
-				case out <- event:
-				case <-ctx.Done():
-					return
-				}
 			}
 		}
 	}()
 	return out
 }
 
-func parseByte(ctx context.Context, input <-chan byte, b byte) Event {
+// byteStream feeds the parser from queued chunks, preserving the old
+// read-continuation semantics: bytes already read are consumed immediately,
+// while a sequence split across reads waits up to continuationTimeout.
+type byteStream struct {
+	ctx    context.Context
+	chunks <-chan []byte
+	cur    []byte
+}
+
+func (s *byteStream) next() (byte, bool) {
+	if len(s.cur) > 0 {
+		b := s.cur[0]
+		s.cur = s.cur[1:]
+		return b, true
+	}
+	select {
+	case chunk, ok := <-s.chunks:
+		if !ok {
+			return 0, false
+		}
+		s.cur = chunk[1:]
+		return chunk[0], true
+	case <-s.ctx.Done():
+		return 0, false
+	}
+}
+
+func (s *byteStream) parse(b byte) Event {
 	switch b {
 	case 3:
 		return Event{Type: KeyCtrlC, Ctrl: true}
@@ -96,55 +132,69 @@ func parseByte(ctx context.Context, input <-chan byte, b byte) Event {
 	case 127:
 		return Event{Type: KeyBackspace}
 	case 27:
-		read := func() (byte, bool) {
-			select {
-			case v, ok := <-input:
-				return v, ok
-			case <-time.After(10 * time.Millisecond):
-				return 0, false
-			case <-ctx.Done():
-				return 0, false
-			}
-		}
-		b1, ok := read()
+		b1, ok := s.continuation()
 		if !ok {
 			return Event{Type: KeyEscape}
 		}
 		if b1 != '[' {
-			return Event{Type: KeyEscape}
+			return Event{Type: KeyUnknown}
 		}
-		b2, ok := read()
-		if !ok {
-			return Event{Type: KeyEscape}
-		}
-		switch b2 {
-		case 'A':
-			return Event{Type: KeyArrowUp}
-		case 'B':
-			return Event{Type: KeyArrowDown}
-		case 'C':
-			return Event{Type: KeyArrowRight}
-		case 'D':
-			return Event{Type: KeyArrowLeft}
-		case 'H':
-			return Event{Type: KeyHome}
-		case 'F':
-			return Event{Type: KeyEnd}
-		case '3':
-			if b3, ok := read(); ok && b3 == '~' {
-				return Event{Type: KeyDelete}
-			}
-		case '5':
-			if b3, ok := read(); ok && b3 == '~' {
-				return Event{Type: KeyPageUp}
-			}
-		case '6':
-			if b3, ok := read(); ok && b3 == '~' {
-				return Event{Type: KeyPageDown}
-			}
-		}
-		return Event{Type: KeyEscape}
+		return readCSI(s.continuation)
 	default:
-		return Event{Type: KeyRune, Ch: rune(b)}
+		if b < utf8.RuneSelf {
+			return Event{Type: KeyRune, Ch: rune(b)}
+		}
+		var raw [utf8.UTFMax]byte
+		raw[0] = b
+		n := 1
+		for !utf8.FullRune(raw[:n]) && n < len(raw) {
+			next, ok := s.continuation()
+			if !ok {
+				return Event{Type: KeyUnknown}
+			}
+			raw[n] = next
+			n++
+		}
+		ch, size := utf8.DecodeRune(raw[:n])
+		if size < n {
+			// Invalid input consumes one byte; return the rest to the stream.
+			s.cur = append(raw[size:n:n], s.cur...)
+		}
+		return Event{Type: KeyRune, Ch: ch}
+	}
+}
+
+// continuation reads the next byte of a multi-byte sequence. Split input waits
+// up to continuationTimeout; already-buffered bytes return without a timer.
+func (s *byteStream) continuation() (byte, bool) {
+	if len(s.cur) > 0 {
+		b := s.cur[0]
+		s.cur = s.cur[1:]
+		return b, true
+	}
+	select {
+	case chunk, ok := <-s.chunks:
+		if !ok {
+			return 0, false
+		}
+		s.cur = chunk[1:]
+		return chunk[0], true
+	case <-s.ctx.Done():
+		return 0, false
+	default:
+	}
+	timer := time.NewTimer(continuationTimeout)
+	defer timer.Stop()
+	select {
+	case chunk, ok := <-s.chunks:
+		if !ok {
+			return 0, false
+		}
+		s.cur = chunk[1:]
+		return chunk[0], true
+	case <-timer.C:
+		return 0, false
+	case <-s.ctx.Done():
+		return 0, false
 	}
 }

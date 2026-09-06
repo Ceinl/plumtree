@@ -281,6 +281,7 @@ func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm 
 		Size:    size,
 	}
 	sink := runner.NewTTYSinkWriter(w, h, s.maxFPS, ch)
+	defer sink.Close()
 
 	logs := newCapWriter(maxSessionLogBytes)
 	// When a worker binary is configured, isolate the WASM sandbox in a separate

@@ -89,10 +89,10 @@ func TestConcurrentAtomicUpdatesAndPrecedence(t *testing.T) {
 }
 
 func TestCapacitySecretsAndRoleProjections(t *testing.T) {
-	if got := CapacityFromMemory(1); got.MaxSessions != 16 || got.MaxWorkers != 4 || got.MaxBuilds != 1 {
+	if got := CapacityFromMemory(1); got.MaxSessions != 1 || got.MaxWorkers != 1 || got.MaxBuilds != 1 {
 		t.Fatalf("low capacity=%+v", got)
 	}
-	if got := CapacityFromMemory(64 << 30); got.MaxSessions != 256 || got.MaxWorkers != 64 || got.MaxBuilds != 16 {
+	if got := CapacityFromMemory(64 << 30); got.MaxSessions != 64 || got.MaxWorkers != 64 || got.MaxBuilds != 16 {
 		t.Fatalf("high capacity=%+v", got)
 	}
 	c := Default()

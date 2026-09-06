@@ -123,8 +123,10 @@ something larger than a single-feature fixture:
 |---------|------------------|--------|
 | [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh -p 2222 <owner>/chat@localhost` |
 | [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh -p 2222 <owner>/ascii-saver@localhost` |
+| [`afterimage`](examples/afterimage) | interactive signal art + timers + mouse/keyboard + structured canvas | `ssh -p 2222 <owner>/afterimage@localhost` |
 | [`tic-tac-toe`](examples/tic-tac-toe) | mouse input + leased player seats + KV/CAS + live pub/sub | `ssh -p 2222 <owner>/tic-tac-toe@localhost` |
 | [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + clean CLI | `ssh -p 2222 <owner>/agentboard@localhost` |
+| [`familiar`](examples/familiar) | secrets + gated egress/host commands (dual transport) + identity KV memory + pub/sub presence + SSH-exec CLI | `ssh -p 2222 <owner>/familiar@localhost` |
 
 Deploy each example from its directory with `pt deploy` after pairing, then
 connect with your own `<owner>/<app>` handle — on a hosted server, replace
@@ -247,6 +249,18 @@ config path. Operators can use `plumtree config show`,
 `plumtree config set <field> <value>`, and `plumtree config unset <field>`;
 changes take effect after restart. `-config` or `PLUMTREE_CONFIG` selects an
 explicit file.
+
+With `resources.autoCapacity` enabled, session admission uses the smaller of
+`limits.maxSessions` and the memory-based capacity. Half the detected memory
+(up to 8 GiB) is reserved for the host and compilation. Each session budgets
+its guest memory limit plus 32 MiB of host state. Default guest limits permit
+4 sessions on 512 MiB or 8 on 1 GiB. This is an admission estimate, not a hard
+process-memory or CPU quota. With automatic capacity disabled, explicit
+`resources.capacity.maxSessions` and `maxWorkers` still apply as ceilings.
+
+Hosted TUIs sleep until input, a timer, or a pub/sub message arrives. Apps that
+poll external state must use an explicit timer subscription. Custom host code
+can opt into periodic refresh through `TTYSource.Refresh`.
 
 A locally built app is stored as a typed WASM artifact through `/api/v1`.
 Public leaf sessions admit anonymous and proved-key visitors. Restricted leaf

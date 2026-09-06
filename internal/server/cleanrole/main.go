@@ -922,7 +922,7 @@ func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken
 	backend := gateway.NewSQLiteBackend(repo)
 	return gateway.New(gateway.Config{
 		Backend: backend, Suspensions: backend, Runner: runner.New(), Limits: limits,
-		MaxFPS: cfg.Limits.MaxFPS, MaxConcurrentSessions: cfg.Limits.MaxSessions,
+		MaxFPS: cfg.Limits.MaxFPS, MaxConcurrentSessions: cfg.SessionCapacity(),
 		HandshakeTimeout: handshakeTimeout, IdleTimeout: idleTimeout,
 		MaxConnections: cfg.Limits.MaxConnections, MaxConnectionsPerIP: cfg.Limits.MaxConnectionsPerIP,
 		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)),
