@@ -73,7 +73,7 @@ func defaultPersona() string {
 }
 
 // lookupFunc reads one secret. Native dev reads process env; hosted sessions
-// read the app's owner-claimed secrets.
+// read the app's owner-managed secrets.
 type lookupFunc func(ctx context.Context, key string) (value string, found bool, err error)
 
 func secretLookup(ctx context.Context, key string) (string, bool, error) {

@@ -2,7 +2,7 @@ package ui
 
 // Renderer reuses cell and hit-region storage between renders. Its zero value
 // is ready to use. It must not be used concurrently. Returned frames borrow
-// its storage until the next render; use Frame.Clone to retain a snapshot.
+// its storage until the next render; use Frame.Clone to retain a copy.
 type Renderer struct {
 	frame Frame
 	cells []Cell

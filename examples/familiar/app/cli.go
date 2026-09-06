@@ -10,7 +10,7 @@ import (
 	"github.com/Ceinl/plumtree/sdk/identity"
 )
 
-// cliSession is the capability snapshot one exec invocation needs.
+// cliSession is the capability state one exec invocation needs.
 type cliSession struct {
 	uid      string
 	name     string

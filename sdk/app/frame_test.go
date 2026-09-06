@@ -23,7 +23,7 @@ func TestRuntimeFrameRemainsDetachedAfterDispatch(t *testing.T) {
 		t.Fatal("dispatch did not change the view")
 	}
 	if before.Text() != text {
-		t.Fatal("dispatch changed a public frame snapshot")
+		t.Fatal("dispatch changed a public frame copy")
 	}
 }
 
@@ -65,7 +65,7 @@ func BenchmarkHostedFrameEncoding(b *testing.B) {
 	for _, clone := range []bool{true, false} {
 		name := "direct"
 		if clone {
-			name = "snapshot"
+			name = "clone"
 		}
 		b.Run(name, func(b *testing.B) {
 			r := &Runtime{frame: ui.Render(ui.Text("hello"), 160, 48)}

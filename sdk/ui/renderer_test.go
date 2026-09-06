@@ -32,10 +32,10 @@ func TestRendererCloneRetainsCellsAndHitRegions(t *testing.T) {
 	wantText := old.Text()
 	renderer.Render(Button("new", "other"), 12, 2)
 	if old.Text() != wantText {
-		t.Fatal("snapshot cells changed after render")
+		t.Fatal("copied cells changed after render")
 	}
 	event, handled := HandleFrame(old, MouseInput{Kind: MouseInputKind, X: 1, Y: 0, Button: 1, Action: 1}, nil)
 	if !handled || event != "clicked" {
-		t.Fatalf("snapshot hit regions changed: event=%v handled=%v", event, handled)
+		t.Fatalf("copied hit regions changed: event=%v handled=%v", event, handled)
 	}
 }
