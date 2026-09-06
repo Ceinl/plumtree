@@ -12,9 +12,9 @@ import (
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
-// DefaultRefresh is a reasonable repaint cadence for apps that poll shared state
-// (e.g. KV-backed apps); it is the interval the SSH/TTY hosts pass to TTYSource.
-const DefaultRefresh = 750 * time.Millisecond
+// DefaultRefresh leaves hosted sessions idle until input, a timer, or a bus
+// message arrives. Callers that need polling can set TTYSource.Refresh explicitly.
+const DefaultRefresh time.Duration = 0
 
 // ScriptSource feeds a fixed sequence of events for headless runs: an initial
 // resize, then one event per script token. When Echo is set it prints a label
@@ -62,7 +62,7 @@ type TTYSource struct {
 	Size  func() (w, h int)
 	// Refresh, when > 0, emits a periodic KindNone repaint event so apps that
 	// poll shared state (e.g. KV) redraw without local input. The host's frame
-	// rate cap drops repaints that produce no change, so an idle app is cheap.
+	// diff suppresses unchanged output, but each refresh still does guest work.
 	Refresh time.Duration
 
 	// bus, when set, delivers pub/sub messages (KindMessage events) the session
@@ -123,16 +123,20 @@ func (s *TTYSource) stop() {
 	}
 }
 
+// mouseActions translates keyboard mouse events to ABI actions. A package-level
+// table: read-only, so a mouse flood does not rebuild a map per event.
+var mouseActions = map[keyboard.EventType]abi.MouseAction{
+	keyboard.KeyMouseLeftDown:  abi.MouseDown,
+	keyboard.KeyMouseLeftUp:    abi.MouseUp,
+	keyboard.KeyMouseLeftDrag:  abi.MouseDrag,
+	keyboard.KeyMouseWheelUp:   abi.MouseWheelUp,
+	keyboard.KeyMouseWheelDown: abi.MouseWheelDown,
+}
+
 // mapKey translates a runtime keyboard event to an ABI event.
 func mapInput(ev keyboard.Event) (abi.Event, bool) {
 	if ev.Mouse {
-		action := map[keyboard.EventType]abi.MouseAction{
-			keyboard.KeyMouseLeftDown:  abi.MouseDown,
-			keyboard.KeyMouseLeftUp:    abi.MouseUp,
-			keyboard.KeyMouseLeftDrag:  abi.MouseDrag,
-			keyboard.KeyMouseWheelUp:   abi.MouseWheelUp,
-			keyboard.KeyMouseWheelDown: abi.MouseWheelDown,
-		}[ev.Type]
+		action := mouseActions[ev.Type]
 		if action == 0 {
 			return abi.Event{}, false
 		}

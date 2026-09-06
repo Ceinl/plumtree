@@ -77,6 +77,17 @@ func (pr *ProcessRunner) RunCLIWithStreams(ctx context.Context, wasm []byte, lim
 	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, streams, nil)
 }
 
+// procSession holds the per-session scratch state of the parent's serve loop.
+// Every buffer here is reused across the whole session so the steady-state
+// frame path (opPresent / opRecv) allocates nothing.
+type procSession struct {
+	buf   []byte // incoming payload scratch, reused per message
+	reply []byte // outgoing opRecv reply scratch: status byte + event
+	ev    []byte // event-encoding scratch, appended after the status byte
+	cells []abi.Cell
+	dedup frameDedup
+}
+
 func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, streams CLIStreams, logs io.Writer) error {
 	if err := validateLimits(lim); err != nil {
 		return err
@@ -119,8 +130,9 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 		return err
 	}
 
+	sess := &procSession{}
 	for {
-		o, payload, err := readMsgBounded(worker.out, maxWorkerPayload)
+		o, payload, err := readMsgBoundedInto(sess, worker.out, maxWorkerPayload)
 		if err != nil {
 			// Worker exited or pipe closed. Prefer the caller's cancellation cause.
 			if callerCtx.Err() != nil {
@@ -156,7 +168,7 @@ func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps 
 			}
 			return nil
 		}
-		if err := pr.serve(ctx, worker.in, o, payload, caps, src, sink, sub, streams); err != nil {
+		if err := pr.serve(ctx, worker.in, o, payload, sess, caps, src, sink, sub, streams); err != nil {
 			if callerCtx.Err() != nil {
 				return callerCtx.Err()
 			}
@@ -330,7 +342,7 @@ func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, erro
 }
 
 // serve handles one worker request and writes the opResp reply.
-func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, caps Capabilities, src Source, sink Sink, sub Subscriber, streams CLIStreams) error {
+func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, sess *procSession, caps Capabilities, src Source, sink Sink, sub Subscriber, streams CLIStreams) error {
 	switch o {
 	case opRecv:
 		if src == nil {
@@ -340,16 +352,26 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		if !ok {
 			return writeMsg(w, opResp, []byte{0})
 		}
-		return writeMsg(w, opResp, append([]byte{1}, abi.EncodeEvent(ev)...))
+		sess.ev = abi.AppendEvent(sess.ev[:0], ev)
+		sess.reply = append(sess.reply[:0], 1)
+		sess.reply = append(sess.reply, sess.ev...)
+		return writeMsg(w, opResp, sess.reply)
 
 	case opPresent:
 		if sink == nil {
 			return errProtocol
 		}
-		f, err := abi.DecodeFrame(payload)
+		// A byte-identical re-present is a visual no-op while the screen is
+		// healthy; skip the decode and the sink entirely.
+		if sess.dedup.suppressed(payload, sink) {
+			return writeMsg(w, opResp, nil)
+		}
+		f, cells, err := abi.AppendDecodeFrame(sess.cells, payload)
 		if err != nil || !validFrame(f) {
 			return errProtocol
 		}
+		sess.cells = cells
+		sess.dedup.observe(payload)
 		sink.Present(f)
 		return writeMsg(w, opResp, nil)
 
@@ -372,7 +394,8 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		if !ok || caps.KV == nil || len(key) == 0 || len(key) > abi.KVMaxKey || len(val) > abi.KVMaxValue {
 			return writeMsg(w, opResp, []byte{2})
 		}
-		if err := caps.KV.Set(key, val); err != nil {
+		// val aliases the reused session read buffer; the store may retain it.
+		if err := caps.KV.Set(key, append([]byte(nil), val...)); err != nil {
 			if errors.Is(err, ErrQuota) {
 				return writeMsg(w, opResp, []byte{1})
 			}
@@ -405,7 +428,8 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 		if !ok || caps.KV == nil || len(key) > abi.KVMaxKey || len(value) > abi.KVMaxValue {
 			return writeMsg(w, opResp, []byte{3})
 		}
-		err := caps.KV.CompareAndSwap(key, expected, value)
+		// value aliases the reused session read buffer; the store may retain it.
+		err := caps.KV.CompareAndSwap(key, expected, append([]byte(nil), value...))
 		switch {
 		case err == nil:
 			return writeMsg(w, opResp, []byte{0})

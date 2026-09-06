@@ -40,6 +40,9 @@ type capture struct {
 }
 
 func (c *capture) Present(f abi.Frame) {
+	// The runner hands frames backed by per-session scratch buffers that are
+	// reused across presents; a capturing sink must take its own copy.
+	f.Cells = append([]abi.Cell(nil), f.Cells...)
 	c.frames = append(c.frames, f)
 	if c.onPresent != nil {
 		c.onPresent(c.frames)
@@ -164,6 +167,23 @@ func TestPresentFloodDoesNotStarveGuestGC(t *testing.T) {
 	lim := Limits{MemoryPages: 512, SessionTimeout: 3 * time.Minute}
 	if err := Run(ctx, wasm, lim, Capabilities{}, &eventListSource{events: events}, TextSink{W: io.Discard}, io.Discard); err != nil {
 		t.Fatalf("present flood: %v", err)
+	}
+}
+
+// Rebuilding a large frame must remain bounded too, not just presenting a
+// cached frame. This matches the viewport from the Afterimage OOM report.
+func TestRedrawFloodDoesNotExhaustGuestMemory(t *testing.T) {
+	wasm := buildGuest(t, "../../sdk/examples/counter")
+	events := []abi.Event{{Kind: abi.KindResize, W: 179, H: 49}}
+	for range 3000 {
+		events = append(events, abi.Event{Kind: abi.KindKey, Key: abi.KeyArrowUp})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	var logs strings.Builder
+	lim := Limits{MemoryPages: 512, SessionTimeout: 3 * time.Minute}
+	if err := Run(ctx, wasm, lim, Capabilities{}, &eventListSource{events: events}, TextSink{W: io.Discard}, &logs); err != nil {
+		t.Fatalf("redraw flood: %v\n%s", err, logs.String())
 	}
 }
 

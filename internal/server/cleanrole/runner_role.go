@@ -78,7 +78,7 @@ func (c *runnerComponent) Start(ctx context.Context) error {
 	c.stopped = make(chan struct{})
 	broker := &runner.Broker{
 		WorkerPath: cfg.Runtime.RunnerWorker, Token: strings.TrimSpace(string(c.projection.Secret())),
-		MaxSessions: cfg.Limits.MaxSessions, WorkerUIDBase: uint32(cfg.Runtime.WorkerUIDBase), ScratchRoot: cfg.Runtime.RunnerScratchRoot,
+		MaxSessions: cfg.WorkerCapacity(), WorkerUIDBase: uint32(cfg.Runtime.WorkerUIDBase), ScratchRoot: cfg.Runtime.RunnerScratchRoot,
 		Logf: func(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format+"\n", args...) },
 	}
 	go func() {

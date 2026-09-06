@@ -89,7 +89,8 @@ type Source interface {
 	Next(ctx context.Context) (abi.Event, bool)
 }
 
-// Sink receives each structured frame the guest renders.
+// Sink receives each structured frame the guest renders. Cells are borrowed
+// until Present returns; sinks that retain a frame must copy its cells.
 type Sink interface {
 	Present(abi.Frame)
 }
@@ -114,6 +115,25 @@ func Run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, src So
 // WASM reuse generated code; the runtime (and thus the guest instance) is still
 // created fresh per call, preserving isolation between sessions.
 func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim Limits, caps Capabilities, src Source, sink Sink, logs io.Writer) error {
+	var cells []abi.Cell
+	var dedup frameDedup
+	return runGuestEncoded(ctx, cache, wasm, lim, caps, src, func(raw []byte) {
+		if dedup.suppressed(raw, sink) {
+			return
+		}
+		if f, decoded, err := abi.AppendDecodeFrame(cells, raw); err == nil {
+			cells = decoded
+			dedup.observe(raw)
+			sink.Present(f)
+		}
+	}, logs)
+}
+
+// runGuestEncoded delivers bounded guest bytes synchronously. present must not
+// retain them: they alias WASM memory, which the guest can change on return.
+// The in-process adapter above decodes them; workers forward them for parent
+// validation without allocating an intermediate cell grid or encoded copy.
+func runGuestEncoded(ctx context.Context, cache wazero.CompilationCache, wasm []byte, lim Limits, caps Capabilities, src Source, present func([]byte), logs io.Writer) error {
 	if err := validateLimits(lim); err != nil {
 		return err
 	}
@@ -126,6 +146,8 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 
 	inBucket := newTokenBucket(lim.MaxEventsPerSec)
 	outBucket := newTokenBucket(lim.MaxFramesPerSec)
+	// Event encoding is reused across receive calls.
+	var evBuf []byte
 
 	cfg := wazero.NewRuntimeConfig().
 		WithCloseOnContextDone(true).
@@ -147,6 +169,8 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 	// armed before _start runs and re-armed as each host call returns; firing
 	// terminates the session with ErrSessionDeadline.
 	sessionWd := &watchdog{timeout: effectiveSessionTimeout(lim), cancel: cancel}
+	defer sessionWd.disarm()
+	defer wd.disarm()
 
 	timers := caps.timers
 	if timers == nil {
@@ -183,7 +207,8 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 			if !inBucket.wait(ctx.Done()) {
 				return -1
 			}
-			b := abi.EncodeEvent(ev)
+			b := abi.AppendEvent(evBuf, ev)
+			evBuf = b
 			if int32(len(b)) > capBytes || !m.Memory().Write(uint32(ptr), b) {
 				return -1
 			}
@@ -201,15 +226,14 @@ func runGuest(ctx context.Context, cache wazero.CompilationCache, wasm []byte, l
 			if !outBucket.allow() {
 				return
 			}
+			if length < 0 || length > abi.MaxFrameBytes {
+				return
+			}
 			raw, ok := m.Memory().Read(uint32(ptr), uint32(length))
 			if !ok {
 				return
 			}
-			buf := make([]byte, len(raw))
-			copy(buf, raw)
-			if f, err := abi.DecodeFrame(buf); err == nil {
-				sink.Present(f)
-			}
+			present(raw)
 			sessionWd.arm() // the next guest stretch gets a fresh session budget
 		}).
 		Export("present")
@@ -275,19 +299,25 @@ type watchdog struct {
 	fired atomic.Bool
 }
 
+func (w *watchdog) fire() {
+	w.fired.Store(true)
+	w.cancel()
+}
+
+// arm (re)schedules fire after the full timeout. The timer object is reused:
+// arm/disarm run several times per frame, and under Go 1.23+ timer semantics
+// Reset on an AfterFunc timer is safe whether or not it already fired.
 func (w *watchdog) arm() {
 	if w.timeout <= 0 {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.timer != nil {
-		w.timer.Stop()
+	if w.timer == nil {
+		w.timer = time.AfterFunc(w.timeout, w.fire)
+		return
 	}
-	w.timer = time.AfterFunc(w.timeout, func() {
-		w.fired.Store(true)
-		w.cancel()
-	})
+	w.timer.Reset(w.timeout)
 }
 
 func (w *watchdog) disarm() {
@@ -295,6 +325,5 @@ func (w *watchdog) disarm() {
 	defer w.mu.Unlock()
 	if w.timer != nil {
 		w.timer.Stop()
-		w.timer = nil
 	}
 }

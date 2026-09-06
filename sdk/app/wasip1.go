@@ -10,7 +10,6 @@ import (
 
 	"github.com/Ceinl/plumtree/sdk/abi"
 	"github.com/Ceinl/plumtree/sdk/cli"
-	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
 // The clean app runtime uses the same bounded receive/present ABI as the
@@ -95,8 +94,7 @@ func runPlatform(rt *Runtime) error {
 			}
 		}
 
-		frame := converter.frame(rt.Frame(), rt.QuitRequested())
-		encoded = abi.AppendFrame(encoded[:0], frame)
+		encoded = rt.appendFrame(encoded[:0], &converter)
 		hostPresent(int32(uintptr(unsafe.Pointer(&encoded[0]))), int32(len(encoded)))
 		runtime.KeepAlive(encoded)
 		if rt.QuitRequested() {
@@ -141,55 +139,21 @@ func cleanEvent(event abi.Event) (Event, bool) {
 	}
 }
 
+// cleanKeys maps ABI key types to clean SDK keys. A package-level table: it is
+// read-only, so non-rune key events avoid rebuilding a map per keypress.
+var cleanKeys = map[abi.KeyType]Key{
+	abi.KeyArrowUp: KeyUp, abi.KeyArrowDown: KeyDown,
+	abi.KeyArrowLeft: KeyLeft, abi.KeyArrowRight: KeyRight,
+	abi.KeyEnter: KeyEnter, abi.KeyEscape: KeyEscape, abi.KeyTab: KeyTab,
+	abi.KeyBackspace: KeyBackspace, abi.KeyDelete: KeyDelete,
+	abi.KeyHome: KeyHome, abi.KeyEnd: KeyEnd,
+	abi.KeyPageUp: KeyPageUp, abi.KeyPageDown: KeyPageDown,
+	abi.KeyCtrlC: KeyCtrlC,
+}
+
 func cleanKey(key abi.KeyType) (Key, bool) {
-	keys := map[abi.KeyType]Key{
-		abi.KeyArrowUp: KeyUp, abi.KeyArrowDown: KeyDown,
-		abi.KeyArrowLeft: KeyLeft, abi.KeyArrowRight: KeyRight,
-		abi.KeyEnter: KeyEnter, abi.KeyEscape: KeyEscape, abi.KeyTab: KeyTab,
-		abi.KeyBackspace: KeyBackspace, abi.KeyDelete: KeyDelete,
-		abi.KeyHome: KeyHome, abi.KeyEnd: KeyEnd,
-		abi.KeyPageUp: KeyPageUp, abi.KeyPageDown: KeyPageDown,
-		abi.KeyCtrlC: KeyCtrlC,
-	}
-	value, ok := keys[key]
+	value, ok := cleanKeys[key]
 	return value, ok
 }
 
 type TimerEvent struct{ ID uint32 }
-
-type cleanFrameConverter struct{ cells []abi.Cell }
-
-func (converter *cleanFrameConverter) frame(frame ui.Frame, quit bool) abi.Frame {
-	w, h := frame.Width(), frame.Height()
-	n := w * h
-	if cap(converter.cells) < n {
-		converter.cells = make([]abi.Cell, n)
-	} else {
-		converter.cells = converter.cells[:n]
-	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			cell, ok := frame.Cell(x, y)
-			if !ok {
-				continue
-			}
-			fg := cell.Style.Foreground
-			bg := cell.Style.Background
-			if !cell.Style.HasForeground {
-				fg = ui.RGB(200, 200, 200)
-			}
-			if !cell.Style.HasBackground {
-				bg = ui.RGB(25, 23, 29)
-			}
-			var decor uint8
-			if cell.Style.Decorations&ui.Bold != 0 {
-				decor |= abi.DecorBold
-			}
-			if cell.Style.Decorations&ui.Underline != 0 {
-				decor |= abi.DecorUnderline
-			}
-			converter.cells[y*w+x] = abi.Cell{Ch: cell.Rune, Fg: abi.RGB{R: fg.R, G: fg.G, B: fg.B}, Bg: abi.RGB{R: bg.R, G: bg.G, B: bg.B}, Decor: decor}
-		}
-	}
-	return abi.Frame{W: w, H: h, Quit: quit, Cells: converter.cells}
-}

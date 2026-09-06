@@ -49,6 +49,13 @@ func (b *tokenBucket) allow() bool {
 	return false
 }
 
+// waitTimerPool recycles the timers used to pace blocked waiters. A waiter
+// typically sleeps once before a token frees up; pooling removes the timer
+// allocation from that path. Safe under Go 1.23+ timer semantics: timer
+// channels are unbuffered and Stop/Reset drop stale firings, so a fired timer
+// can be reused without draining.
+var waitTimerPool = sync.Pool{New: func() any { return time.NewTimer(time.Hour) }}
+
 // wait blocks until a token is available or done is closed, returning true once
 // a token was consumed and false if done fired first. A non-limiting bucket
 // returns immediately.
@@ -56,6 +63,8 @@ func (b *tokenBucket) wait(done <-chan struct{}) bool {
 	if b.rate <= 0 {
 		return true
 	}
+	t := waitTimerPool.Get().(*time.Timer)
+	defer waitTimerPool.Put(t)
 	for {
 		b.mu.Lock()
 		b.refillLocked()
@@ -71,7 +80,7 @@ func (b *tokenBucket) wait(done <-chan struct{}) bool {
 		if delay <= 0 {
 			delay = time.Millisecond
 		}
-		t := time.NewTimer(delay)
+		t.Reset(delay)
 		select {
 		case <-done:
 			t.Stop()

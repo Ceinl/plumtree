@@ -165,10 +165,11 @@ type Runtime struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	width  int
-	height int
-	frame  ui.Frame
-	focus  *ui.Focus
+	width    int
+	height   int
+	frame    ui.Frame
+	renderer ui.Renderer
+	focus    *ui.Focus
 
 	initialized bool
 	stopped     bool
@@ -410,7 +411,7 @@ func (r *Runtime) renderLocked() {
 		_ = r.failLocked(ErrInvalidModel)
 		return
 	}
-	r.frame = ui.Render(node, r.width, r.height)
+	r.frame = r.renderer.Render(node, r.width, r.height)
 	ui.ReconcileFocus(r.frame.Root(), r.focus)
 }
 

@@ -11,21 +11,34 @@ const (
 	MaxMemoryBytes int64 = 8 << 30
 )
 
-// CapacityFromMemory clamps host/cgroup memory to the supported range and
-// derives bounded role capacities. The formulas are deterministic and do not
-// inspect process-global flags or environment variables.
+// CapacityFromMemory reserves half the memory for the host and compilation.
+// The remaining half allows 32 MiB of guest memory and 32 MiB of host state
+// per session. MaterializeCapacity adjusts this for larger guest limits.
 func CapacityFromMemory(memoryBytes int64) Capacity {
-	if memoryBytes < MinMemoryBytes {
-		memoryBytes = MinMemoryBytes
+	return capacityForGuest(memoryBytes, 32<<20)
+}
+
+func capacityForGuest(memoryBytes, guestBytes int64) Capacity {
+	memoryBytes = min(memoryBytes, MaxMemoryBytes)
+	sessions := max(int(memoryBytes/2/(guestBytes+32<<20)), 1)
+	return Capacity{MaxSessions: sessions, MaxWorkers: sessions, MaxBuilds: max((sessions+3)/4, 1)}
+}
+
+// SessionCapacity applies the resource ceiling without changing the configured
+// policy limit. Zero means unlimited only when neither limit is set.
+func (c Config) SessionCapacity() int {
+	return boundedCapacity(c.Limits.MaxSessions, c.Resources.Capacity.MaxSessions)
+}
+
+func (c Config) WorkerCapacity() int {
+	return boundedCapacity(c.SessionCapacity(), c.Resources.Capacity.MaxWorkers)
+}
+
+func boundedCapacity(policy, capacity int) int {
+	if capacity > 0 && (policy == 0 || capacity < policy) {
+		return capacity
 	}
-	if memoryBytes > MaxMemoryBytes {
-		memoryBytes = MaxMemoryBytes
-	}
-	units := memoryBytes / (128 << 20)
-	if units < 4 {
-		units = 4
-	}
-	return Capacity{MaxSessions: int(units * 4), MaxWorkers: int(units), MaxBuilds: int((units + 3) / 4)}
+	return policy
 }
 
 // MaterializeCapacity resolves adaptive capacity from the cgroup limit and,
@@ -46,7 +59,12 @@ func MaterializeCapacity(c Config, read func(string) ([]byte, error), hostMemory
 		return c, fmt.Errorf("%w: unable to determine memory limit", ErrInvalid)
 	}
 	c.Resources.MemoryLimitBytes = memory
-	c.Resources.Capacity = CapacityFromMemory(memory)
+	memory = min(memory, MaxMemoryBytes)
+	guestBytes := int64(c.Limits.MemoryPages) * 65536
+	if memory/2 < guestBytes+32<<20 {
+		return c, fmt.Errorf("%w: memory budget cannot fit one guest with host headroom", ErrInvalid)
+	}
+	c.Resources.Capacity = capacityForGuest(memory, guestBytes)
 	return c, nil
 }
 

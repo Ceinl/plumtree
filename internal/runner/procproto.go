@@ -60,8 +60,18 @@ func readMsg(r io.Reader) (op, []byte, error) {
 	return protocol.Read(r)
 }
 
-func readMsgBounded(r io.Reader, maxFor func(op) uint32) (op, []byte, error) {
-	return protocol.ReadBounded(r, maxFor)
+// readMsgInto reads one frame into buf, reusing its storage; the returned
+// payload aliases buf and stays valid only until the next read on it.
+func readMsgInto(r io.Reader, buf []byte) (op, []byte, error) {
+	return protocol.AppendRead(r, buf)
+}
+
+// readMsgBoundedInto is the parent-side read: bounded per op, payload appended
+// into the session's reusable buffer.
+func readMsgBoundedInto(sess *procSession, r io.Reader, maxFor func(op) uint32) (op, []byte, error) {
+	o, payload, err := protocol.AppendReadBounded(r, sess.buf, maxFor)
+	sess.buf = payload
+	return o, payload, err
 }
 
 // Capability-presence bits in the start payload. The parent sets a bit for each
