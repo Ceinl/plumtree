@@ -80,7 +80,9 @@ type Runnable struct {
 	OwnerID        string
 	DeployID       string
 	ArtifactDigest string
-	// AppType is "tui" (default) or "cli"; it selects the runner entry point.
+	// AppType is "tui" (default), "cli", or "vm"; it selects the runner entry
+	// point. "vm" currently executes through the finite CLI path on the
+	// WASM-backed stub; the hypervisor backend is deferred.
 	AppType string
 	WASM    []byte
 }

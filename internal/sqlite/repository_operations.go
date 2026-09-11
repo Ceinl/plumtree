@@ -91,7 +91,7 @@ func (r *Repository) CreateApp(ctx context.Context, input AppInput) (App, error)
 	if err := validateID(input.Name); err != nil {
 		return App{}, err
 	}
-	if input.Kind != "tui" && input.Kind != "cli" {
+	if input.Kind != "tui" && input.Kind != "cli" && input.Kind != "vm" {
 		return App{}, fmt.Errorf("%w: app kind", ErrInvalid)
 	}
 	if input.AccessMode != "public" && input.AccessMode != "restricted" {

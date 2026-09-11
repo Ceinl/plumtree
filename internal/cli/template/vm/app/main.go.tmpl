@@ -1,0 +1,36 @@
+// Command {{.Name}} is a Plumtree VM app.
+//
+// MVP stub: VM execution is WASM-backed today through the existing runner, so
+// this project builds, dev-runs, deploys, and serves like a finite CLI app.
+// The hypervisor/microVM backend is deferred; Dockerfile and vm.json describe
+// the future packaging and are ignored by the server for now.
+package main
+
+import (
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/cli"
+	"github.com/Ceinl/plumtree/sdk/ui"
+)
+
+func main() {
+	commands := cli.Root("vm app entrypoint").WithArgs(cli.AnyArgs()).WithHandler(
+		func(_ cli.Context, args []string) (cli.Output, error) {
+			name := "status"
+			if len(args) > 0 {
+				name = args[0]
+			}
+			switch name {
+			case "status":
+				return cli.Value("{{.Name}}: vm ready (wasm-backed stub; hypervisor deferred)"), nil
+			default:
+				return cli.Value("Hello " + name), nil
+			}
+		},
+	)
+	app.Run(&model{}, app.WithCommands(commands))
+}
+
+type model struct{}
+
+func (*model) Update(app.Event) app.Command { return app.Noop() }
+func (*model) View() ui.Node                { return ui.Text("{{.Name}}") }

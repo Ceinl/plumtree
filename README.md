@@ -142,7 +142,7 @@ identities the X and O seats; everyone else watches until a seat is released.
 needed to *run* apps (that's `ssh`).
 
 ```
-pt new <name> --tui|--cli --access public|restricted  # scaffold the app shape
+pt new <name> --tui|--cli|--vm --access public|restricted  # scaffold the app shape
 pt new --cli --access restricted <name>                # flags can also come first
 pt dev [args...]            # compile and run; TUI apps use the current terminal
 pt dev --headless           # run a deterministic scripted TUI session

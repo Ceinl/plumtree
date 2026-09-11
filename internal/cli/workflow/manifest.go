@@ -34,8 +34,8 @@ func (m Manifest) Validate() error {
 	if err := scaffold.ValidateName(m.Name); err != nil {
 		return fmt.Errorf("%w: %v", ErrManifest, err)
 	}
-	if m.Type != string(scaffold.TUI) && m.Type != string(scaffold.CLI) {
-		return fmt.Errorf("%w: type must be tui or cli", ErrManifest)
+	if m.Type != string(scaffold.TUI) && m.Type != string(scaffold.CLI) && m.Type != string(scaffold.VM) {
+		return fmt.Errorf("%w: type must be tui, cli or vm", ErrManifest)
 	}
 	if m.Access != "public" && m.Access != "restricted" {
 		return fmt.Errorf("%w: access must be public or restricted", ErrManifest)
@@ -71,8 +71,8 @@ func ReadManifest(project string) (Manifest, error) {
 // NewScaffold requires the app mode explicitly and writes the clean manifest
 // with an explicit access policy. There is no implicit target or history file.
 func NewScaffold(parent, name string, kind scaffold.Kind, access string) (string, error) {
-	if kind != scaffold.TUI && kind != scaffold.CLI {
-		return "", fmt.Errorf("%w: choose tui or cli explicitly", ErrManifest)
+	if kind != scaffold.TUI && kind != scaffold.CLI && kind != scaffold.VM {
+		return "", fmt.Errorf("%w: choose tui, cli or vm explicitly", ErrManifest)
 	}
 	if access != "public" && access != "restricted" {
 		return "", fmt.Errorf("%w: choose public or restricted access explicitly", ErrManifest)
