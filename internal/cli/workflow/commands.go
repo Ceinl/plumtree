@@ -124,6 +124,7 @@ func (r Runner) Run(args []string) error {
 func (r Runner) newProject(args []string) error {
 	fs := flag.NewFlagSet("pt new", flag.ContinueOnError)
 	tui, cli := fs.Bool("tui", false, "scaffold an interactive TUI app"), fs.Bool("cli", false, "scaffold a finite CLI app")
+	vm := fs.Bool("vm", false, "scaffold a VM app (wasm-backed stub; hypervisor deferred)")
 	access := fs.String("access", "", "required: public or restricted")
 	ordered, err := flagsBeforePositionals(args, map[string]bool{"--access": true, "-access": true})
 	if err != nil {
@@ -132,12 +133,21 @@ func (r Runner) newProject(args []string) error {
 	if err := fs.Parse(ordered); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 || (*tui == *cli) || *access == "" {
-		return errors.New("usage: pt new NAME --tui|--cli --access public|restricted")
+	selected := 0
+	for _, flag := range []bool{*tui, *cli, *vm} {
+		if flag {
+			selected++
+		}
+	}
+	if fs.NArg() != 1 || selected != 1 || *access == "" {
+		return errors.New("usage: pt new NAME --tui|--cli|--vm --access public|restricted")
 	}
 	kind := scaffold.TUI
 	if *cli {
 		kind = scaffold.CLI
+	}
+	if *vm {
+		kind = scaffold.VM
 	}
 	project, err := NewScaffold(".", fs.Arg(0), kind, *access)
 	if err != nil {

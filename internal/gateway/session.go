@@ -31,6 +31,31 @@ type windowChange struct {
 
 type execRequest struct{ Command string }
 
+type envRequest struct {
+	Name  string
+	Value string
+}
+
+// leafChannel carries the client's channel requests into session startup: PTY
+// state for interactive shells, the environment, and the shell/exec command.
+// The VM bridge needs the raw command and PTY modes; the WASM path keeps
+// using only the parsed args.
+type leafChannel struct {
+	pty   bool
+	term  string
+	modes string
+	env   map[string]string
+	cmd   string
+	exec  bool
+}
+
+const (
+	maxLeafEnvVars   = 32
+	maxLeafEnvName   = 128
+	maxLeafEnvValue  = 4096
+	maxLeafRawCmdLen = 64 * 1024
+)
+
 // sendExitStatus reports a terminal session result before the channel closes.
 // Early rejects must report failure too, so clients scripting over SSH see a
 // nonzero status instead of a silent success default.
@@ -46,6 +71,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 		mu      sync.Mutex
 		w, h    = 80, 24
 		started bool
+		leaf    leafChannel
 	)
 	winch := make(chan os.Signal, 1)
 	size := func() (int, int) { mu.Lock(); defer mu.Unlock(); return w, h }
@@ -60,6 +86,7 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			}
 			mu.Lock()
 			w, h = int(p.Columns), int(p.Rows)
+			leaf.pty, leaf.term, leaf.modes = true, p.Term, p.Modes
 			mu.Unlock()
 			req.Reply(true, nil)
 		case "window-change":
@@ -81,9 +108,10 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			req.Reply(true, nil)
 		case "shell", "exec":
 			var args []string
+			rawCmd := ""
 			if req.Type == "exec" {
 				var payload execRequest
-				if len(req.Payload) > 4+64*1024 || ssh.Unmarshal(req.Payload, &payload) != nil {
+				if len(req.Payload) > 4+maxLeafRawCmdLen || ssh.Unmarshal(req.Payload, &payload) != nil {
 					req.Reply(false, nil)
 					continue
 				}
@@ -97,14 +125,40 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 					cancel()
 					return
 				}
+				rawCmd = payload.Command
 			}
 			req.Reply(true, nil)
 			if started {
 				continue
 			}
 			started = true
-			go s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, args)
+			mu.Lock()
+			leaf.cmd, leaf.exec = rawCmd, req.Type == "exec"
+			snapshot := leaf
+			if leaf.env != nil {
+				envCopy := make(map[string]string, len(leaf.env))
+				for name, value := range leaf.env {
+					envCopy[name] = value
+				}
+				snapshot.env = envCopy
+			}
+			mu.Unlock()
+			go s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, args, snapshot)
 		case "env":
+			var env envRequest
+			if len(req.Payload) > 4+maxLeafEnvName+4+maxLeafEnvValue || ssh.Unmarshal(req.Payload, &env) != nil ||
+				env.Name == "" || len(env.Name) > maxLeafEnvName || len(env.Value) > maxLeafEnvValue {
+				req.Reply(false, nil)
+				continue
+			}
+			mu.Lock()
+			if len(leaf.env) < maxLeafEnvVars {
+				if leaf.env == nil {
+					leaf.env = map[string]string{}
+				}
+				leaf.env[env.Name] = env.Value
+			}
+			mu.Unlock()
 			req.Reply(true, nil)
 		default:
 			req.Reply(false, nil)
@@ -147,10 +201,10 @@ func validateRequestDimensions(columns, rows uint32) error {
 }
 
 func (s *Server) startSession(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal) {
-	s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, nil)
+	s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, nil, leafChannel{})
 }
 
-func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal, args []string) {
+func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc, ch ssh.Channel, handle string, identity runner.Identity, size func() (int, int), winch chan os.Signal, args []string, leaf leafChannel) {
 	if !s.acquireSlot() {
 		s.logf("reject %q: runner at capacity (%d sessions)", handle, s.maxConcurrentSessions)
 		fmt.Fprintf(ch.Stderr(), "the runner is at capacity; try again shortly\r\n")
@@ -208,7 +262,17 @@ func (s *Server) startSessionArgs(ctx context.Context, cancel context.CancelFunc
 	if capsErr != nil {
 		s.logf("ERROR: hosted capabilities degraded for app %q: %v; session runs fail-closed", run.AppName, capsErr)
 	}
-	log, truncated, exitStatus := s.runSessionArgsStatus(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
+	var log string
+	var truncated bool
+	var exitStatus uint32
+	if run.AppType == "vm" {
+		// Persistent guest VMs bypass the WASM sandbox entirely: the leaf
+		// channel is bridged to the guest's SSH service. Accounting,
+		// logging, and exit-status reporting stay uniform with WASM apps.
+		log, truncated, exitStatus = s.runVMSession(ctx, ch, run, leaf, size, winch)
+	} else {
+		log, truncated, exitStatus = s.runSessionArgsStatus(ctx, ch, run.WASM, run.AppType, caps, size, winch, args)
+	}
 	sessionDuration := time.Since(startedAt)
 	// Teardown must outlive session cancellation (kill switch, disconnect):
 	// detach the accounting context so logs and slot release still land.
@@ -243,7 +307,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, wasm []byte
 
 func (s *Server) runSessionArgsStatus(ctx context.Context, ch ssh.Channel, wasm []byte, appType string, caps runner.Capabilities, size func() (int, int), winch chan os.Signal, args []string) (string, bool, uint32) {
 	lim := s.limits
-	if appType == "cli" || len(args) > 0 {
+	if appType == "cli" || appType == "vm" || len(args) > 0 {
 		logs := newCapWriter(maxSessionLogBytes)
 		output := io.MultiWriter(ch, logs)
 		var err error

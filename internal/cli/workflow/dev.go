@@ -88,7 +88,7 @@ func (r Runner) devProject(args []string) error {
 	if *sshMode {
 		return r.runSSH(ctx, result.Artifact.WASM, limits, caps, manifest, *sshAddr, *allowNonloopback, *maxFPS, *sshHost, *noSSHConfig, out, errOut)
 	}
-	if manifest.Type == string(scaffold.CLI) {
+	if manifest.Type == string(scaffold.CLI) || manifest.Type == string(scaffold.VM) {
 		err = runner.RunCLIWithStreams(ctx, result.Artifact.WASM, limits, caps, fs.Args(), runner.CLIStreams{Stdin: r.In, Stdout: out, Stderr: errOut})
 		writeDevFinish(out, errOut, caps, nil)
 	} else if *headless {
