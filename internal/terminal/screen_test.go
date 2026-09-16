@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -77,6 +78,65 @@ func TestFlushOmitsRepeatedStylesAndAdjacentASCIICursors(t *testing.T) {
 	s.Flush()
 	if !strings.Contains(w.String(), "\x1b[1;2H") {
 		t.Fatalf("missing explicit position after Unicode: %q", w.String())
+	}
+}
+
+func TestFlushRetriesDirtyRowsAfterShortWrite(t *testing.T) {
+	var out bytes.Buffer
+	s := NewScreenWithOutput(8, 3, &out)
+	s.Flush()
+	out.Reset()
+	for _, y := range []int{0, 2} {
+		s.Set(7, y, abi.Cell{Ch: 'X'})
+	}
+	s.out = shortFrameWriter{}
+	s.Flush()
+	if s.Healthy() {
+		t.Fatal("short write reported healthy")
+	}
+	for _, y := range []int{0, 2} {
+		if s.old[y][7].Ch != ' ' {
+			t.Fatal("failed write committed a dirty row")
+		}
+	}
+	s.out = &out
+	s.Flush()
+	if !s.Healthy() || strings.Count(out.String(), "X") != 2 {
+		t.Fatalf("retry did not repaint both dirty rows: %q", out.String())
+	}
+	out.Reset()
+	s.Flush()
+	if out.Len() != 0 {
+		t.Fatal("successful retry did not commit dirty rows")
+	}
+}
+
+type shortFrameWriter struct{}
+
+func (shortFrameWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
+
+func TestFlushLargeCoordinates(t *testing.T) {
+	for _, size := range [][2]int{{255, 1}, {256, 1}, {MaxWidth, 1}, {1, 255}, {1, 256}, {1, MaxHeight}, {MaxWidth, MaxHeight}} {
+		w, h := size[0], size[1]
+		t.Run(fmt.Sprintf("%dx%d", w, h), func(t *testing.T) {
+			var out bytes.Buffer
+			s := NewScreenWithOutput(1, 1, &out)
+			s.Flush()
+			s.Resize(w, h)
+			s.Flush()
+			out.Reset()
+			s.Set(w-1, h-1, abi.Cell{Ch: 'X'})
+			s.Flush()
+			want := fmt.Sprintf("\x1b[%d;%dH", h, w)
+			if !strings.HasPrefix(out.String(), want) || !strings.HasSuffix(out.String(), "X") {
+				t.Fatalf("output = %q, want cursor %q followed by styled X", out.String(), want)
+			}
+			out.Reset()
+			s.Flush()
+			if out.Len() != 0 {
+				t.Fatalf("unchanged screen produced output: %q", out.String())
+			}
+		})
 	}
 }
 
