@@ -134,16 +134,16 @@ func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan 
 			started = true
 			mu.Lock()
 			leaf.cmd, leaf.exec = rawCmd, req.Type == "exec"
-			snapshot := leaf
+			sessionLeaf := leaf
 			if leaf.env != nil {
 				envCopy := make(map[string]string, len(leaf.env))
 				for name, value := range leaf.env {
 					envCopy[name] = value
 				}
-				snapshot.env = envCopy
+				sessionLeaf.env = envCopy
 			}
 			mu.Unlock()
-			go s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, args, snapshot)
+			go s.startSessionArgs(ctx, cancel, ch, handle, identity, size, winch, args, sessionLeaf)
 		case "env":
 			var env envRequest
 			if len(req.Payload) > 4+maxLeafEnvName+4+maxLeafEnvValue || ssh.Unmarshal(req.Payload, &env) != nil ||
