@@ -70,8 +70,12 @@ type Config struct {
 	// Zero selects the secure defaults; a negative value disables that limit.
 	MaxConnections      int
 	MaxConnectionsPerIP int
-	Logf                func(format string, args ...any)
-	Ready               func(net.Addr)
+	// VMGuestFile is the operator-managed JSON mapping of app IDs to
+	// persistent guest VMs (see VMGuest). It is re-read on every VM session.
+	// Empty means no VM backend is configured; vm-type sessions fail closed.
+	VMGuestFile string
+	Logf        func(format string, args ...any)
+	Ready       func(net.Addr)
 }
 
 // Server serves deployed apps over SSH. Construct it with New so every
@@ -94,6 +98,8 @@ type Server struct {
 	hostCommandAllowlist []string
 
 	maxConcurrentSessions int
+
+	vmGuestFile string
 
 	// handshakeTimeout and idleTimeout hold the resolved deadlines: zero
 	// selected the secure default in New, a negative value disabled the
@@ -162,6 +168,7 @@ func New(c Config) (*Server, error) {
 		enableHostCommands:    c.EnableHostCommands,
 		hostCommandAllowlist:  append([]string(nil), c.HostCommandAllowlist...),
 		maxConcurrentSessions: c.MaxConcurrentSessions,
+		vmGuestFile:           c.VMGuestFile,
 		handshakeTimeout:      effectiveDuration(c.HandshakeTimeout, DefaultHandshakeTimeout),
 		idleTimeout:           effectiveDuration(c.IdleTimeout, DefaultIdleTimeout),
 		logger:                c.Logf,

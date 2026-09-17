@@ -29,6 +29,7 @@ type Kind string
 const (
 	TUI Kind = "tui"
 	CLI Kind = "cli"
+	VM  Kind = "vm"
 )
 
 // nameRE is the strict app-name grammar: lowercase alphanumerics and single
@@ -57,8 +58,8 @@ func NewWithAccess(parentDir, name string, kind Kind, access string) (string, er
 	if err := ValidateName(name); err != nil {
 		return "", err
 	}
-	if kind != TUI && kind != CLI {
-		return "", fmt.Errorf("unknown app kind %q (want tui or cli)", kind)
+	if kind != TUI && kind != CLI && kind != VM {
+		return "", fmt.Errorf("unknown app kind %q (want tui, cli or vm)", kind)
 	}
 	if access != "public" && access != "restricted" {
 		return "", fmt.Errorf("unknown access %q (want public or restricted)", access)
@@ -106,6 +107,10 @@ func renderTemplate(name string, kind Kind, access string) (map[string]string, e
 	if kind == CLI {
 		data.RunCommand = "pt dev Alice"
 		data.CheckCommand = "pt dev Alice"
+	}
+	if kind == VM {
+		data.RunCommand = "pt dev status"
+		data.CheckCommand = "pt dev status"
 	}
 
 	files := make(map[string]string)

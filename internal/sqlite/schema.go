@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 // schemaStatements is the clean-break v1 state schema. It is deliberately
 // kept as ordered statements so initialization can roll back as one unit and
@@ -98,7 +98,7 @@ var schemaStatements = []string{
   id TEXT PRIMARY KEY,
   author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('tui','cli')),
+  kind TEXT NOT NULL CHECK (kind IN ('tui','cli','vm')),
   access_mode TEXT NOT NULL CHECK (access_mode IN ('public','restricted')),
   suspended INTEGER NOT NULL CHECK (suspended IN (0,1)),
   created_at_ns INTEGER NOT NULL,
@@ -263,7 +263,7 @@ var schemaStatements = []string{
  ON audit_events(scope_author_id, occurred_at_ns DESC)`,
 	`CREATE INDEX IF NOT EXISTS audit_events_expiry_idx
  ON audit_events(occurred_at_ns)`,
-	`PRAGMA user_version = 1`,
+	`PRAGMA user_version = 2`,
 }
 
 // EnsureSchema creates the selected repository schema.
@@ -281,6 +281,11 @@ func EnsureSchema(ctx context.Context, db *DB) error {
 	if version > schemaVersion {
 		return fmt.Errorf("sqlite: unsupported schema version %d", version)
 	}
+	if version == 1 {
+		if err := migrateV1ToV2(ctx, db); err != nil {
+			return err
+		}
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("sqlite: begin schema transaction: %w", err)
@@ -294,6 +299,50 @@ func EnsureSchema(ctx context.Context, db *DB) error {
 	if err := tx.Commit(); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("sqlite: commit schema: %w", err)
+	}
+	return nil
+}
+
+// migrateV1ToV2 widens apps.kind to include 'vm'. SQLite cannot alter a CHECK
+// constraint in place, so the table is rebuilt. Foreign keys are disabled
+// during the rebuild and re-enabled after; existing rows are preserved.
+func migrateV1ToV2(ctx context.Context, db *DB) error {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("sqlite: disable foreign keys for migration: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+	}()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite: begin vm-kind migration: %w", err)
+	}
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS apps_new (
+  id TEXT PRIMARY KEY,
+  author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('tui','cli','vm')),
+  access_mode TEXT NOT NULL CHECK (access_mode IN ('public','restricted')),
+  suspended INTEGER NOT NULL CHECK (suspended IN (0,1)),
+  created_at_ns INTEGER NOT NULL,
+  updated_at_ns INTEGER NOT NULL,
+  UNIQUE (author_id, name),
+  UNIQUE (id, author_id)
+) STRICT`,
+		`INSERT OR IGNORE INTO apps_new(id,author_id,name,kind,access_mode,suspended,created_at_ns,updated_at_ns) SELECT id,author_id,name,kind,access_mode,suspended,created_at_ns,updated_at_ns FROM apps`,
+		`DROP TABLE IF EXISTS apps`,
+		`ALTER TABLE apps_new RENAME TO apps`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("sqlite: migrate vm-kind: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("sqlite: commit vm-kind migration: %w", err)
 	}
 	return nil
 }

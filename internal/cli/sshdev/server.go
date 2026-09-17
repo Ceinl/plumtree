@@ -35,7 +35,7 @@ type Server struct {
 	Runner  *runner.Runner
 	Limits  runner.Limits
 	Caps    runner.Capabilities // host capabilities shared across all sessions
-	AppType string              // "tui" or "cli"
+	AppType string              // "tui", "cli" or "vm" ("vm" runs the finite CLI path)
 	AppName string
 	MaxFPS  int
 	// AllowNonloopback disables the loopback-only listen guard. Dev SSH
@@ -215,7 +215,7 @@ func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func()
 	// guest-written goodbye message session-local so concurrent clients cannot
 	// race or inherit one another's message.
 	caps.Goodbye = new(string)
-	if s.AppType == "cli" || len(args) > 0 {
+	if s.AppType == "cli" || s.AppType == "vm" || len(args) > 0 {
 		err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch)
 		if err != nil {
 			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)

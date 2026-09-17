@@ -126,7 +126,7 @@ type DeployResult struct {
 }
 
 func (a *API) Deploy(ctx context.Context, input ArtifactRequest, previous string) (DeployResult, error) {
-	if len(input.WASM) == 0 || input.Name == "" || (input.Type != "tui" && input.Type != "cli") || (input.Access != "public" && input.Access != "restricted") {
+	if len(input.WASM) == 0 || input.Name == "" || (input.Type != "tui" && input.Type != "cli" && input.Type != "vm") || (input.Access != "public" && input.Access != "restricted") {
 		return DeployResult{}, fmt.Errorf("%w: invalid artifact request", ErrBuild)
 	}
 	digest := input.SourceDigest

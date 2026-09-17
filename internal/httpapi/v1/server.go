@@ -579,7 +579,7 @@ func (s *Server) readMultipart(w http.ResponseWriter, r *http.Request) (deployme
 }
 
 func validateMetadata(m deploymentMetadata, abiVersion uint8) error {
-	if m.AppName == "" || len(m.AppName) > 128 || strings.ContainsAny(m.AppName, "/\\ \t\r\n") || (m.AppType != "tui" && m.AppType != "cli") || (m.AccessMode != "public" && m.AccessMode != "restricted") || !validDigest(m.SourceDigest) {
+	if m.AppName == "" || len(m.AppName) > 128 || strings.ContainsAny(m.AppName, "/\\ \t\r\n") || (m.AppType != "tui" && m.AppType != "cli" && m.AppType != "vm") || (m.AccessMode != "public" && m.AccessMode != "restricted") || !validDigest(m.SourceDigest) {
 		return errMetadata
 	}
 	if m.ABIVersion != abiVersion {

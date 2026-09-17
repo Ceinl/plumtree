@@ -125,7 +125,7 @@ func (r *Repository) DeployApplication(ctx context.Context, input ApplicationDep
 	if err := validateID(input.AppName); err != nil || input.AppName == "" {
 		return ApplicationDeployment{}, fmt.Errorf("%w: app name", ErrInvalid)
 	}
-	if input.Kind != "tui" && input.Kind != "cli" {
+	if input.Kind != "tui" && input.Kind != "cli" && input.Kind != "vm" {
 		return ApplicationDeployment{}, fmt.Errorf("%w: app kind", ErrInvalid)
 	}
 	if input.AccessMode != "public" && input.AccessMode != "restricted" {

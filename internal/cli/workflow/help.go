@@ -8,7 +8,7 @@ import (
 const rootHelp = `pt — Plumtree author CLI
 
 Usage:
-  pt new NAME --tui|--cli --access public|restricted
+  pt new NAME --tui|--cli|--vm --access public|restricted
   pt dev [flags] [--] [args...]
   pt build [--json]
   pt deploy [--server NAME] [--yes] [--json]
@@ -42,8 +42,11 @@ Flags:
 `
 
 const newHelp = `Usage:
-  pt new NAME --tui|--cli --access public|restricted
-  pt new --tui|--cli --access public|restricted NAME
+  pt new NAME --tui|--cli|--vm --access public|restricted
+  pt new --tui|--cli|--vm --access public|restricted NAME
+
+VM apps scaffold a wasm-backed stub (app/main.go) plus a deferred
+Dockerfile/vm.json for the future hypervisor backend.
 `
 
 func isHelp(value string) bool {

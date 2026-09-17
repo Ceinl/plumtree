@@ -984,14 +984,35 @@ func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken
 	idleTimeout, _ := time.ParseDuration(cfg.Limits.IdleTimeout)
 	allowlist := parseHostCommandAllowlist(cfg.Runtime.HostCommandAllowlist)
 	backend := gateway.NewSQLiteBackend(repo)
+	guestFile := vmGuestFile(cfg)
+	if guestFile == "" {
+		logf("plumtree: vm guest mapping disabled (no database directory)")
+	} else if _, err := os.Stat(guestFile); err != nil {
+		logf("plumtree: vm guest mapping file %s not present: vm sessions will fail closed", guestFile)
+	} else {
+		logf("plumtree: vm guest mapping file %s", guestFile)
+	}
 	return gateway.New(gateway.Config{
 		Backend: backend, Suspensions: backend, Runner: runner.New(), Limits: limits,
 		MaxFPS: cfg.Limits.MaxFPS, MaxConcurrentSessions: cfg.SessionCapacity(),
 		HandshakeTimeout: handshakeTimeout, IdleTimeout: idleTimeout,
 		MaxConnections: cfg.Limits.MaxConnections, MaxConnectionsPerIP: cfg.Limits.MaxConnectionsPerIP,
 		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)),
-		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist, Logf: logf,
+		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist,
+		VMGuestFile: guestFile, Logf: logf,
 	})
+}
+
+// vmGuestFile locates the operator-managed VM guest mapping next to the
+// repository database (e.g. <dataDir>/vmguests.json). The gateway re-reads it
+// on every VM session; a missing file simply leaves the VM backend
+// unconfigured.
+func vmGuestFile(cfg serverconfig.Config) string {
+	dir := filepath.Dir(cfg.Storage.DatabasePath)
+	if dir == "" || dir == "." {
+		return ""
+	}
+	return filepath.Join(dir, "vmguests.json")
 }
 
 // parseHostCommandAllowlist splits the operator's CSV allowlist, trimming
