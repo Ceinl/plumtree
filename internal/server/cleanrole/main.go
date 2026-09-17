@@ -30,6 +30,7 @@ import (
 	"github.com/Ceinl/plumtree/internal/sqlite"
 	"github.com/Ceinl/plumtree/internal/sshconn"
 	statebundle "github.com/Ceinl/plumtree/internal/state"
+	plumterminal "github.com/Ceinl/plumtree/internal/terminal"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
 )
@@ -44,6 +45,10 @@ type ResolvedServe struct {
 	ConfigPath     string
 	ProductVersion string
 	ServerID       string
+	// ConfigCreated reports that the config file did not exist and was
+	// generated from defaults. Callers surface it so a typo'd --config path
+	// cannot silently start a fresh server instead of the intended one.
+	ConfigCreated bool
 }
 
 // Run is the process adapter used by cmd/plumtree.
@@ -81,6 +86,9 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 	if err != nil {
 		return err
 	}
+	if resolved.ConfigCreated {
+		_, _ = fmt.Fprintf(errOut, "warning: no config found at %s; created a default one\n", resolved.ConfigPath)
+	}
 	for _, diagnostic := range serverconfig.Diagnostics(resolved.Config) {
 		_, _ = fmt.Fprintf(errOut, "warning: %s: %s\n", diagnostic.Code, diagnostic.Message)
 	}
@@ -90,7 +98,7 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		if err != nil {
 			return fmt.Errorf("clean server: runner configuration: %w", err)
 		}
-		component := &runnerComponent{projection: projection, out: out, environ: environment}
+		component := &runnerComponent{projection: projection, out: out, errOut: errOut, environ: environment}
 		return runLifecycle(ctx, resolved.Config, component)
 	}
 	if err != nil {
@@ -104,7 +112,7 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		}
 		gatewayToken = gatewayProjection.Secret()
 	}
-	component := &controlComponent{resolved: resolved, projection: projection, gatewayToken: gatewayToken, out: out}
+	component := &controlComponent{resolved: resolved, projection: projection, gatewayToken: gatewayToken, out: out, errOut: errOut}
 	return runLifecycle(ctx, resolved.Config, component)
 }
 
@@ -128,14 +136,16 @@ func runBootstrap(ctx context.Context, args, environment []string, out io.Writer
 	handle := fs.String("handle", "", "author handle bound to this authority")
 	device := fs.String("device", "device", "first device name")
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-use authority lifetime")
+	jsonOut := fs.Bool("json", false, "emit stable JSON instead of the human summary")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *handle == "" || (*database != "" && *configPath != "") {
-		return errors.New("usage: plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m]")
+		return errors.New("usage: plumtree bootstrap [-config PATH | -database PATH] -handle HANDLE [-device NAME] [-ttl 10m] [--json]")
 	}
 	databasePath := *database
 	var databaseKey []byte
+	nextHost := "HOST"
 	if *configPath != "" {
 		projection, err := loadControlProjection(*configPath, environment)
 		if err != nil {
@@ -146,6 +156,7 @@ func runBootstrap(ctx context.Context, args, environment []string, out io.Writer
 		}
 		databasePath = projection.Config().Storage.DatabasePath
 		databaseKey = projection.Secret()
+		nextHost = pairHost(projection.Config().Exposure.SSH.Address)
 	}
 	if databasePath == "" {
 		databasePath = "plumtree.db"
@@ -154,7 +165,29 @@ func runBootstrap(ctx context.Context, args, environment []string, out io.Writer
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(out).Encode(map[string]any{"bootstrapID": result.ID, "handle": result.Handle, "deviceName": result.DeviceName, "secret": string(result.Secret), "expiresAt": result.ExpiresAt})
+	if *jsonOut {
+		return json.NewEncoder(out).Encode(map[string]any{"bootstrapID": result.ID, "handle": result.Handle, "deviceName": result.DeviceName, "secret": string(result.Secret), "expiresAt": result.ExpiresAt})
+	}
+	plumterminal.WriteBootstrapSummary(out, plumterminal.BootstrapSummary{
+		Handle: result.Handle, ID: result.ID, Secret: string(result.Secret),
+		Valid: *ttl, Next: "pt pair --bootstrap " + result.ID + " " + nextHost,
+	}, plumterminal.ColorFor(out))
+	return nil
+}
+
+// pairHost renders the SSH address from configuration as the HOST argument
+// for the suggested `pt pair` command. Unspecified and wildcard listens
+// become localhost (the operator pairs from the same machine in that case);
+// anything unparseable stays a HOST placeholder for the operator to fill in.
+func pairHost(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "HOST"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func ensurePrivateDirectory(path string) error {
@@ -393,8 +426,11 @@ func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, 
 			return ResolvedServe{}, err
 		}
 	}
-	if _, _, err := serverconfig.Bootstrap(configPath); err != nil {
+	configCreated := false
+	if _, created, err := serverconfig.Bootstrap(configPath); err != nil {
 		return ResolvedServe{}, fmt.Errorf("clean server: bootstrap config: %w", err)
+	} else {
+		configCreated = created
 	}
 
 	fs := flag.NewFlagSet("plumtree serve", flag.ContinueOnError)
@@ -462,7 +498,7 @@ func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, 
 			}
 		}
 	}
-	return ResolvedServe{Loaded: loaded, ConfigPath: configPath, ProductVersion: productVersion, ServerID: serverID}, nil
+	return ResolvedServe{Loaded: loaded, ConfigPath: configPath, ProductVersion: productVersion, ServerID: serverID, ConfigCreated: configCreated}, nil
 }
 
 func executeConfig(args, environment []string, out io.Writer) error {
@@ -642,6 +678,7 @@ type controlComponent struct {
 	projection    serverconfig.RoleProjection
 	gatewayToken  []byte
 	out           io.Writer
+	errOut        io.Writer
 	repo          *sqlite.Repository
 	listener      net.Listener
 	sshConfig     *ssh.ServerConfig
@@ -686,7 +723,7 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: API: %w", err)
 	}
-	c.leaf, err = newLeafServer(repo, c.resolved.Config, c.gatewayToken)
+	c.leaf, err = newLeafServer(repo, c.resolved.Config, c.gatewayToken, plumterminal.EventFunc(c.eventOut(), plumterminal.ColorFor(c.eventOut())))
 	if err != nil {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: leaf gateway: %w", err)
@@ -714,11 +751,32 @@ func (c *controlComponent) Ready(context.Context) error {
 	if c.repo == nil || c.listener == nil {
 		return errors.New("clean server: control role is not ready")
 	}
-	_, _ = fmt.Fprintf(c.out, "plumtree server %s ready on %s\n", c.identity.ID, c.listener.Addr())
+	cfg := c.resolved.Config
+	mode := "development"
+	if cfg.Runtime.Production {
+		mode = "production"
+	}
+	plumterminal.WriteServerSummary(c.out, plumterminal.ServerSummary{
+		Mode:       mode,
+		Listen:     c.listener.Addr().String(),
+		Database:   cfg.Storage.DatabasePath,
+		KVRoot:     cfg.Storage.KVRoot,
+		Next:       "plumtree bootstrap -handle NAME → pt pair",
+		ConfigPath: c.resolved.ConfigPath,
+	}, plumterminal.ColorFor(c.out))
 	if c.ready != nil {
 		c.ready(c.listener.Addr().String())
 	}
 	return nil
+}
+
+// eventOut is the runtime-event stream. It defaults to io.Discard so
+// zero-value components in tests stay silent instead of panicking on nil.
+func (c *controlComponent) eventOut() io.Writer {
+	if c.errOut == nil {
+		return io.Discard
+	}
+	return c.errOut
 }
 
 func (c *controlComponent) Stop(ctx context.Context) error {
@@ -764,6 +822,7 @@ func (c *controlComponent) accept() {
 		c.connections[conn] = struct{}{}
 		c.connectionsMu.Unlock()
 		c.wg.Add(1)
+		logf := plumterminal.EventFunc(c.eventOut(), plumterminal.ColorFor(c.eventOut()))
 		go func() {
 			defer c.wg.Done()
 			defer c.admission.Release(clientIP)
@@ -772,7 +831,7 @@ func (c *controlComponent) accept() {
 				delete(c.connections, conn)
 				c.connectionsMu.Unlock()
 			}()
-			serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.leaf, c.identity, c.resolved.ProductVersion, c.resolved.Config)
+			serveConnection(conn, c.sshConfig, c.repo, c.identities, c.api, c.leaf, c.identity, c.resolved.ProductVersion, c.resolved.Config, logf)
 		}()
 	}
 }
@@ -813,8 +872,11 @@ func authenticatedSSHConfig(signer ssh.Signer) *ssh.ServerConfig {
 	return configuration
 }
 
-func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, leaf *gateway.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config) {
+func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite.Repository, identities *identityservice.Service, api *v1.Server, leaf *gateway.Server, identity sqlite.ServerIdentity, productVersion string, cfg serverconfig.Config, logf func(string, ...any)) {
 	defer raw.Close()
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
 	idleTimeout, _ := time.ParseDuration(cfg.Limits.IdleTimeout)
 	connection := sshconn.NewActivityConn(raw, idleTimeout)
 	if timeout, _ := time.ParseDuration(cfg.Limits.HandshakeTimeout); timeout > 0 {
@@ -822,6 +884,7 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 	}
 	serverConn, channels, requests, err := ssh.NewServerConn(connection, configuration)
 	if err != nil {
+		logf("ssh handshake from %s failed: %v", raw.RemoteAddr(), err)
 		return
 	}
 	connection.EnableIdleDeadline()
@@ -847,6 +910,7 @@ func serveConnection(raw net.Conn, configuration *ssh.ServerConfig, repo *sqlite
 			leafIdentity.OwnerID = device.AuthorID
 		}
 	}
+	logf("connection open user=%q identity=%q auth=%s from=%s", serverConn.User(), gateway.IdentityLogValue(leafIdentity), leafIdentity.Kind, raw.RemoteAddr())
 	for request := range channels {
 		if request.ChannelType() != "session" {
 			_ = request.Reject(ssh.UnknownChannelType, "only session channels are supported")
@@ -908,7 +972,7 @@ func serveSession(channel ssh.Channel, requests <-chan *ssh.Request, handle stri
 	}
 }
 
-func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken []byte) (*gateway.Server, error) {
+func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken []byte, logf func(string, ...any)) (*gateway.Server, error) {
 	limits := runner.Limits{
 		MemoryPages:     uint32(cfg.Limits.MemoryPages),
 		MaxEventsPerSec: cfg.Limits.MaxEventsPerSec,
@@ -926,7 +990,7 @@ func newLeafServer(repo *sqlite.Repository, cfg serverconfig.Config, runnerToken
 		HandshakeTimeout: handshakeTimeout, IdleTimeout: idleTimeout,
 		MaxConnections: cfg.Limits.MaxConnections, MaxConnectionsPerIP: cfg.Limits.MaxConnectionsPerIP,
 		RunnerEndpoint: cfg.Runtime.RunnerEndpoint, RunnerToken: strings.TrimSpace(string(runnerToken)),
-		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist,
+		EnableHostCommands: len(allowlist) > 0, HostCommandAllowlist: allowlist, Logf: logf,
 	})
 }
 
