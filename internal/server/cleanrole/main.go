@@ -3,6 +3,7 @@
 package cleanrole
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -24,6 +25,7 @@ import (
 	"github.com/Ceinl/plumtree/internal/hostkey"
 	"github.com/Ceinl/plumtree/internal/httpapi/v1"
 	"github.com/Ceinl/plumtree/internal/runner"
+	"github.com/Ceinl/plumtree/internal/selfupdate"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
 	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
 	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
@@ -32,6 +34,7 @@ import (
 	statebundle "github.com/Ceinl/plumtree/internal/state"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 const defaultProductVersion = "dev"
@@ -51,9 +54,43 @@ func Run(args []string) error {
 	return Execute(context.Background(), args, os.Environ(), os.Stdout, os.Stderr)
 }
 
-// Execute runs a local config or bootstrap command, an operator command, or
-// the selected control role.
+// serverConfirm reads a y/N prompt on an interactive terminal only.
+func serverConfirm(prompt string, in io.Reader, out io.Writer) bool {
+	file, ok := in.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return false
+	}
+	_, _ = fmt.Fprintf(out, "%s [y/N] ", prompt)
+	line, err := bufio.NewReader(io.LimitReader(in, 32)).ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
+}
+
+// Execute runs a binary-update command, a local config or bootstrap command,
+// an operator command, or the selected control role. Binary management reads
+// the release stamp the entrypoint package injected.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
+	if len(args) > 0 && args[0] == "version" {
+		_, _ = fmt.Fprintln(out, selfupdate.DescribeBuild(selfupdate.StampedVersion))
+		return nil
+	}
+	if len(args) > 0 && args[0] == "update" {
+		exePath, exeErr := os.Executable()
+		if exeErr != nil {
+			return fmt.Errorf("resolve the running binary: %w", exeErr)
+		}
+		command := selfupdate.Command{ExePath: exePath, Version: selfupdate.StampedVersion,
+			Confirm: func(prompt string) bool { return serverConfirm(prompt, os.Stdin, out) }}
+		if err := command.Run(args[1:], out, errOut); err == selfupdate.ErrNoConfirmation {
+			_, _ = fmt.Fprintln(errOut, err)
+		} else if err != nil {
+			return err
+		}
+		return nil
+	}
 	if handled, err := routeCommandHelp(args, out); handled {
 		return err
 	}
@@ -401,7 +438,9 @@ func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, 
 	fs.SetOutput(io.Discard)
 	parsedConfigPath := configPath
 	fs.StringVar(&parsedConfigPath, "config", configPath, "typed config file path")
-	productVersion := firstNonEmpty(env["PLUMTREE_PRODUCT_VERSION"], defaultProductVersion)
+	// The release build stamps the version, so serve reports the build's own
+	// release unless an operator overrides it; dev checkouts stay "dev".
+	productVersion := firstNonEmpty(env["PLUMTREE_PRODUCT_VERSION"], selfupdate.DescribeBuild(selfupdate.StampedVersion), defaultProductVersion)
 	serverID := env["PLUMTREE_SERVER_ID"]
 	fs.StringVar(&productVersion, "product-version", productVersion, "exact Plumtree product version")
 	fs.StringVar(&serverID, "server-id", serverID, "stable server identity")

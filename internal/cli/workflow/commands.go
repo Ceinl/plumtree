@@ -65,7 +65,7 @@ func (r Runner) streams() (io.Reader, io.Writer, io.Writer) {
 
 func (r Runner) Run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: pt <pair|recover|server|device|new|dev|build|deploy|status|app|logs|secret|egress|access|audit|ssh>")
+		return errors.New("usage: pt <pair|recover|server|device|new|dev|build|deploy|status|app|logs|secret|egress|access|audit|ssh|version|update>")
 	}
 	if isHelp(args[0]) {
 		return r.writeHelp("")
