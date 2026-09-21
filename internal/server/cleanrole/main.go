@@ -14,10 +14,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/gateway"
@@ -34,6 +36,7 @@ import (
 	plumterminal "github.com/Ceinl/plumtree/internal/terminal"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 const defaultProductVersion = "dev"
@@ -95,17 +98,14 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 	if resolved.ConfigCreated {
 		_, _ = fmt.Fprintf(errOut, "warning: no config found at %s; created a default one\n", resolved.ConfigPath)
 	}
-	for _, diagnostic := range serverconfig.Diagnostics(resolved.Config) {
-		_, _ = fmt.Fprintf(errOut, "warning: %s: %s\n", diagnostic.Code, diagnostic.Message)
-	}
 	projection, err := serverconfig.MaterializeRole(resolved.Config, serverconfig.RoleControl)
 	if resolved.Config.Roles.Runner && !resolved.Config.Roles.Control && !resolved.Config.Roles.Gateway {
 		projection, err = serverconfig.MaterializeRole(resolved.Config, serverconfig.RoleRunner)
 		if err != nil {
 			return fmt.Errorf("clean server: runner configuration: %w", err)
 		}
-		component := &runnerComponent{projection: projection, out: out, errOut: errOut, environ: environment}
-		return runLifecycle(ctx, resolved.Config, component)
+		component := &runnerComponent{projection: projection, out: out, errOut: errOut, environ: environment, productVersion: resolved.ProductVersion, configPath: resolved.ConfigPath}
+		return runLifecycle(ctx, resolved.Config, component, out, outIsInteractive(out))
 	}
 	if err != nil {
 		return fmt.Errorf("clean server: control configuration: %w", err)
@@ -119,20 +119,49 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		gatewayToken = gatewayProjection.Secret()
 	}
 	component := &controlComponent{resolved: resolved, projection: projection, gatewayToken: gatewayToken, out: out, errOut: errOut}
-	return runLifecycle(ctx, resolved.Config, component)
+	return runLifecycle(ctx, resolved.Config, component, out, outIsInteractive(out))
 }
 
-func runLifecycle(ctx context.Context, cfg serverconfig.Config, component serverconfig.Component) error {
+// outIsInteractive reports whether the writer is a live terminal. Lifecycle
+// prose is TTY-only so redirected stays machine-readable.
+func outIsInteractive(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func runLifecycle(ctx context.Context, cfg serverconfig.Config, component serverconfig.Component, out io.Writer, interactive bool) error {
 	lifecycle := serverconfig.NewLifecycle(component)
 	shutdownTimeout, parseErr := time.ParseDuration(cfg.Runtime.ShutdownTimeout)
 	if parseErr != nil || shutdownTimeout <= 0 {
 		shutdownTimeout, _ = time.ParseDuration(serverconfig.Default().Runtime.ShutdownTimeout)
 	}
+	if interactive {
+		lifecycleStopNotifier(ctx, out)
+	}
 	err := lifecycle.RunWithSignals(ctx, shutdownTimeout)
 	if errors.Is(err, context.Canceled) {
+		if interactive {
+			_, _ = fmt.Fprintln(out, "plumtree stopped")
+		}
 		return nil
 	}
 	return err
+}
+
+// lifecycleStopNotifier reports the start of signal-driven shutdown before the
+// graceful drain. It never prints to stderr: redirected stdout stays clean.
+func lifecycleStopNotifier(ctx context.Context, out io.Writer) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		defer signal.Stop(sigs)
+		select {
+		case <-sigs:
+		case <-ctx.Done():
+			return
+		}
+		_, _ = fmt.Fprintln(out, "plumtree stopping")
+	}()
 }
 
 func runBootstrap(ctx context.Context, args, environment []string, out io.Writer) error {
@@ -694,6 +723,7 @@ type controlComponent struct {
 	identities    *identityservice.Service
 	leaf          *gateway.Server
 	identity      sqlite.ServerIdentity
+	firstRun      bool
 	errors        chan error
 	wg            sync.WaitGroup
 	connectionsMu sync.Mutex
@@ -716,7 +746,7 @@ func (c *controlComponent) Start(ctx context.Context) error {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: host key: %w", err)
 	}
-	c.identity, err = ensureIdentity(ctx, repo, c.resolved.ServerID, signer, fingerprint)
+	c.identity, c.firstRun, err = ensureIdentity(ctx, repo, c.resolved.ServerID, signer, fingerprint)
 	if err != nil {
 		_ = repo.Close()
 		return fmt.Errorf("clean server: identity: %w", err)
@@ -759,19 +789,9 @@ func (c *controlComponent) Ready(context.Context) error {
 	if c.repo == nil || c.listener == nil {
 		return errors.New("clean server: control role is not ready")
 	}
-	cfg := c.resolved.Config
-	mode := "development"
-	if cfg.Runtime.Production {
-		mode = "production"
+	if err := writeReadySummary(c.out, c.resolved.Config, c.resolved.ProductVersion, c.resolved.ConfigPath, c.firstRun, c.listener.Addr().String(), c.identity.SSHHostKeyFingerprint); err != nil {
+		return err
 	}
-	plumterminal.WriteServerSummary(c.out, plumterminal.ServerSummary{
-		Mode:       mode,
-		Listen:     c.listener.Addr().String(),
-		Database:   cfg.Storage.DatabasePath,
-		KVRoot:     cfg.Storage.KVRoot,
-		Next:       "plumtree bootstrap -handle NAME → pt pair",
-		ConfigPath: c.resolved.ConfigPath,
-	}, plumterminal.ColorFor(c.out))
 	if c.ready != nil {
 		c.ready(c.listener.Addr().String())
 	}
@@ -1094,28 +1114,28 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	return component.Stop(stopCtx)
 }
 
-func ensureIdentity(ctx context.Context, repo *sqlite.Repository, requestedID string, signer ssh.Signer, fingerprint string) (sqlite.ServerIdentity, error) {
+func ensureIdentity(ctx context.Context, repo *sqlite.Repository, requestedID string, signer ssh.Signer, fingerprint string) (sqlite.ServerIdentity, bool, error) {
 	identity, err := repo.ServerIdentity(ctx)
 	if err == nil {
 		if identity.SSHHostKeyAlgorithm != signer.PublicKey().Type() || identity.SSHHostKeyFingerprint != fingerprint {
-			return sqlite.ServerIdentity{}, errors.New("persisted server identity does not match host key")
+			return sqlite.ServerIdentity{}, false, errors.New("persisted server identity does not match host key")
 		}
-		return identity, nil
+		return identity, false, nil
 	}
 	if !errors.Is(err, sqlite.ErrNotFound) {
-		return sqlite.ServerIdentity{}, err
+		return sqlite.ServerIdentity{}, false, err
 	}
 	if requestedID == "" {
 		requestedID, err = randomIdentityID()
 		if err != nil {
-			return sqlite.ServerIdentity{}, err
+			return sqlite.ServerIdentity{}, false, err
 		}
 	}
 	identity = sqlite.ServerIdentity{ID: requestedID, SSHHostKeyAlgorithm: signer.PublicKey().Type(), SSHHostKeyFingerprint: fingerprint}
 	if err := repo.SetServerIdentity(ctx, identity); err != nil {
-		return sqlite.ServerIdentity{}, err
+		return sqlite.ServerIdentity{}, false, err
 	}
-	return identity, nil
+	return identity, true, nil
 }
 
 func randomIdentityID() (string, error) {

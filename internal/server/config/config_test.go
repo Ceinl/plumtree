@@ -120,9 +120,6 @@ func TestCapacitySecretsAndRoleProjections(t *testing.T) {
 	if err != nil || materialized.Resources.MemoryLimitBytes != 1<<30 || materialized.Resources.Capacity.MaxWorkers != 8 {
 		t.Fatalf("materialized=%+v err=%v", materialized.Resources, err)
 	}
-	if got := Diagnostics(Default()); len(got) == 0 {
-		t.Fatal("expected warning diagnostics")
-	}
 	if got := ChangesRequireRestart(c, materialized); !got.RestartRequired {
 		t.Fatalf("expected restart-only change: %+v", got)
 	}

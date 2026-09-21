@@ -19,16 +19,18 @@ import (
 )
 
 type runnerComponent struct {
-	projection serverconfig.RoleProjection
-	out        io.Writer
-	errOut     io.Writer
-	environ    []string
-	listener   net.Listener
-	errors     chan error
-	stopped    chan struct{}
-	runErr     error
-	mu         sync.Mutex
-	once       sync.Once
+	projection     serverconfig.RoleProjection
+	out            io.Writer
+	errOut         io.Writer
+	environ        []string
+	productVersion string
+	configPath     string
+	listener       net.Listener
+	errors         chan error
+	stopped        chan struct{}
+	runErr         error
+	mu             sync.Mutex
+	once           sync.Once
 }
 
 func (c *runnerComponent) Start(ctx context.Context) error {
@@ -100,18 +102,9 @@ func (c *runnerComponent) Ready(context.Context) error {
 	if c.listener == nil {
 		return errors.New("clean server: runner role is not ready")
 	}
-	cfg := c.projection.Config()
-	mode := "development"
-	if cfg.Runtime.Production {
-		mode = "production"
+	if err := writeRunnerReadySummary(c.out, c.projection.Config(), c.productVersion, c.configPath, c.projection.Config().Runtime.RunnerEndpoint); err != nil {
+		return err
 	}
-	plumterminal.WriteRunnerSummary(c.out, plumterminal.RunnerSummary{
-		Mode:     mode,
-		Endpoint: cfg.Runtime.RunnerEndpoint,
-		Worker:   cfg.Runtime.RunnerWorker,
-		Scratch:  cfg.Runtime.RunnerScratchRoot,
-		Next:     "connect the control plane to this runner",
-	}, plumterminal.ColorFor(c.out))
 	return nil
 }
 
