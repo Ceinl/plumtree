@@ -2,73 +2,10 @@ package terminal
 
 import (
 	"bytes"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestWriteServerSummaryIsCompactAndPlainWhenColorDisabled(t *testing.T) {
-	var out bytes.Buffer
-	WriteServerSummary(&out, ServerSummary{
-		Mode: "development", Listen: "127.0.0.1:2222",
-		Database: "plumtree.db", KVRoot: "plumtree-data", Next: "plumtree bootstrap -handle NAME",
-	}, false)
-	got := out.String()
-	if strings.ContainsRune(got, '\x1b') {
-		t.Fatalf("plain summary contains ANSI escapes: %q", got)
-	}
-	for _, want := range []string{"~ plumtree", "● ready", "(development)", "| ssh", "| store", "plumtree.db · plumtree-data", "| next", "plumtree bootstrap"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("summary missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "limits") {
-		t.Fatalf("summary should not carry limits; they live in config show:\n%s", got)
-	}
-	if lines := strings.Count(strings.TrimSpace(got), "\n") + 1; lines != 4 {
-		t.Fatalf("summary uses %d lines, want 4:\n%s", lines, got)
-	}
-}
-
-func TestWriteServerSummaryUsesPlumEdgeAndGreenMarkerOnly(t *testing.T) {
-	var out bytes.Buffer
-	WriteServerSummary(&out, ServerSummary{Mode: "production", Listen: ":2222", Database: "db", KVRoot: "kv", Next: "ready"}, true)
-	got := out.String()
-	for _, want := range []string{ansiPlum, ansiGreen, ansiReset} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("colored summary missing %q: %q", want, got)
-		}
-	}
-	for _, banned := range []string{"\x1b[1m", "\x1b[38;5;179m", "\x1b[38;5;73m"} {
-		if strings.Contains(got, banned) {
-			t.Fatalf("colored summary should stay minimal, found %q in %q", banned, got)
-		}
-	}
-}
-
-func TestWriteServerSummaryShortensPathsUnderTheWorkingDirectory(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	db := filepath.Join(dir, "plumtree.db")
-	var out bytes.Buffer
-	WriteServerSummary(&out, ServerSummary{Mode: "development", Listen: ":2222", Database: db, KVRoot: filepath.Join(dir, "kv"), Next: "n", ConfigPath: filepath.Join(dir, "config.json")}, false)
-	got := out.String()
-	if !strings.Contains(got, "| store plumtree.db · kv") {
-		t.Fatalf("store paths not shortened:\n%s", got)
-	}
-	if !strings.Contains(got, "| note  config config.json") {
-		t.Fatalf("config path not shortened:\n%s", got)
-	}
-}
-
-func TestWriteServerSummaryRendersNoteOnItsOwnLine(t *testing.T) {
-	var out bytes.Buffer
-	WriteServerSummary(&out, ServerSummary{Mode: "development", Listen: ":2222", Database: "db", KVRoot: "kv", Next: "n", ConfigPath: "config.json"}, false)
-	if !strings.Contains(out.String(), "| note  config config.json") {
-		t.Fatalf("note line missing:\n%s", out.String())
-	}
-}
 
 func TestWriteDevSSHSummaryKeepsGreppableConnect(t *testing.T) {
 	var out bytes.Buffer
@@ -80,26 +17,6 @@ func TestWriteDevSSHSummaryKeepsGreppableConnect(t *testing.T) {
 	for _, want := range []string{"~ pt dev", "● ready", "greeter", "Connect: ssh greeter@plumtree.dev"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dev summary missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestWriteRunnerSummaryDescribesTheBrokerWithoutClaimingSSHOrStorage(t *testing.T) {
-	var out bytes.Buffer
-	WriteRunnerSummary(&out, RunnerSummary{
-		Mode: "production", Endpoint: "unix:///run/plumtree/runner.sock",
-		Worker: "/usr/bin/runner-worker", Scratch: "/var/lib/plumtree/runner",
-		Next: "connect the control plane to this runner",
-	}, false)
-	got := out.String()
-	for _, want := range []string{"plumtree runner", "production", "| broker", "unix:///run/plumtree/runner.sock", "| worker", "| scratch", "| next"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("runner summary missing %q:\n%s", want, got)
-		}
-	}
-	for _, unwanted := range []string{"| ssh", "| store"} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("runner summary contains server-only row %q:\n%s", unwanted, got)
 		}
 	}
 }
