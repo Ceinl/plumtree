@@ -1,5 +1,6 @@
 GO ?= go
-GOCACHE ?= /private/tmp/plums-go-cache
+# Portable cache default; override per developer (was /private/tmp, macOS-only).
+GOCACHE ?= $(HOME)/.cache/plumtree-go
 PT ?= pt
 PT_ARGS ?= ping
 PT_DIR ?= $(CURDIR)
@@ -75,8 +76,25 @@ bootstrap:
 pair:
 	$(GO) run ./cmd/pt pair --bootstrap "$(BOOTSTRAP_ID)" --secret "$(SECRET)" --yes "$(SSH_ADDR)"
 
+# Deletes exactly the configured local state, including SQLite sidecars and
+# local KV state. Refuses to run when DEV_HOME collapses to home or empty, so
+# an empty override can never turn this into rm -rf on the home directory.
+PARENT := $(patsubst %/,%,$(dir $(DEV_HOME)))
+ifeq ($(strip $(DEV_HOME)),)
+KEEP_DEV_HOME_GUARD := missing
+else ifeq ($(DEV_HOME),$(HOME))
+KEEP_DEV_HOME_GUARD := home
+else ifeq ($(DEV_HOME),$(CURDIR))
+KEEP_DEV_HOME_GUARD := repo
+else
+KEEP_DEV_HOME_GUARD := ok
+endif
+ifneq ($(KEEP_DEV_HOME_GUARD),ok)
+$(error clear-server: DEV_HOME "$(DEV_HOME)" is $(KEEP_DEV_HOME_GUARD); refusing to wire deletion)
+endif
+
 clear-server:
-	rm -f "$(DATABASE)" "$(HOST_KEY)" "$(CONFIG)" "$(CONFIG).lock"
+	rm -f "$(DATABASE)" "$(DATABASE)-wal" "$(DATABASE)-shm" "$(HOST_KEY)" "$(CONFIG)" "$(CONFIG).lock"
 	rm -rf "$(KV_ROOT)"
 
 PT_BIN ?= $(CURDIR)/pt-bin
