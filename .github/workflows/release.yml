@@ -166,8 +166,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
+          # Releases are immutable once published (PLU-128). An existing
+          # published release is never patched with --clobber; rebuilding one
+          # requires deleting the release and the tag on prod explicitly.
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+            assets=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length')
+            if [[ "$assets" != "0" ]]; then
+              echo "release $RELEASE_TAG already exists with $assets published assets; refusing to overwrite" >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" dist/*
           else
             gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
           fi
