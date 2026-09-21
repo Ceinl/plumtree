@@ -23,9 +23,16 @@ export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:--L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_P
 
 (
 	cd "$workspace_root"
+	# Stamp the release version like build-release.sh does when an exact tag
+	# is checked out; PLUMTREE_VERSION overrides.
+	stamp_ldflags=""
+	stamp=${PLUMTREE_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || true)}
+	if [[ -n "$stamp" ]]; then
+		stamp_ldflags="-X main.version=$stamp"
+	fi
 	go generate ./internal/build
-	go build -tags "sqlcipher libsqlite3" -trimpath -o "$output_dir/pt" ./cmd/pt
-	go build -tags "sqlcipher libsqlite3" -trimpath -o "$output_dir/plumtree" ./cmd/plumtree
+	go build -tags "sqlcipher libsqlite3" -trimpath -ldflags="-s -w $stamp_ldflags" -o "$output_dir/pt" ./cmd/pt
+	go build -tags "sqlcipher libsqlite3" -trimpath -ldflags="-s -w $stamp_ldflags" -o "$output_dir/plumtree" ./cmd/plumtree
 	go build -tags "sqlcipher libsqlite3" -trimpath -o "$output_dir/runner-worker" ./cmd/runner-worker
 )
 

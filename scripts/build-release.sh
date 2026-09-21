@@ -18,6 +18,17 @@ export CGO_CFLAGS="${SQLCIPHER_CFLAGS:-$default_cflags}"
 export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:-$default_ldflags}"
 build_tags="sqlcipher libsqlite3"
 
+# Stamp every command package with the release version when the release is
+# tagged, so version and update can trust what they report. The release
+# contract check rejects unstamped release binaries.
+stamp=${PLUMTREE_VERSION:-$(cd "$workspace_root" && git describe --tags --exact-match HEAD 2>/dev/null || true)}
+if [[ -n "$stamp" ]]; then
+  stamp_ldflags="-X main.version=$stamp"
+else
+  stamp_ldflags=""
+  echo "==> no release version stamp (not on an exact tag); binaries will report dev"
+fi
+
 # Regenerate the server's hermetic build bundle so every release contains the
 # SDK and TUI runtime from the exact source revision being built.
 (
@@ -48,14 +59,14 @@ for target in "${targets[@]}"; do
   (
     cd "$workspace_root"
     GOOS="$target_os" GOARCH="$target_arch" CC="$CC" \
-      go build -tags "$build_tags" -trimpath -ldflags="-s -w" -o "$pt_output" ./cmd/pt
+      go build -tags "$build_tags" -trimpath -ldflags="-s -w $stamp_ldflags" -o "$pt_output" ./cmd/pt
   )
 
   echo "==> build plumtree $target"
   (
     cd "$workspace_root"
     GOOS="$target_os" GOARCH="$target_arch" CC="$CC" \
-      go build -tags "$build_tags" -trimpath -ldflags="-s -w" -o "$server_output" ./cmd/plumtree
+      go build -tags "$build_tags" -trimpath -ldflags="-s -w $stamp_ldflags" -o "$server_output" ./cmd/plumtree
   )
 done
 
