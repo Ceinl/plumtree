@@ -59,7 +59,8 @@ func (s GitHubSource) Latest(ctx context.Context) (Release, error) {
 
 // ReleaseByTag resolves one pinned release by tag.
 func (s GitHubSource) ReleaseByTag(ctx context.Context, tag string) (Release, error) {
-	return s.byRef(ctx, "tags/"+strings.TrimPrefix(tag, "tags/"))
+	pinned := strings.TrimPrefix(tag, "tags/") // tolerate callers passing a git ref
+	return s.byRef(ctx, "tags/"+pinned)
 }
 
 func (s GitHubSource) byRef(ctx context.Context, ref string) (Release, error) {

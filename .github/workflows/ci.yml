@@ -151,8 +151,8 @@ jobs:
             plumtree-windows-amd64.exe
           )
           for asset in "${assets[@]}"; do
-            printf 'release-contract-fixture\n' > "dist/$asset"
+            printf 'release-contract-fixture v1.0.0\n' > "dist/$asset"
           done
           (cd dist && sha256sum pt-* plumtree-* > checksums.txt)
-          ./scripts/check-release-contract.sh dist
+          ./scripts/check-release-contract.sh dist v1.0.0
           (cd dist && sha256sum --check checksums.txt)

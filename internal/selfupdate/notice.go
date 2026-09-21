@@ -92,31 +92,54 @@ func PassiveHint(userCacheDir func() (string, error), current string, now time.T
 // budget, so the user command never waits for the network. A failing or
 // rate-limited check stays silent.
 func RefreshNoticeCache(userCacheDir func() (string, error), current string, now time.Time) {
-	if os.Getenv(OptOutEnv) != "" || !IsRelease(current) {
+	path, stale := staleCheck(userCacheDir, current, now, noticeStalenessLimit)
+	if path == "" || !stale {
 		return
 	}
-	path := NoticeCachePath(userCacheDir)
+	go refresh(path)
+}
+
+// RefreshNoticeCacheSync is RefreshNoticeCache with the network fetch inline,
+// still bounded by the refresh budget. Short-lived callers (a bare `pt`) use
+// it so the process does not die before the goroutine lands.
+func RefreshNoticeCacheSync(userCacheDir func() (string, error), current string) {
+	path, _ := staleCheck(userCacheDir, current, time.Now(), noticeStalenessLimit)
 	if path == "" {
 		return
 	}
+	refresh(path)
+}
+
+// staleCheck resolves the cache path and reports whether the daily cache is
+// stale; opt-outs and non-release builds suppress the refresh entirely.
+func staleCheck(userCacheDir func() (string, error), current string, now time.Time, limit time.Duration) (string, bool) {
+	if os.Getenv(OptOutEnv) != "" || !IsRelease(current) {
+		return "", false
+	}
+	path := NoticeCachePath(userCacheDir)
+	if path == "" {
+		return "", false
+	}
 	if record := readNotice(path); record.Checked != "" {
-		if checkedAt, err := time.Parse(time.RFC3339, record.Checked); err == nil && now.Sub(checkedAt) < noticeStalenessLimit {
-			return
+		if checkedAt, err := time.Parse(time.RFC3339, record.Checked); err == nil && now.Sub(checkedAt) < limit {
+			return path, false
 		}
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), noticeRefreshTimeout)
-		defer cancel()
-		source := NewGitHubSource(DefaultRepo)
-		if base := strings.TrimSpace(os.Getenv(APIBaseEnv)); base != "" {
-			source.APIBase = base
-		}
-		release, err := source.Latest(ctx)
-		if err != nil || release.Tag == "" {
-			return
-		}
-		writeNotice(path, noticeRecord{Checked: time.Now().UTC().Format(time.RFC3339), Stable: release.Tag})
-	}()
+	return path, true
+}
+
+func refresh(path string) {
+	ctx, cancel := context.WithTimeout(context.Background(), noticeRefreshTimeout)
+	defer cancel()
+	source := NewGitHubSource(DefaultRepo)
+	if base := strings.TrimSpace(os.Getenv(APIBaseEnv)); base != "" {
+		source.APIBase = base
+	}
+	release, err := source.Latest(ctx)
+	if err != nil || release.Tag == "" {
+		return
+	}
+	writeNotice(path, noticeRecord{Checked: time.Now().UTC().Format(time.RFC3339), Stable: release.Tag})
 }
 
 const noticeRefreshTimeout = 2 * time.Second

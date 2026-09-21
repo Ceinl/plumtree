@@ -47,9 +47,9 @@ func ParseVersion(value string) (parts [3]int, suffix string, ok bool) {
 	if len(segments) < 3 {
 		return parts, "", false
 	}
-	var suffixEach [3]string
+	var sub string
 	for i, segment := range segments {
-		numeric, sub := segment, ""
+		numeric := segment
 		if index := strings.IndexAny(segment, "-+"); index >= 0 {
 			numeric, sub = segment[:index], segment[index:]
 		}
@@ -58,9 +58,8 @@ func ParseVersion(value string) (parts [3]int, suffix string, ok bool) {
 			return parts, "", false
 		}
 		parts[i] = number
-		suffixEach[i] = sub
 	}
-	return parts, suffixEach[2], true
+	return parts, sub, true
 }
 
 // CompareVersions returns -1 when a is older than b, 0 when equal, and 1 when
