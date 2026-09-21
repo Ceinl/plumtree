@@ -43,7 +43,15 @@ jobs:
             **/go.sum
       - name: Test workspace modules
         run: ./scripts/workspace-check.sh test
+      - name: Install target-native SQLCipher toolchain
+        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev libssl-dev
       - name: Build release assets
+        env:
+          CC: gcc
+          OPENSSL_PREFIX: /usr
+          SQLCIPHER_INCLUDE: /usr/include/sqlcipher
+          SQLCIPHER_LIBRARY: sqlite3
+          SQLCIPHER_PREFIX: /usr
         run: ./scripts/build-release.sh dist
       - name: Verify release asset contract
         run: ./scripts/check-release-contract.sh dist "$RELEASE_TAG"
