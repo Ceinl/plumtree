@@ -16,7 +16,9 @@ fi
 files=$(mktemp)
 text_files=$(mktemp)
 trap 'rm -f "$files" "$text_files"' EXIT
-git -C "$workspace_root" ls-files --cached --others --exclude-standard > "$files"
+# Inventory counts tracked content only, so untracked local scratch (staged
+# examples, generated reports) cannot skew the recorded counts.
+git -C "$workspace_root" ls-files --cached > "$files"
 grep -E -v '^(docs/consolidation/|testdata/consolidation/|third_party/|plumtree-audit-report\.html$|scripts/(check-(abi-fixture|consolidation-guardrails|dependencies|external-consumers|journeys|removal-ratchet)|run-consolidation-journeys|test-guardrails)\.sh$)' \
   "$files" > "$text_files" || true
 

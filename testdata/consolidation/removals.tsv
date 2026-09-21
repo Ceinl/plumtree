@@ -1,4 +1,7 @@
 # kind	id	planned_issue	expected_count	pattern
+# memory/ was untracked as PLU-36 repo hygiene; it carried the last
+# mentions of several legacy surfaces, so their recorded counts drop to 0/LOWER
+# correspondingly. All these drops are that untracking, not new removals.
 path	standalone-build-worker	73	0	^build-worker/
 path	standalone-control-plane	73	0	^control-plane/
 path	standalone-pt	73	0	^pt/
@@ -9,16 +12,16 @@ path	legacy-devtest	62	0	^_devtest/
 text	tui-runtime-import	53	0	github.com/Ceinl/plumtree/tui-runtime
 text	legacy-product-module-imports	54-57	0	github.com/Ceinl/plumtree/(build-worker|control-plane|pt|runner|ssh-gateway)
 text	local-module-replaces	53	3	=>[[:space:]]+(\./|\.\./|/)
-text	build-worker-surface	73	4	build-worker
-text	shoo-surface	73	2	[Ss][Hh][Oo][Oo]
-text	browser-dashboard-surface	73	5	[Bb]rowser|[Dd]ashboard
+text	build-worker-surface	73	0	build-worker
+text	shoo-surface	73	0	[Ss][Hh][Oo][Oo]
+text	browser-dashboard-surface	73	3	[Bb]rowser|[Dd]ashboard
 # browser-dashboard-surface: +1 is the required GitHub API JSON field name
 # browser_download_url in internal/selfupdate/source.go; it parses release
 # asset metadata and cannot be renamed.
-text	claim-flow	73	29	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/claim/|/api/dev/deploy
-text	source-build-flow	73	28	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
-text	legacy-state-store	73	90	[Ss]napshot|[Ee]nvelope
+text	claim-flow	73	23	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/claim/|/api/dev/deploy
+text	source-build-flow	73	24	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
+text	legacy-state-store	73	88	[Ss]napshot|[Ee]nvelope
 text	shared-and-ci-tokens	73	0	CIToken|CI token|dev token|PLUMTREE_DEV_TOKEN|X-Plumtree-Dev-Token
-text	legacy-server-binaries	73	9	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
+text	legacy-server-binaries	73	0	plumtree-server|control-plane|ssh-gateway|plumtree-runner-(broker|worker)
 text	legacy-action-protocol	62	0	ActionArgPrefix|PLUMTREE_ACTION|action protocol
-text	legacy-devtest-references	62	1	_devtest/
+text	legacy-devtest-references	62	0	_devtest/
