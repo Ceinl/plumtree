@@ -41,4 +41,17 @@ for asset in "${expected[@]}"; do
   fi
 done
 
+# Release-blocking stamp check: every binary must identify itself with the
+# release tag it ships under, so version and update can trust what they see.
+tag=${2:-}
+if [[ -n "$tag" ]]; then
+  for path in "$dist"/pt-* "$dist"/plumtree-*; do
+    [[ -f "$path" ]] || continue
+    if ! LC_ALL=C grep -aqF -- "$tag" "$path"; then
+      echo "release asset ${path##*/} does not carry the release stamp $tag; rebuild with the stamped linker flags" >&2
+      exit 1
+    fi
+  done
+fi
+
 echo "release asset contract: ${#expected[@]} canonical assets verified"

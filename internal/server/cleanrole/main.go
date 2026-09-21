@@ -24,6 +24,7 @@ import (
 	"github.com/Ceinl/plumtree/internal/hostkey"
 	"github.com/Ceinl/plumtree/internal/httpapi/v1"
 	"github.com/Ceinl/plumtree/internal/runner"
+	"github.com/Ceinl/plumtree/internal/selfupdate"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
 	identityservice "github.com/Ceinl/plumtree/internal/server/identity"
 	pairingserver "github.com/Ceinl/plumtree/internal/server/pairing"
@@ -56,9 +57,14 @@ func Run(args []string) error {
 	return Execute(context.Background(), args, os.Environ(), os.Stdout, os.Stderr)
 }
 
-// Execute runs a local config or bootstrap command, an operator command, or
-// the selected control role.
+// Execute runs a binary-update command, a local config or bootstrap command,
+// an operator command, or the selected control role. Binary management reads
+// the release stamp the entrypoint package injected.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
+	if len(args) > 0 && selfupdate.HandlesCommand(args[0]) {
+		command := selfupdate.Command{Version: selfupdate.StampedVersion, Confirm: selfupdate.InteractiveConfirm(os.Stdin, out)}
+		return selfupdate.RunCommand(command, args, out, errOut)
+	}
 	if handled, err := routeCommandHelp(args, out); handled {
 		return err
 	}
@@ -437,7 +443,9 @@ func ResolveServe(args, environment []string, hostMemory int64) (ResolvedServe, 
 	fs.SetOutput(io.Discard)
 	parsedConfigPath := configPath
 	fs.StringVar(&parsedConfigPath, "config", configPath, "typed config file path")
-	productVersion := firstNonEmpty(env["PLUMTREE_PRODUCT_VERSION"], defaultProductVersion)
+	// The release build stamps the version, so serve reports the build's own
+	// release unless an operator overrides it; dev checkouts stay "dev".
+	productVersion := firstNonEmpty(env["PLUMTREE_PRODUCT_VERSION"], selfupdate.DescribeBuild(selfupdate.StampedVersion), defaultProductVersion)
 	serverID := env["PLUMTREE_SERVER_ID"]
 	fs.StringVar(&productVersion, "product-version", productVersion, "exact Plumtree product version")
 	fs.StringVar(&serverID, "server-id", serverID, "stable server identity")

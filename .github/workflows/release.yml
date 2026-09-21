@@ -46,7 +46,7 @@ jobs:
       - name: Build release assets
         run: ./scripts/build-release.sh dist
       - name: Verify release asset contract
-        run: ./scripts/check-release-contract.sh dist
+        run: ./scripts/check-release-contract.sh dist "$RELEASE_TAG"
       - name: Verify checksums
         run: |
           cd dist

@@ -13,6 +13,7 @@ Usage:
   pt build [--json]
   pt deploy [--server NAME] [--yes] [--json]
   pt status | app | logs | secret | egress | access | audit | ssh
+  pt version | update [--check] [--yes] [--version vX.Y.Z]
 
 Run "pt help COMMAND" for command details.
 `
@@ -176,6 +177,20 @@ invite prints a one-use invitation for pairing a second device; all
 subcommands print stable JSON. revoke asks for confirmation unless --yes is
 given.
 `
+	case "version":
+		help = `Usage:
+  pt version
+
+Prints the release version, or dev plus the VCS revision for checkout builds.
+`
+	case "update":
+		help = `Usage:
+  pt update [--check] [--yes] [--version vX.Y.Z]
+
+Downloads the latest stable release, verifies the assets against the release
+checksums, and atomically replaces every pt/plumtree binary next to the
+running one. Asks for confirmation unless --yes is given. --check only
+prints what would happen. --version pins an exact release tag.`
 	default:
 		return fmt.Errorf("unknown pt help command %q", command)
 	}

@@ -1,17 +1,16 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/cli/paired"
 	"github.com/Ceinl/plumtree/internal/cli/workflow"
+	"github.com/Ceinl/plumtree/internal/selfupdate"
 	"golang.org/x/term"
 )
 
@@ -20,6 +19,17 @@ var DevRoot string
 
 // RunClean is the selected root author workflow surface.
 func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
+	if len(args) > 0 {
+		if selfupdate.HandlesCommand(args[0]) {
+			command := selfupdate.Command{Version: selfupdate.StampedVersion, Confirm: selfupdate.InteractiveConfirm(in, out)}
+			if err := selfupdate.RunCommand(command, args, out, errOut); err != nil {
+				fmt.Fprintln(errOut, terminalSafeText(err.Error()))
+				return 1
+			}
+			return 0
+		}
+	}
+	printUpdateNotice(args, out, errOut)
 	storePath, err := paired.DefaultPath()
 	if err != nil {
 		fmt.Fprintln(errOut, terminalSafeText(err.Error()))
@@ -34,7 +44,7 @@ func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 			}
 			return workflow.NewAPI(connection)
 		},
-		Confirm: func(prompt string) bool { return interactiveConfirm(prompt, in, out) },
+		Confirm: selfupdate.InteractiveConfirm(in, out),
 	}
 	if err := runner.Run(args); err != nil {
 		fmt.Fprintln(errOut, terminalSafeText(err.Error()))
@@ -43,16 +53,29 @@ func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 	return 0
 }
 
-func interactiveConfirm(prompt string, in io.Reader, out io.Writer) bool {
-	file, ok := in.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return false
+// printUpdateNotice reports the passive update hint on a bare interactive pt
+// and refreshes the daily check. Bare pt refreshes synchronously (bounded by
+// the same 2s budget) so short-lived invocations still populate the cache;
+// real subcommands refresh asynchronously so the check never holds up work.
+func printUpdateNotice(args []string, out, errOut io.Writer) {
+	if os.Getenv(selfupdate.OptOutEnv) != "" || !isInteractiveStdin() {
+		return
 	}
-	_, _ = fmt.Fprintf(out, "%s [y/N] ", prompt)
-	line, err := bufio.NewReader(io.LimitReader(in, 32)).ReadString('\n')
-	if err != nil && len(line) == 0 {
-		return false
+	current := selfupdate.StampedVersion
+	if len(args) == 0 {
+		selfupdate.RefreshNoticeCacheSync(os.UserCacheDir, current)
+	} else {
+		selfupdate.RefreshNoticeCache(os.UserCacheDir, current, time.Now())
 	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes"
+	if len(args) > 0 {
+		return // bare pt stays quiet so the usage line is never polluted
+	}
+	if hint := selfupdate.PassiveHint(os.UserCacheDir, current, time.Now()); hint != "" {
+		fmt.Fprintln(errOut, hint)
+	}
+}
+
+func isInteractiveStdin() bool {
+	file, ok := any(os.Stdin).(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
 }
