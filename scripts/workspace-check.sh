@@ -34,6 +34,16 @@ workspace_modules=(
   examples/tic-tac-toe
 )
 
+if [[ "$check" == test || "$check" == vet ]]; then
+  # The embedded SDK bundle is generated at build/release time, not committed,
+  # so a clean checkout has to stage it before anything compiles ./internal/build.
+  echo '==> generate embedded build assets'
+  (
+    cd "$workspace_root"
+    go generate ./internal/build
+  )
+fi
+
 for module_dir in "${workspace_modules[@]}"; do
   echo "==> $check $module_dir"
   (
