@@ -33,12 +33,25 @@ func sanitizeRune(r rune) rune {
 	}
 }
 
+// validFrame reports whether the frame can safely be decoded and painted:
+// dimensions inside the terminal limits and exactly a full grid of cells.
+// Every sink shares this gate so a malformed frame is ignored whole — no
+// partial write, whatever the render path.
+func validFrame(f abi.Frame) bool {
+	return f.W >= 1 && f.W <= abi.MaxFrameWidth &&
+		f.H >= 1 && f.H <= abi.MaxFrameHeight &&
+		len(f.Cells) == f.W*f.H
+}
+
 // TextSink renders frames as bordered plain text to a writer. Used by
 // `pt dev --headless` and tests, where there is no PTY. Styling is dropped;
 // only sanitized glyphs are shown.
 type TextSink struct{ W io.Writer }
 
 func (s TextSink) Present(f abi.Frame) {
+	if !validFrame(f) {
+		return
+	}
 	bar := strings.Repeat("─", f.W)
 	fmt.Fprintf(s.W, "┌%s┐\n", bar)
 	var b strings.Builder
@@ -91,7 +104,7 @@ func (s *TTYSink) Healthy() bool {
 }
 
 func (s *TTYSink) Present(f abi.Frame) {
-	if f.W < 1 || f.W > terminal.MaxWidth || f.H < 1 || f.H > terminal.MaxHeight || len(f.Cells) != f.W*f.H {
+	if !validFrame(f) {
 		return
 	}
 	s.mu.Lock()

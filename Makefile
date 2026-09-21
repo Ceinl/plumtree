@@ -37,6 +37,11 @@ help:
 test-root:
 	GOCACHE=$(GOCACHE) $(GO) test ./...
 
+# Boundary fuzz targets (~30s each); CI runs them per-PR, smoke runs use -fuzztime.
+fuzz-terminal:
+	GOCACHE=$(GOCACHE) $(GO) test ./internal/terminal -run '^$$' -fuzz FuzzScreenCoordinates -fuzztime 30s
+	GOCACHE=$(GOCACHE) $(GO) test ./internal/runner
+
 run-server: config-local
 	PLUMTREE_PRODUCT_VERSION="$(PRODUCT_VERSION)" $(GO) run ./cmd/plumtree serve --config "$(CONFIG)"
 

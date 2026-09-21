@@ -578,10 +578,6 @@ func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload [
 	}
 }
 
-func validFrame(f abi.Frame) bool {
-	return f.W >= 1 && f.W <= 500 && f.H >= 1 && f.H <= 300 && f.W <= 150_000/f.H && len(f.Cells) == f.W*f.H
-}
-
 // boundedBuffer captures up to max bytes of worker stderr (panics, fatal logs)
 // to surface on an unexpected exit, discarding the rest.
 type boundedBuffer struct {

@@ -3,6 +3,8 @@ package terminal
 import (
 	"bytes"
 	"io"
+	"math"
+	"reflect"
 	"testing"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
@@ -14,23 +16,6 @@ func snapshotGrid(s *Screen) [][]abi.Cell {
 		out[y] = append([]abi.Cell(nil), s.cur[y]...)
 	}
 	return out
-}
-
-func gridsDiffer(a, b [][]abi.Cell) bool {
-	if len(a) != len(b) {
-		return true
-	}
-	for y := range a {
-		if len(a[y]) != len(b[y]) {
-			return true
-		}
-		for x := range a[y] {
-			if a[y][x] != b[y][x] {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func renderLine(s *Screen, y int) string {
@@ -96,12 +81,10 @@ func TestSetOutsideGridNeverTouchesCells(t *testing.T) {
 		{int(^uint(0) >> 1), 0}, {0, int(^uint(0) >> 1)},
 	} {
 		assertNotPanics(t, func() { s.Set(coord[0], coord[1], abi.Cell{Ch: 'm'}) })
-		s.Set(coord[0], coord[1], abi.Cell{Ch: 'm'})
 	}
-	if gridsDiffer(before, snapshotGrid(s)) {
+	if !reflect.DeepEqual(before, snapshotGrid(s)) {
 		t.Fatal("out-of-bounds Set changed the grid")
 	}
-	s.Flush()
 }
 
 // SetRow clips at the screen width, leaves absent cells untouched, and
@@ -111,7 +94,7 @@ func TestSetRowClipsWithoutCorruptingOtherRows(t *testing.T) {
 	before := snapshotGrid(s)
 	s.SetRow(-1, []abi.Cell{{Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}})
 	s.SetRow(2, []abi.Cell{{Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}})
-	if gridsDiffer(before, snapshotGrid(s)) {
+	if !reflect.DeepEqual(before, snapshotGrid(s)) {
 		t.Fatal("rejected SetRow changed the grid")
 	}
 	s.SetRow(0, []abi.Cell{{Ch: 'a'}, {Ch: 'b'}})
@@ -155,24 +138,35 @@ func assertNotPanics(t *testing.T, fn func()) {
 // and dimension boundary: the grid always clamps into the safe rectangle,
 // out-of-bounds operations are ignored, and buffer access never panics.
 func FuzzScreenCoordinates(f *testing.F) {
-	for _, size := range [][2]int{{-3, -1}, {0, 0}, {1, 1}, {2, 3}, {MaxWidth + 1, MaxHeight + 1}, {1 << 30, 1 << 20}} {
-		for _, coord := range [][2]int{{-1, -1}, {0, 0}, {MaxWidth, MaxHeight}, {1 << 30, 1 << 30}} {
+	for _, size := range [][2]int{{-3, -1}, {0, 0}, {1, 1}, {2, 3}, {MaxWidth + 1, MaxHeight + 1}, {1 << 30, 1 << 20}, {math.MaxInt, math.MaxInt}} {
+		for _, coord := range [][2]int{{-1, -1}, {0, 0}, {1, 1}, {MaxWidth, MaxHeight}, {1 << 30, 1 << 30}} {
 			f.Add(size[0], size[1], coord[0], coord[1], uint(0))
 			f.Add(size[0], size[1], coord[0], coord[1], uint(5))
 		}
 	}
 	f.Fuzz(func(t *testing.T, w, h, x, y int, rowLen uint) {
-		s := NewScreenWithOutput(w, h, io.Discard)
+		// Resize first so the write attempts below often land in-bounds.
 		assertNotPanics(t, func() {
+			s := NewScreenWithOutput(w, h, io.Discard)
+			s.Resize(x, y)
 			s.Set(x, y, abi.Cell{Ch: 'f'})
 			cells := make([]abi.Cell, rowLen%16)
 			for i := range cells {
 				cells[i] = abi.Cell{Ch: 'r'}
 			}
 			s.SetRow(y, cells)
-			s.Resize(x, y)
 			s.Flush()
+			// A successful flush (discard writes cannot fail) leaves the
+			// previous frame exactly equal to the current one.
+			if s.failed {
+				t.Errorf("flush to discard reported a write failure")
+			}
+			for row := range s.cur {
+				if !reflect.DeepEqual(s.old[row], s.cur[row]) {
+					t.Errorf("flush left old row %d different from cur", row)
+				}
+			}
+			assertGridInvariants(t, s)
 		})
-		assertGridInvariants(t, s)
 	})
 }
