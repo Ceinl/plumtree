@@ -1,0 +1,16 @@
+# Dockerfile for {{.Name}} (Plumtree VM app, MVP stub).
+#
+# The server ignores this file today: `pt build` compiles app/ to WASM and the
+# gateway runs that artifact like a finite CLI app. This Dockerfile documents
+# the future microVM/OCI packaging so the project is ready when the hypervisor
+# backend lands.
+#
+# Future shape (deferred):
+#   - build the app image with its runtime dependencies
+#   - boot one microVM per session and proxy SSH/exec into it
+#   - enforce per-app memory/cpu/network quotas from vm.json
+
+FROM scratch
+# COPY --from=build /out/{{.Name}} /app/{{.Name}}
+# ENTRYPOINT ["/app/{{.Name}}"]
+LABEL plumtree.app="{{.Name}}" plumtree.type="vm"

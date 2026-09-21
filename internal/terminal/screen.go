@@ -1,13 +1,23 @@
 package terminal
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"strconv"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
+
+// rowBytes views a Cell row as raw bytes for whole-row equality checks.
+// Memory equality is strictly stronger than cell equality, so the fast path
+// never reports a changed row as unchanged: padding bytes can differ,
+// which costs only an unnecessary per-cell pass, never correctness.
+func rowBytes(row []abi.Cell) []byte {
+	return unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(row))), len(row)*int(unsafe.Sizeof(abi.Cell{})))
+}
 
 const (
 	DefaultBg = "\x1b[48;2;25;23;29m"
@@ -26,10 +36,22 @@ var decorCodes = []struct {
 	code byte
 }{{abi.DecorBold, '1'}, {abi.DecorItalic, '3'}, {abi.DecorUnderline, '4'}}
 
+// dec8 holds the decimal encoding of every byte value, precomputed once with
+// the standard library so the hot path pays only a slice append, never
+// base-10 formatting.
+var dec8 [256][]byte
+
+func init() {
+	for v := range dec8 {
+		dec8[v] = strconv.AppendUint(nil, uint64(v), 10)
+	}
+}
+
 type Screen struct {
 	w, h     int
 	old, cur [][]abi.Cell
 	buffer   []byte
+	dirty    []int
 	out      io.Writer
 	// failed reports whether the last Flush did not fully reach out. A failed
 	// write leaves old stale, so the next changed-cell flush self-heals.
@@ -100,9 +122,18 @@ func (s *Screen) Flush() {
 	var last abi.Cell
 	styled := false
 	cursorX, cursorY := -1, -1
+	// dirty tracks rows that differ, reused across frames without
+	// reallocation: after a successful write only these rows are copied.
+	dirty := s.dirty[:0]
 	for y := 0; y < s.h; y++ {
 		curRow := s.cur[y]
 		oldRow := s.old[y]
+		// Whole-row fast path: unchanged rows cost one memcmp instead of a
+		// per-cell scan that the compiler cannot vectorize (12-byte structs).
+		if bytes.Equal(rowBytes(curRow), rowBytes(oldRow)) {
+			continue
+		}
+		dirty = append(dirty, y)
 		for x := 0; x < s.w; {
 			if curRow[x] == oldRow[x] {
 				x++
@@ -158,12 +189,13 @@ func (s *Screen) Flush() {
 		n, err := s.out.Write(b)
 		s.failed = err != nil || n != len(b)
 		if !s.failed {
-			for y := range s.cur {
+			for _, y := range dirty {
 				copy(s.old[y], s.cur[y])
 			}
 		}
 	}
 	s.buffer = b[:0]
+	s.dirty = dirty[:0]
 }
 
 func appendColor(b []byte, c abi.RGB, foreground bool) []byte {
@@ -178,10 +210,10 @@ func appendColor(b []byte, c abi.RGB, foreground bool) []byte {
 	} else {
 		b = append(b, "\x1b[48;2;"...)
 	}
-	b = strconv.AppendUint(b, uint64(c.R), 10)
+	b = append(b, dec8[c.R]...)
 	b = append(b, ';')
-	b = strconv.AppendUint(b, uint64(c.G), 10)
+	b = append(b, dec8[c.G]...)
 	b = append(b, ';')
-	b = strconv.AppendUint(b, uint64(c.B), 10)
+	b = append(b, dec8[c.B]...)
 	return append(b, 'm')
 }

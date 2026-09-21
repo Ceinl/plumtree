@@ -124,6 +124,7 @@ func (r Runner) Run(args []string) error {
 func (r Runner) newProject(args []string) error {
 	fs := flag.NewFlagSet("pt new", flag.ContinueOnError)
 	tui, cli := fs.Bool("tui", false, "scaffold an interactive TUI app"), fs.Bool("cli", false, "scaffold a finite CLI app")
+	vm := fs.Bool("vm", false, "scaffold a VM app (wasm-backed stub; hypervisor deferred)")
 	access := fs.String("access", "", "required: public or restricted")
 	ordered, err := flagsBeforePositionals(args, map[string]bool{"--access": true, "-access": true})
 	if err != nil {
@@ -132,12 +133,21 @@ func (r Runner) newProject(args []string) error {
 	if err := fs.Parse(ordered); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 || (*tui == *cli) || *access == "" {
-		return errors.New("usage: pt new NAME --tui|--cli --access public|restricted")
+	selected := 0
+	for _, flag := range []bool{*tui, *cli, *vm} {
+		if flag {
+			selected++
+		}
+	}
+	if fs.NArg() != 1 || selected != 1 || *access == "" {
+		return errors.New("usage: pt new NAME --tui|--cli|--vm --access public|restricted")
 	}
 	kind := scaffold.TUI
 	if *cli {
 		kind = scaffold.CLI
+	}
+	if *vm {
+		kind = scaffold.VM
 	}
 	project, err := NewScaffold(".", fs.Arg(0), kind, *access)
 	if err != nil {
@@ -358,7 +368,7 @@ func (r Runner) secret(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, out, _ := r.streams()
+	_, out, errOut := r.streams()
 	switch args[0] {
 	case "list":
 		if len(args) != 2 {
@@ -377,7 +387,7 @@ func (r Runner) secret(args []string) error {
 		if len(args) == 4 {
 			value = args[3]
 		} else {
-			value, err = readSecret(r.In)
+			value, err = promptSecret(r.In, errOut, "new secret")
 			if err != nil {
 				return err
 			}
@@ -563,6 +573,20 @@ func flagsBeforePositionals(args []string, valueFlags map[string]bool) ([]string
 		}
 	}
 	return append(flags, positionals...), nil
+}
+
+// promptSecret prints the given prompt naming the expected value on errOut,
+// then reads one value: hidden when stdin is a terminal, plain line
+// otherwise. The prompt goes to stderr so --json stdout stays parseable, and
+// a newline closes the line that hidden terminal input leaves open.
+func promptSecret(in io.Reader, errOut io.Writer, prompt string) (string, error) {
+	_, _ = fmt.Fprintf(errOut, "%s: ", prompt)
+	value, err := readSecret(in)
+	if err != nil {
+		return "", err
+	}
+	_, _ = fmt.Fprintln(errOut)
+	return value, nil
 }
 func readSecret(in io.Reader) (string, error) {
 	if in == nil {

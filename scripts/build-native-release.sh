@@ -25,6 +25,7 @@ export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:--L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_P
 	cd "$workspace_root"
 	# Stamp the release version like build-release.sh does when an exact tag
 	# is checked out; PLUMTREE_VERSION overrides.
+	stamp_ldflags=""
 	stamp=${PLUMTREE_VERSION:-$(git describe --tags --exact-match HEAD 2>/dev/null || true)}
 	if [[ -n "$stamp" ]]; then
 		stamp_ldflags="-X main.version=$stamp"

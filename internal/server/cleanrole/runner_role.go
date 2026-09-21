@@ -15,11 +15,13 @@ import (
 
 	"github.com/Ceinl/plumtree/internal/runner"
 	serverconfig "github.com/Ceinl/plumtree/internal/server/config"
+	plumterminal "github.com/Ceinl/plumtree/internal/terminal"
 )
 
 type runnerComponent struct {
 	projection     serverconfig.RoleProjection
 	out            io.Writer
+	errOut         io.Writer
 	environ        []string
 	productVersion string
 	configPath     string
@@ -81,7 +83,7 @@ func (c *runnerComponent) Start(ctx context.Context) error {
 	broker := &runner.Broker{
 		WorkerPath: cfg.Runtime.RunnerWorker, Token: strings.TrimSpace(string(c.projection.Secret())),
 		MaxSessions: cfg.WorkerCapacity(), WorkerUIDBase: uint32(cfg.Runtime.WorkerUIDBase), ScratchRoot: cfg.Runtime.RunnerScratchRoot,
-		Logf: func(format string, args ...any) { _, _ = fmt.Fprintf(c.out, format+"\n", args...) },
+		Logf: plumterminal.EventFunc(c.eventOut(), plumterminal.ColorFor(c.eventOut())),
 	}
 	go func() {
 		err := broker.Serve(ctx, listener)
@@ -104,6 +106,14 @@ func (c *runnerComponent) Ready(context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// eventOut defaults to io.Discard so zero-value components stay silent.
+func (c *runnerComponent) eventOut() io.Writer {
+	if c.errOut == nil {
+		return io.Discard
+	}
+	return c.errOut
 }
 
 func (c *runnerComponent) Stop(ctx context.Context) error {
