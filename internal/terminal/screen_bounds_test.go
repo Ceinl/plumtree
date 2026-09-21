@@ -10,7 +10,7 @@ import (
 	"github.com/Ceinl/plumtree/sdk/abi"
 )
 
-func snapshotGrid(s *Screen) [][]abi.Cell {
+func gridCopy(s *Screen) [][]abi.Cell {
 	out := make([][]abi.Cell, len(s.cur))
 	for y := range s.cur {
 		out[y] = append([]abi.Cell(nil), s.cur[y]...)
@@ -75,14 +75,14 @@ func TestHostileDimensionsClampIntoSafeGrid(t *testing.T) {
 // Out-of-bounds Set is ignored exactly; the grid stays untouched.
 func TestSetOutsideGridNeverTouchesCells(t *testing.T) {
 	s := NewScreenWithOutput(4, 2, io.Discard)
-	before := snapshotGrid(s)
+	before := gridCopy(s)
 	for _, coord := range [][2]int{
 		{-1, 0}, {4, 0}, {0, -1}, {0, 2}, {1 << 40, 1 << 40},
 		{int(^uint(0) >> 1), 0}, {0, int(^uint(0) >> 1)},
 	} {
 		assertNotPanics(t, func() { s.Set(coord[0], coord[1], abi.Cell{Ch: 'm'}) })
 	}
-	if !reflect.DeepEqual(before, snapshotGrid(s)) {
+	if !reflect.DeepEqual(before, gridCopy(s)) {
 		t.Fatal("out-of-bounds Set changed the grid")
 	}
 }
@@ -91,10 +91,10 @@ func TestSetOutsideGridNeverTouchesCells(t *testing.T) {
 // rejects negative and oversized row indices.
 func TestSetRowClipsWithoutCorruptingOtherRows(t *testing.T) {
 	s := NewScreenWithOutput(4, 2, io.Discard)
-	before := snapshotGrid(s)
+	before := gridCopy(s)
 	s.SetRow(-1, []abi.Cell{{Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}})
 	s.SetRow(2, []abi.Cell{{Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}, {Ch: 'x'}})
-	if !reflect.DeepEqual(before, snapshotGrid(s)) {
+	if !reflect.DeepEqual(before, gridCopy(s)) {
 		t.Fatal("rejected SetRow changed the grid")
 	}
 	s.SetRow(0, []abi.Cell{{Ch: 'a'}, {Ch: 'b'}})
