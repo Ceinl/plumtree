@@ -50,7 +50,7 @@ jobs:
           CC: gcc
           OPENSSL_PREFIX: /usr
           SQLCIPHER_INCLUDE: /usr/include/sqlcipher
-          SQLCIPHER_LIBRARY: sqlite3
+          SQLCIPHER_LIBRARY: sqlcipher
           SQLCIPHER_PREFIX: /usr
         run: ./scripts/build-release.sh dist
       - name: Verify release asset contract

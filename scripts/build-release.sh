@@ -12,8 +12,10 @@ output_dir=$(cd "$output_dir" && pwd)
 : "${CC:?set CC to the target-native C compiler (or a target-dispatching wrapper)}"
 
 export CGO_ENABLED=1
-default_cflags="-I${SQLCIPHER_PREFIX}/include -I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
-default_ldflags="-L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -lsqlite3 -lcrypto -lssl"
+sqlcipher_include=${SQLCIPHER_INCLUDE:-"$SQLCIPHER_PREFIX/include"}
+sqlcipher_library=${SQLCIPHER_LIBRARY:-sqlite3}
+default_cflags="-I${sqlcipher_include} -I${OPENSSL_PREFIX}/include -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown"
+default_ldflags="-L${SQLCIPHER_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -l${sqlcipher_library} -lcrypto -lssl"
 export CGO_CFLAGS="${SQLCIPHER_CFLAGS:-$default_cflags}"
 export CGO_LDFLAGS="${SQLCIPHER_LDFLAGS:-$default_ldflags}"
 build_tags="sqlcipher libsqlite3"
