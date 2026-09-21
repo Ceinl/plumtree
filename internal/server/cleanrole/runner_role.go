@@ -18,15 +18,17 @@ import (
 )
 
 type runnerComponent struct {
-	projection serverconfig.RoleProjection
-	out        io.Writer
-	environ    []string
-	listener   net.Listener
-	errors     chan error
-	stopped    chan struct{}
-	runErr     error
-	mu         sync.Mutex
-	once       sync.Once
+	projection     serverconfig.RoleProjection
+	out            io.Writer
+	environ        []string
+	productVersion string
+	configPath     string
+	listener       net.Listener
+	errors         chan error
+	stopped        chan struct{}
+	runErr         error
+	mu             sync.Mutex
+	once           sync.Once
 }
 
 func (c *runnerComponent) Start(ctx context.Context) error {
@@ -98,7 +100,9 @@ func (c *runnerComponent) Ready(context.Context) error {
 	if c.listener == nil {
 		return errors.New("clean server: runner role is not ready")
 	}
-	_, _ = fmt.Fprintf(c.out, "plumtree runner ready on %s\n", c.projection.Config().Runtime.RunnerEndpoint)
+	if err := writeRunnerReadySummary(c.out, c.projection.Config(), c.productVersion, c.configPath, c.projection.Config().Runtime.RunnerEndpoint); err != nil {
+		return err
+	}
 	return nil
 }
 

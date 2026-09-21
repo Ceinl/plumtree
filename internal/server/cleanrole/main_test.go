@@ -172,8 +172,11 @@ func TestExecuteAnnouncesReadinessAndDrainsOnCancellation(t *testing.T) {
 	}()
 	select {
 	case message := <-ready:
-		if !strings.Contains(message, "ready on") {
-			t.Fatalf("readiness message = %q", message)
+		if !strings.Contains(message, "plumtree  ready") || !strings.Contains(message, "ssh        127.0.0.1:") {
+			t.Fatalf("readiness summary = %q", message)
+		}
+		if !strings.Contains(message, "next: plumtree bootstrap -handle HANDLE") {
+			t.Fatalf("first-run next action missing: %q", message)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not become ready")
