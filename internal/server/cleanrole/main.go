@@ -35,6 +35,7 @@ import (
 	statebundle "github.com/Ceinl/plumtree/internal/state"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 const defaultProductVersion = "dev"
@@ -96,7 +97,7 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 			return fmt.Errorf("clean server: runner configuration: %w", err)
 		}
 		component := &runnerComponent{projection: projection, out: out, environ: environment, productVersion: resolved.ProductVersion, configPath: resolved.ConfigPath}
-		return runLifecycle(ctx, resolved.Config, component, out, interactiveWriter(out))
+		return runLifecycle(ctx, resolved.Config, component, out, outIsInteractive(out))
 	}
 	if err != nil {
 		return fmt.Errorf("clean server: control configuration: %w", err)
@@ -110,12 +111,12 @@ func Execute(ctx context.Context, args, environment []string, out, errOut io.Wri
 		gatewayToken = gatewayProjection.Secret()
 	}
 	component := &controlComponent{resolved: resolved, projection: projection, gatewayToken: gatewayToken, out: out}
-	return runLifecycle(ctx, resolved.Config, component, out, interactiveWriter(out))
+	return runLifecycle(ctx, resolved.Config, component, out, outIsInteractive(out))
 }
 
-// interactiveWriter reports whether the writer is a live terminal. Lifecycle
+// outIsInteractive reports whether the writer is a live terminal. Lifecycle
 // prose is TTY-only so redirected stays machine-readable.
-func interactiveWriter(out io.Writer) bool {
+func outIsInteractive(out io.Writer) bool {
 	file, ok := out.(*os.File)
 	return ok && term.IsTerminal(int(file.Fd()))
 }

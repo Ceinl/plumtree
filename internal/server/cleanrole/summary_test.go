@@ -26,6 +26,7 @@ func TestReadySummaryControlOnlyAssembly(t *testing.T) {
 		"plumtree  ready", "mode       development", "version    1.2.3",
 		"roles      control", "ssh        127.0.0.1:2222", "state      plumtree.db",
 		"config     config.json", "host key   SHA256:fp",
+		"http       disabled", "gateway    disabled", "capacity   adaptive (materialized at startup)",
 		"hosted apps are unavailable until the gateway and runner roles are enabled",
 		"next: plumtree bootstrap -handle HANDLE",
 	} {
@@ -76,8 +77,17 @@ func TestReadySummaryRunnerOnlyAssembly(t *testing.T) {
 	if err := writeRunnerReadySummary(out, cfg, "dev", "config.json", cfg.Runtime.RunnerEndpoint); err != nil {
 		t.Fatal(err)
 	}
-	if !containsLine(out.String(), "runner     unix:///run/plumtree/runner.sock") {
-		t.Fatalf("runner endpoint missing:\n%s", out.String())
+	text := out.String()
+	if !containsLine(text, "runner     unix:///run/plumtree/runner.sock") {
+		t.Fatalf("runner endpoint missing:\n%s", text)
+	}
+	// The runner assembly owns no SSH listener, so the next action must not
+	// claim the composed-server pairing shortcut.
+	if containsLine(text, "next: ssh") {
+		t.Fatalf("runner summary advertises ssh ownership:\n%s", text)
+	}
+	if !containsLine(text, "capacity   adaptive (materialized at startup)") {
+		t.Fatalf("capacity status missing:\n%s", text)
 	}
 }
 
