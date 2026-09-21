@@ -1,11 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Builds release assets for one or all five contract platforms.
+#
+# Usage: build-release.sh DIST [OS/ARCH ...]
+#
+# Without explicit targets the classic full-desktop build runs: all five
+# platforms, checksums.txt, and the full release contract check. Release
+# matrix runners call it with exactly one target and leave checksum
+# assembly to the publish job, which owns every artifact.
+#
+# The environment is pinned by the caller:
+#   CC               target-native C compiler for this runner
+#   SQLCIPHER_PREFIX pinned SQLCipher prefix (apt / msys2 / vendor build)
+#   OPENSSL_PREFIX   pinned OpenSSL prefix
+# plus optional SQLCIPHER_INCLUDE, SQLCIPHER_LIBRARY,
+
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 output_dir=${1:-"$workspace_root/dist"}
+shift 2>/dev/null || true
 
-mkdir -p "$output_dir"
-output_dir=$(cd "$output_dir" && pwd)
+platforms=(
+  linux/amd64
+  linux/arm64
+  darwin/amd64
+  darwin/arm64
+  windows/amd64
+)
+
+targets=()
+if [[ $# -gt 0 ]]; then
+  for wanted in "$@"; do
+    case " ${platforms[*]} " in
+      *" $wanted "*) targets+=("$wanted") ;;
+      *) echo "unknown release target: $wanted" >&2; exit 1 ;;
+    esac
+  done
+else
+  targets=("${platforms[@]}")
+fi
 
 : "${SQLCIPHER_PREFIX:?set SQLCIPHER_PREFIX to the pinned SQLCipher prefix}"
 : "${OPENSSL_PREFIX:?set OPENSSL_PREFIX to the pinned OpenSSL prefix}"
@@ -38,14 +71,6 @@ fi
   go generate ./internal/build
 )
 
-targets=(
-  linux/amd64
-  linux/arm64
-  darwin/amd64
-  darwin/arm64
-  windows/amd64
-)
-
 for target in "${targets[@]}"; do
   target_os=${target%/*}
   target_arch=${target#*/}
@@ -72,13 +97,17 @@ for target in "${targets[@]}"; do
   )
 done
 
-(
-  cd "$output_dir"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum pt-* plumtree-* > checksums.txt
-  else
-    shasum -a 256 pt-* plumtree-* > checksums.txt
-  fi
-)
+# checksums.txt covers every contract asset, so only the all-platform path
+# writes it here; release matrix publish jobs assemble it.
+if [[ ${#targets[@]} -eq ${#platforms[@]} ]]; then
+  (
+    cd "$output_dir"
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum pt-* plumtree-* > checksums.txt
+    else
+      shasum -a 256 pt-* plumtree-* > checksums.txt
+    fi
+  )
+fi
 
 echo "release assets written to $output_dir"
