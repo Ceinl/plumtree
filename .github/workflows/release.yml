@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  verify-prod:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,24 +35,126 @@ jobs:
             echo "Release tag $RELEASE_TAG does not point to a commit on prod."
             exit 1
           fi
+
+  build:
+    needs: verify-prod
+    name: build-${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+    env:
+      PLUMTREE_PRODUCT_TAG: ${{ inputs.tag || github.ref_name }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
           cache: true
           cache-dependency-path: |
             **/go.sum
-      - name: Test workspace modules
-        run: ./scripts/workspace-check.sh test
-      - name: Install target-native SQLCipher toolchain
+
+      - name: Install SQLCipher toolchain (linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev libssl-dev
-      - name: Build release assets
+
+      - name: Test workspace modules
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: ./scripts/workspace-check.sh test
+
+      - name: Build vendor static SQLCipher + OpenSSL (darwin)
+        if: runner.os == 'macOS'
+        env:
+          CC: clang
+          AR: ar
+          RANLIB: ranlib
+        run: ./scripts/build-static-vendor.sh ${{ matrix.os }}/${{ matrix.arch }} "$RUNNER_TEMP/plumtree-releng"
+
+      - name: Build release assets (linux)
+        if: runner.os == 'Linux'
         env:
           CC: gcc
           OPENSSL_PREFIX: /usr
+          SQLCIPHER_PREFIX: /usr
           SQLCIPHER_INCLUDE: /usr/include/sqlcipher
           SQLCIPHER_LIBRARY: sqlcipher
-          SQLCIPHER_PREFIX: /usr
-        run: ./scripts/build-release.sh dist
+        run: ./scripts/build-release.sh dist ${{ matrix.os }}/${{ matrix.arch }}
+
+      - name: Build release assets (darwin)
+        if: runner.os == 'macOS'
+        env:
+          CC: clang
+          OPENSSL_PREFIX: ${{ runner.temp }}/plumtree-releng/prefix/openssl
+          SQLCIPHER_PREFIX: ${{ runner.temp }}/plumtree-releng/prefix/sqlcipher
+        run: ./scripts/build-release.sh dist ${{ matrix.os }}/${{ matrix.arch }}
+
+      - name: Build release assets (windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-openssl mingw-w64-x86_64-sqlcipher tar diffutils
+      - name: Build release assets (windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          CC: gcc
+          OPENSSL_PREFIX: /mingw64
+          SQLCIPHER_PREFIX: /mingw64
+          SQLCIPHER_INCLUDE: /mingw64/include/sqlcipher
+          SQLCIPHER_LDFLAGS: -L/mingw64/lib -l:libsqlcipher.a -l:libcrypto.a -l:libssl.a
+        run: ./scripts/build-release.sh dist windows/amd64
+
+      - name: Upload platform assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/pt-*
+            dist/plumtree-*
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [verify-prod, build]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assemble release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+      - name: Build checksums manifest
+        run: |
+          cd dist
+          sha256sum pt-* plumtree-* > checksums.txt
       - name: Verify release asset contract
         run: ./scripts/check-release-contract.sh dist "$RELEASE_TAG"
       - name: Verify checksums
@@ -64,8 +166,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
+          # Releases are immutable once published (PLU-128). An existing
+          # published release is never patched with --clobber; rebuilding one
+          # requires deleting the release and the tag on prod explicitly.
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+            assets=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length')
+            if [[ "$assets" != "0" ]]; then
+              echo "release $RELEASE_TAG already exists with $assets published assets; refusing to overwrite" >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" dist/*
           else
             gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
           fi
