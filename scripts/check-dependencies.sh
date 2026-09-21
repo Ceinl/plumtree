@@ -21,10 +21,12 @@ actual=$tmpdir/actual.tsv
 
 # The embedded SDK bundle is generated at build/release time, not committed;
 # go list must be able to compile ./internal/build from a clean checkout.
-(
-  cd "$workspace_root"
-  go generate ./internal/build
-)
+if [[ -f "$workspace_root/internal/build/assets.go" ]]; then
+  (
+    cd "$workspace_root"
+    go generate ./internal/build
+  )
+fi
 
 LC_ALL=C sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$manifest" | sort -u > "$expected"
 cut -f1 "$expected" | sort -u | while IFS= read -r module_dir; do
