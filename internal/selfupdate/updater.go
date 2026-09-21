@@ -88,25 +88,12 @@ func Sha256Hex(data []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// VerifyChecksums checks each downloaded payload against the manifest. It
-// only reads memory; nothing on disk moves while it runs.
-func VerifyChecksums(checksums map[string]string, payloads map[string][]byte) error {
-	for name, payload := range payloads {
-		expected, found := checksums[name]
-		if !found {
-			continue
-		}
-		if got := Sha256Hex(payload); got != expected {
-			return fmt.Errorf("checksum mismatch for %s: manifest %s, download %s", name, expected, got)
-		}
-	}
-	return nil
-}
-
 // ReplaceAll swaps payloads into the targets one at a time. Each replaced
 // binary is first renamed aside as <path>.ptbak; any failure renames the
 // displaced originals back, so a half-updated pair is never the end state.
-func ReplaceAll(rootDirectory string, payloads map[string][]byte) error {
+// The injected fault hook (tests only, nil in production) forces a mid-swap
+// failure to observe the rollback.
+func ReplaceAll(rootDirectory string, payloads map[string][]byte, fault func(Target) error) error {
 	targets, err := PairTargets(rootDirectory)
 	if err != nil {
 		return fmt.Errorf("inspect install directory: %w", err)
@@ -123,8 +110,8 @@ func ReplaceAll(rootDirectory string, payloads map[string][]byte) error {
 		return cause
 	}
 	for _, target := range targets {
-		if swapFault != nil {
-			if err := swapFault(target); err != nil {
+		if fault != nil {
+			if err := fault(target); err != nil {
 				return rollback(fmt.Errorf("replace %s: %w", target.Name, err))
 			}
 		}

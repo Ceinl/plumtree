@@ -73,7 +73,7 @@ func (c Command) Run(args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ReplaceAll(directory, payloads); err != nil {
+	if err := ReplaceAll(directory, payloads, c.Fault); err != nil {
 		return err
 	}
 	CleanupDisplaced(directory)

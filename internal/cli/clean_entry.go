@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Ceinl/plumtree/internal/cli/paired"
@@ -22,22 +20,9 @@ var DevRoot string
 // RunClean is the selected root author workflow surface.
 func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 	if len(args) > 0 {
-		switch args[0] {
-		case "version":
-			fmt.Fprintln(out, selfupdate.DescribeBuild(selfupdate.StampedVersion))
-			return 0
-		case "update":
-			exePath, exeErr := os.Executable()
-			if exeErr != nil {
-				fmt.Fprintln(errOut, terminalSafeText("resolve the running binary: "+exeErr.Error()))
-				return 1
-			}
-			command := selfupdate.Command{
-				ExePath: exePath,
-				Version: selfupdate.StampedVersion,
-				Confirm: func(prompt string) bool { return interactiveConfirm(prompt, in, out) },
-			}
-			if err := command.Run(args[1:], out, errOut); err != nil {
+		if selfupdate.HandlesCommand(args[0]) {
+			command := selfupdate.Command{Version: selfupdate.StampedVersion, Confirm: selfupdate.InteractiveConfirm(in, out)}
+			if err := selfupdate.RunCommand(command, args, out, errOut); err != nil {
 				fmt.Fprintln(errOut, terminalSafeText(err.Error()))
 				return 1
 			}
@@ -59,7 +44,7 @@ func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 			}
 			return workflow.NewAPI(connection)
 		},
-		Confirm: func(prompt string) bool { return interactiveConfirm(prompt, in, out) },
+		Confirm: selfupdate.InteractiveConfirm(in, out),
 	}
 	if err := runner.Run(args); err != nil {
 		fmt.Fprintln(errOut, terminalSafeText(err.Error()))
@@ -68,15 +53,20 @@ func RunClean(args []string, in io.Reader, out, errOut io.Writer) int {
 	return 0
 }
 
-// printUpdateNotice reports the passive update hint on interactive terminals
-// and kicks off the opportunistic daily refresh, both without ever holding up
-// the command.
+// printUpdateNotice reports the passive update hint on a bare interactive pt
+// and refreshes the daily check. Bare pt refreshes synchronously (bounded by
+// the same 2s budget) so short-lived invocations still populate the cache;
+// real subcommands refresh asynchronously so the check never holds up work.
 func printUpdateNotice(args []string, out, errOut io.Writer) {
 	if os.Getenv(selfupdate.OptOutEnv) != "" || !isInteractiveStdin() {
 		return
 	}
 	current := selfupdate.StampedVersion
-	selfupdate.RefreshNoticeCache(os.UserCacheDir, current, time.Now())
+	if len(args) == 0 {
+		selfupdate.RefreshNoticeCacheSync(os.UserCacheDir, current)
+	} else {
+		selfupdate.RefreshNoticeCache(os.UserCacheDir, current, time.Now())
+	}
 	if len(args) > 0 {
 		return // bare pt stays quiet so the usage line is never polluted
 	}
@@ -88,18 +78,4 @@ func printUpdateNotice(args []string, out, errOut io.Writer) {
 func isInteractiveStdin() bool {
 	file, ok := any(os.Stdin).(*os.File)
 	return ok && term.IsTerminal(int(file.Fd()))
-}
-
-func interactiveConfirm(prompt string, in io.Reader, out io.Writer) bool {
-	file, ok := in.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return false
-	}
-	_, _ = fmt.Fprintf(out, "%s [y/N] ", prompt)
-	line, err := bufio.NewReader(io.LimitReader(in, 32)).ReadString('\n')
-	if err != nil && len(line) == 0 {
-		return false
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes"
 }

@@ -3,7 +3,6 @@
 package cleanrole
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -34,7 +33,6 @@ import (
 	statebundle "github.com/Ceinl/plumtree/internal/state"
 	"github.com/Ceinl/plumtree/internal/transport"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
 )
 
 const defaultProductVersion = "dev"
@@ -54,42 +52,13 @@ func Run(args []string) error {
 	return Execute(context.Background(), args, os.Environ(), os.Stdout, os.Stderr)
 }
 
-// serverConfirm reads a y/N prompt on an interactive terminal only.
-func serverConfirm(prompt string, in io.Reader, out io.Writer) bool {
-	file, ok := in.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return false
-	}
-	_, _ = fmt.Fprintf(out, "%s [y/N] ", prompt)
-	line, err := bufio.NewReader(io.LimitReader(in, 32)).ReadString('\n')
-	if err != nil && len(line) == 0 {
-		return false
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	return answer == "y" || answer == "yes"
-}
-
 // Execute runs a binary-update command, a local config or bootstrap command,
 // an operator command, or the selected control role. Binary management reads
 // the release stamp the entrypoint package injected.
 func Execute(ctx context.Context, args, environment []string, out, errOut io.Writer) error {
-	if len(args) > 0 && args[0] == "version" {
-		_, _ = fmt.Fprintln(out, selfupdate.DescribeBuild(selfupdate.StampedVersion))
-		return nil
-	}
-	if len(args) > 0 && args[0] == "update" {
-		exePath, exeErr := os.Executable()
-		if exeErr != nil {
-			return fmt.Errorf("resolve the running binary: %w", exeErr)
-		}
-		command := selfupdate.Command{ExePath: exePath, Version: selfupdate.StampedVersion,
-			Confirm: func(prompt string) bool { return serverConfirm(prompt, os.Stdin, out) }}
-		if err := command.Run(args[1:], out, errOut); err == selfupdate.ErrNoConfirmation {
-			_, _ = fmt.Fprintln(errOut, err)
-		} else if err != nil {
-			return err
-		}
-		return nil
+	if len(args) > 0 && selfupdate.HandlesCommand(args[0]) {
+		command := selfupdate.Command{Version: selfupdate.StampedVersion, Confirm: selfupdate.InteractiveConfirm(os.Stdin, out)}
+		return selfupdate.RunCommand(command, args, out, errOut)
 	}
 	if handled, err := routeCommandHelp(args, out); handled {
 		return err

@@ -1,8 +1,10 @@
 package selfupdate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,8 +223,7 @@ func TestUpdateRollsBackWhenOneMemberReplacementFails(t *testing.T) {
 	serverPath := seedBinary(t, directory, "plumtree", "old-server", 0o755)
 	source, _ := stagedRelease(fakeStableTag, "")
 	command := newCommand(directory, "v1.2.3", source)
-	defer func() { swapFault = nil }()
-	swapFault = func(target Target) error {
+	command.Fault = func(target Target) error {
 		if target.Name == "plumtree" {
 			return errors.New("forced failure")
 		}
@@ -392,4 +393,28 @@ func mustJSON(t *testing.T, record noticeRecord) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// RunCommand is the shared dispatch surface of both binaries: `version`
+// prints the build identity, a refused update maps to an error (exit 1 for
+// every caller), and other subcommands are not its business.
+func TestRunCommandDispatch(t *testing.T) {
+	var out bytes.Buffer
+	if err := RunCommand(Command{Version: "v1.2.3"}, []string{"version"}, &out, io.Discard); err != nil {
+		t.Fatalf("version dispatch: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "v1.2.3" {
+		t.Fatalf("version output %q, want v1.2.3", got)
+	}
+	if err := RunCommand(Command{}, []string{"pair"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("non-update subcommand dispatched selfupdate RunCommand")
+	}
+	// A zero-stamp binary (checkout build) refuses to update, and the refusal
+	// is an ordinary error callers exit non-zero on.
+	directory := t.TempDir()
+	command := Command{ExePath: filepath.Join(directory, "pt")}
+	err := RunCommand(command, []string{"update", "--yes"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "release stamp") {
+		t.Fatalf("dev-build update: err = %v, want refusal guidance", err)
+	}
 }
