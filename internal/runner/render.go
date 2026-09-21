@@ -1,0 +1,222 @@
+package runner
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/Ceinl/plumtree/internal/terminal"
+	"github.com/Ceinl/plumtree/sdk/abi"
+)
+
+// sanitizeRune enforces the connection-path defense: the guest returns runes,
+// but the host decides what reaches the terminal. Control and format characters
+// that could drive the viewer's terminal become spaces, so a hostile guest
+// cannot smuggle escape/control bytes through cell content.
+func sanitizeRune(r rune) rune {
+	switch {
+	case r == 0:
+		return ' '
+	case r < 0x20 || r == 0x7f: // C0 controls + DEL
+		return ' '
+	case r >= 0x80 && r <= 0x9f: // C1 controls
+		return ' '
+	case !utf8.ValidRune(r):
+		return '?'
+	default:
+		return r
+	}
+}
+
+// validFrame reports whether the frame can safely be decoded and painted:
+// dimensions inside the terminal limits and exactly a full grid of cells.
+// Every sink shares this gate so a malformed frame is ignored whole — no
+// partial write, whatever the render path.
+func validFrame(f abi.Frame) bool {
+	return f.W >= 1 && f.W <= abi.MaxFrameWidth &&
+		f.H >= 1 && f.H <= abi.MaxFrameHeight &&
+		len(f.Cells) == f.W*f.H
+}
+
+// TextSink renders frames as bordered plain text to a writer. Used by
+// `pt dev --headless` and tests, where there is no PTY. Styling is dropped;
+// only sanitized glyphs are shown.
+type TextSink struct{ W io.Writer }
+
+func (s TextSink) Present(f abi.Frame) {
+	if !validFrame(f) {
+		return
+	}
+	bar := strings.Repeat("─", f.W)
+	fmt.Fprintf(s.W, "┌%s┐\n", bar)
+	var b strings.Builder
+	for y := 0; y < f.H; y++ {
+		b.Reset()
+		for x := 0; x < f.W; x++ {
+			b.WriteRune(sanitizeRune(f.At(x, y).Ch))
+		}
+		fmt.Fprintf(s.W, "│%s│\n", b.String())
+	}
+	fmt.Fprintf(s.W, "└%s┘\n", bar)
+}
+
+// TTYSink paints frames onto a real terminal via the runtime's diffing screen
+// buffer. The only ANSI written is generated host-side from validated RGB —
+// never passed through from the guest. A frame-rate cap coalesces repaints.
+type TTYSink struct {
+	mu    sync.Mutex
+	scr   *terminal.Screen
+	w, h  int
+	row   []abi.Cell // sanitizing scratch for one frame row
+	thr   throttle
+	dirty bool
+	timer *time.Timer
+}
+
+// NewTTYSink returns a sink sized to w x h that flushes to stdout, capped at
+// maxFPS repaints/sec.
+func NewTTYSink(w, h, maxFPS int) *TTYSink {
+	return NewTTYSinkWriter(w, h, maxFPS, nil)
+}
+
+// NewTTYSinkWriter is like NewTTYSink but flushes to out (e.g. an SSH channel).
+// A nil out renders to stdout.
+func NewTTYSinkWriter(w, h, maxFPS int, out io.Writer) *TTYSink {
+	if out == nil {
+		out = os.Stdout
+	}
+	scr := terminal.NewScreenWithOutput(w, h, out)
+	return &TTYSink{scr: scr, w: w, h: h, thr: newThrottle(maxFPS)}
+}
+
+// Healthy reports whether the last flush fully reached the terminal. Callers
+// may use it to suppress work that would be a visual no-op: while unhealthy the
+// screen must repaint identical frames to heal a failed write.
+func (s *TTYSink) Healthy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scr.Healthy()
+}
+
+func (s *TTYSink) Present(f abi.Frame) {
+	if !validFrame(f) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cap(s.row) < f.W {
+		s.row = make([]abi.Cell, f.W)
+	}
+	s.row = s.row[:f.W]
+	if f.W != s.w || f.H != s.h {
+		s.scr.Resize(f.W, f.H)
+		s.w, s.h = f.W, f.H
+	}
+	for y := 0; y < f.H; y++ {
+		src := f.Cells[y*f.W : y*f.W+f.W]
+		for x := range src {
+			c := src[x]
+			c.Ch = sanitizeRune(c.Ch)
+			s.row[x] = c
+		}
+		s.scr.SetRow(y, s.row)
+	}
+	now := time.Now()
+	if s.thr.allow(now) {
+		if s.timer != nil {
+			s.timer.Stop()
+			s.timer = nil
+		}
+		s.dirty = false
+		s.scr.Flush()
+		return
+	}
+	s.dirty = true
+	if s.timer == nil {
+		delay := s.thr.remaining(now)
+		s.timer = time.AfterFunc(delay, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.timer = nil
+			if !s.dirty {
+				return
+			}
+			s.dirty = false
+			s.thr.allow(time.Now())
+			s.scr.Flush()
+		})
+	}
+}
+
+// Close flushes the last coalesced frame and stops its timer. Call it before
+// the host restores the terminal so no delayed paint can reach the normal
+// screen after cleanup.
+func (s *TTYSink) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	if s.dirty {
+		s.dirty = false
+		s.scr.Flush()
+	}
+}
+
+// frameDedup suppresses frames byte-identical to the last one handed to the
+// sink. A guest that re-presents an unchanged frame (timers, mouse moves, bus
+// traffic over an unchanged view) then costs no decode, no cell copy, and no
+// diff. Suppression is gated on the sink being healthy: a failed flush leaves
+// the viewer stale, so suppressed frames must resume repainting until the
+// screen heals. Sinks without health reporting are never suppressed.
+type frameDedup struct{ last []byte }
+
+func (d *frameDedup) suppressed(raw []byte, sink Sink) bool {
+	if len(raw) != len(d.last) || !bytes.Equal(raw, d.last) {
+		return false
+	}
+	h, ok := sink.(interface{ Healthy() bool })
+	return ok && h.Healthy()
+}
+
+func (d *frameDedup) observe(raw []byte) {
+	d.last = append(d.last[:0], raw...)
+}
+
+// throttle caps how often frames are flushed (output rate limiting).
+type throttle struct {
+	min  time.Duration
+	last time.Time
+}
+
+func newThrottle(maxFPS int) throttle {
+	if maxFPS <= 0 {
+		return throttle{}
+	}
+	return throttle{min: time.Second / time.Duration(maxFPS)}
+}
+
+func (t *throttle) allow(now time.Time) bool {
+	if t.min == 0 || now.Sub(t.last) >= t.min {
+		t.last = now
+		return true
+	}
+	return false
+}
+
+func (t *throttle) remaining(now time.Time) time.Duration {
+	if t.min == 0 {
+		return 0
+	}
+	remaining := t.min - now.Sub(t.last)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}

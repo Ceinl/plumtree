@@ -10,30 +10,33 @@ own servers, and streams the rendered terminal to the user.
 > over SSH.
 
 ```
-# run any deployed app — nothing to install but ssh
-ssh <owner>/<app>@plumtree.app
+# run any deployed app on your paired server — nothing to install but ssh
+ssh -p 2222 <owner>/<app>@localhost      # hosted: ssh <owner>/<app>@<your-server>
 
-# ship your own
-pt new myapp --tui
-pt dev
+# ship your own, end to end on one machine
+plumtree bootstrap -handle alice -device laptop   # prints a one-use bootstrap id
+plumtree serve                           # control + gateway roles, SSH on :2222
+pt pair --bootstrap <id> --yes localhost
+pt new myapp --tui --access public
+pt dev                                   # local run; `pt dev --ssh` serves it over SSH
 pt deploy
+ssh -p 2222 alice/myapp@localhost        # run the deployed app
 ```
 
 ---
 
 ## How it works
 
-A Plumtree app is a small Go program written against the SDK. You never touch
-raw `os`, `net`, or ANSI — the app reaches the outside world *only* through a
-capability object (`ctx`) the platform hands it.
+A Plumtree app is a small Go program written against the clean SDK. You never
+touch raw terminal rendering or hosted capability plumbing; the app reaches
+the outside world through typed operation packages.
 
 1. **Author** — `pt new` scaffolds the standard app shape; `pt dev` compiles to
    WASM and runs it locally in [wazero](https://wazero.io) over a real PTY.
-2. **Deploy** — `pt deploy` uploads source; the platform builds it to WASM in a
-   sandboxed build worker and stores the artifact.
-3. **Run** — a user connects with plain `ssh`. The platform instantiates the
-   WASM module in an isolated runner, bridges keystrokes in and rendered frames
-   out, and streams it over the SSH PTY.
+2. **Deploy** — `pt build` compiles the app locally to WASM and the clean API
+   stores the typed artifact and metadata.
+3. **Run** — `ssh <author>/<app>@<host>` starts the active deployment. A shell
+   runs the TUI path; SSH exec passes bounded arguments to the finite CLI path.
 
 The connecting user runs **nothing locally** — only `ssh` and a terminal. The
 app's code never reaches their machine, so a malicious app can't touch their
@@ -41,16 +44,21 @@ files, env, or disk. The execution risk lives entirely with the platform, which
 is why every app is sandboxed by default.
 
 ```
-author ── pt deploy ──▶ control-plane ──▶ build-worker (Go ─▶ WASM)
-                            │
-user ── ssh ──▶ ssh-gateway ──▶ runner (wazero sandbox) ──▶ your app
+author ── pt build/deploy ──▶ plumtree (SQLite repository)
+                                  │
+                       SSH control subsystem ──▶ /api/v1
+                                  │
+                     public/restricted leaf session
                                    │
-                       ctx: kv · pubsub · auth · env · fetch
+              in-process session, or the runner-worker
+                 boundary when runtime.runnerEndpoint is set
+                                   │
+                        ctx: kv · pubsub · auth · env · fetch
 ```
 
 ## Writing an app
 
-A TUI is *state → build a component tree → the runtime lays it out and
+A TUI is *state → build a UI node tree → the runtime lays it out and
 diff-renders it to a cell grid*. The app returns structured cells; the host
 turns them into terminal output (so apps can never emit raw escape codes).
 
@@ -58,60 +66,26 @@ turns them into terminal output (so apps can never emit raw escape codes).
 package main
 
 import (
-    "fmt"
-
-    "github.com/Ceinl/plumtree/sdk"
-    "github.com/Ceinl/plumtree/sdk/tui"
-    "github.com/Ceinl/plumtree/sdk/tui/components"
+    "github.com/Ceinl/plumtree/sdk/app"
+    "github.com/Ceinl/plumtree/sdk/ui"
 )
 
 type state struct{ n int }
 
-func (s *state) Update(ev sdk.Event) {
-    if k, ok := ev.(sdk.KeyMsg); ok {
-        switch k.Key {
-        case sdk.KeyUp:
-            s.n++
-        case sdk.KeyDown:
-            s.n--
-        case 'q':
-            sdk.Quit()
-        }
+func (s *state) Update(ev app.Event) app.Command {
+    if k, ok := ev.(app.KeyEvent); ok {
+        switch k.Key { case app.KeyUp: s.n++; case app.KeyDown: s.n--; case 'q': return app.Quit() }
     }
+    return app.Noop()
 }
-
-func (s *state) View() tui.Component {
-    root := components.NewDiv()
-    root.SetDirection(tui.Column)
-    root.SetJustify(tui.JCenter)
-    root.SetAlign(tui.ACenter)
-
-    count := components.NewText()
-    count.SetContent(fmt.Sprintf("Count: %d", s.n))
-    hint := components.NewText()
-    hint.SetContent("(↑/↓ to change, q to quit)")
-
-    root.Add(count, hint)
-    return root
-}
-
-func main() { sdk.RunTUI(&state{}, sdk.Meta{Name: "counter", Type: "tui"}) }
+func (s *state) View() ui.Node { return ui.Column(ui.Textf("Count: %d", s.n)) }
+func main() { app.Run(&state{}) }
 ```
 
 …or a non-interactive CLI:
 
 ```go
-func main() {
-    sdk.CLI(sdk.Meta{Name: "hello", Type: "cli"},
-        func(ctx sdk.Ctx, args []string) error {
-            name := "world"
-            if len(args) > 0 {
-                name = args[0]
-            }
-            ctx.Out().Printf("Hello %s\n", name)
-            return nil
-        })
-}
+func main() { cli.Run(cli.Root("hello").WithCommand(cli.New("hello", "greet"))) }
 ```
 
 ### App shape
@@ -119,8 +93,8 @@ func main() {
 ```
 app/main.go                  # entrypoint: the CLI/TUI definition
 go.mod
-plumtree.json                # committed: { "deployId": "..." } once claimed
-.env.plumtree.server.local   # optional, gitignored; secrets live server-side
+plumtree.json                 # committed: { "name", "type", "access" }
+.plumtree/                    # local development state; gitignored
 ```
 
 ### Capabilities (`ctx`)
@@ -133,55 +107,79 @@ guest. More trust unlocks more capability:
 | `ctx.KV`    | durable per-app key/value state        | all apps            |
 | pub/sub     | live cross-session messaging (no poll) | all apps            |
 | `ctx.Auth`  | proved SSH-key or explicit anonymous identity | all apps       |
-| `ctx.Env`   | server-side secrets                    | **claimed** apps    |
-| `ctx.Fetch` | gated, default-deny egress allowlist   | **claimed** apps    |
-| `sdk.Exec`  | run a program as the server OS user   | **claimed** apps when operator-enabled |
+| `ctx.Env`   | server-side secrets                    | paired apps         |
+| `ctx.Fetch` | gated, default-deny egress allowlist   | paired apps         |
 
-### Trusted self-hosted apps
+"Paired" means the app was deployed by a paired owner: secrets and egress are
+owner-relative capabilities and stay absent for ownerless deployments. A failed
+capability lookup fails closed — the session runs without it.
 
-Private/self-hosted servers can opt into host command execution for claimed
-apps. Set `allowHostCommands` to `true` in the server JSON config, pass
-`-allow-host-commands`, or set `PLUMTREE_ALLOW_HOST_COMMANDS=true`. Apps can
-then invoke installed tools directly:
+### Capability examples
 
-```go
-result, err := sdk.Exec("codex", "exec", "summarize the current project")
-```
+The deployable apps under `examples/` show how the capabilities compose into
+something larger than a single-feature fixture:
 
-The option is off by default and never applies to unclaimed preview apps. It is
-an intentional trust-boundary change: commands inherit the server process's
-user, working directory, and environment. Enable it only when every claimed app
-and author on that server is trusted. Command output is capped and execution is
-cancelled when the app session ends.
+| Example | SDK capabilities | Try it |
+|---------|------------------|--------|
+| [`chat`](examples/chat) | SSH identity + durable KV profiles/history + live pub/sub | `ssh -p 2222 <owner>/chat@localhost` |
+| [`ascii-saver`](examples/ascii-saver) | timers + resize-safe custom cell rendering | `ssh -p 2222 <owner>/ascii-saver@localhost` |
+| [`afterimage`](examples/afterimage) | interactive signal art + timers + mouse/keyboard + structured canvas | `ssh -p 2222 <owner>/afterimage@localhost` |
+| [`tic-tac-toe`](examples/tic-tac-toe) | mouse input + leased player seats + KV/CAS + live pub/sub | `ssh -p 2222 <owner>/tic-tac-toe@localhost` |
+| [`agentboard`](examples/agentboard) | identity-aware KV domain model + pub/sub + clean CLI | `ssh -p 2222 <owner>/agentboard@localhost` |
+| [`familiar`](examples/familiar) | secrets + gated egress/host commands (dual transport) + identity KV memory + pub/sub presence + SSH-exec CLI | `ssh -p 2222 <owner>/familiar@localhost` |
+
+Deploy each example from its directory with `pt deploy` after pairing, then
+connect with your own `<owner>/<app>` handle — on a hosted server, replace
+`-p 2222 …@localhost` with `<owner>/<app>@<your-server>`.
+
+The chat remembers display names only for stable SSH-key identities; anonymous
+session IDs are intentionally ephemeral. Tic-tac-toe gives its first two live
+identities the X and O seats; everyone else watches until a seat is released.
 
 ## The `pt` CLI
 
-`pt` is the author tool — scaffold, dev-run, deploy, inspect. It is **not**
+`pt` is the author tool — scaffold, dev-run, build, deploy, and administration. It is **not**
 needed to *run* apps (that's `ssh`).
 
 ```
-pt new <name> --tui|--cli   # scaffold the standard Go app shape
-pt dev                      # compile to WASM + run locally in wazero
-pt dev --ssh                # serve the local app over a local SSH channel
-pt deploy                   # build server-side + deploy
+pt new <name> --tui|--cli|--vm --access public|restricted  # scaffold the app shape
+pt new --cli --access restricted <name>                # flags can also come first
+pt dev [args...]            # compile and run; TUI apps use the current terminal
+pt dev --headless           # run a deterministic scripted TUI session
+pt dev --ssh                # serve the app through loopback SSH
+pt build                    # compile to a typed WASM artifact
+pt deploy                   # build locally and deploy the artifact
 
-pt claim                    # browser-claim the deploy to your owner (this is author auth)
-pt whoami                   # show your claimed namespace
-pt secret set KEY           # server-side secret (claimed apps)
-pt egress add HOST          # egress allowlist entry (claimed apps)
+pt status                   # server and app state
+pt server list              # paired servers and current selection
+pt server use <name>        # select a paired server
+pt device invite <name>     # create a one-use second-device invitation
+pt device list              # list active and revoked author devices
+pt audit                    # audit records
+pt access                   # typed access-key workflow
 
 pt logs <app>               # session logs
-pt inspect <deploy|handle>  # deploy details
+pt help <command>           # usage and grammar for every command
 ```
 
-**Author auth is the deploy claim**, not a separate login: `pt claim` opens a
-Shoo browser flow that binds the deploy to your owner. Possession of the claim
-token (in `.plumtree/deploy.json`) authorizes later updates, secrets, and egress.
+Use `--` before app arguments that start with `-`. Headless development accepts
+`--script`, `-w`, `-h`, `--mem-pages`, `--frame-timeout`, and `--max-fps`.
+Development SSH listens on `127.0.0.1:2222` by default; use `--addr` to select a
+different loopback address and `--allow-nonloopback-ssh` to lift that guard.
+`pt dev --ssh` also installs a `plumtree.dev` alias into `~/.ssh/config`, so a
+plain `ssh plumtree.dev` reaches the running app — rename it with `--host
+ALIAS`, or pass `--no-ssh-config` to skip the write and print the raw ssh
+command instead.
 
-For a trusted server, `control-plane -auto-claim` combines deploy and claim
-without Shoo, a handle prompt, or dashboard interaction. Every deploy-token
-holder shares the internal `autoclaim/<app>` namespace, so leave this mode
-disabled when those clients should not trust one another.
+Deploy and destructive `secret rm`, `egress rm`, and `access rm` operations ask
+for confirmation in a terminal. Use `--yes` for a non-interactive command.
+
+Author and device identity use dedicated per-server Ed25519 keys over the
+`plumtree-pair-v1` SSH subsystem. A local operator creates a one-use bootstrap
+authority before the first author pairs. Later devices use an invitation from
+an active device, and offline recovery rotates the recovery phrase and revokes
+lost devices. No browser claim, dashboard, or bearer token is part of the
+clean API contract.
 
 ## Security model
 
@@ -190,17 +188,18 @@ RCE is the product, not a bug — every app is hostile by default, so the goal i
 
 - **WASM/wazero is the primary boundary.** Each app runs as a WASI *reactor*
   with no ambient filesystem, env, args, or network — it can only call the host
-  functions we import. Production runners are separate worker processes from the
-  control plane.
-- **Progressive trust = capability.** Unclaimed apps run in the tightest
-  sandbox (KV only, no secrets, no egress). Claiming unlocks `ctx.Env` and gated
-  `ctx.Fetch`.
+  functions we import. By default a session executes in the serving process;
+  production configuration requires the isolated runner-worker boundary
+  (`runtime.runnerEndpoint` over `unix://` or `tls://`, with the disposable
+  worker owned by a separate runner role), so untrusted WASM leaves the
+  server process whenever isolation is configured.
+- **App-scoped capability.** Secrets and egress are loaded only for the app
+  selected for that session. Egress stays default-deny.
 - **No raw-ANSI escape path.** The guest returns structured cells (`rune + RGB +
   decor`); the host renders them and sanitizes every rune, so apps can't attack
   the viewer's terminal.
-- **Build is sandboxed too.** Compiling untrusted Go runs code before run-time,
-  so builds happen in isolated workers — no secrets, no default network, bounded
-  CPU/memory/disk, isolated module cache, checksum + module policy enforcement.
+- **Build is local.** `pt build` compiles the author's project before the typed
+  artifact is uploaded. The server never runs uploaded source or build tools.
 - **Hard limits everywhere** — per-frame wall-clock deadlines, memory page caps,
   output/input rate, storage quotas, per-author concurrency caps, deploy rate
   limits, and kill switches. **Deploy is gated harder than run.**
@@ -210,47 +209,68 @@ tenants, or from the operator.
 
 ## Repository layout
 
-A multi-module Go workspace (`go.work`), split by product boundary:
+A multi-module Go workspace (`go.work`) with the root product module:
 
 | Path             | Module                                    | Purpose                                                        |
 |------------------|-------------------------------------------|---------------------------------------------------------------|
-| `tui-runtime/`   | `github.com/Ceinl/plumtree/tui-runtime`   | Standalone TUI runtime: layout, components, screen/diff.       |
+| `./`             | `github.com/Ceinl/plumtree`               | Root product module and staged internal ownership boundaries.  |
 | `sdk/`           | `github.com/Ceinl/plumtree/sdk`           | Author-facing Go SDK and the versioned WASM ABI wrapper.       |
-| `pt/`            | `github.com/Ceinl/plumtree/pt`            | Author CLI: scaffold, dev, deploy, claim, logs, secrets.      |
-| `control-plane/` | `github.com/Ceinl/plumtree/control-plane` | Platform API: app/deploy metadata, auth, tokens, quotas.      |
-| `build-worker/`  | `github.com/Ceinl/plumtree/build-worker`  | Sandboxed source-to-WASM build service.                        |
-| `runner/`        | `github.com/Ceinl/plumtree/runner`        | Isolated WASM session runner + host capability implementation. |
-| `ssh-gateway/`   | `github.com/Ceinl/plumtree/ssh-gateway`   | SSH front end mapping connections to deployed app sessions.    |
+| `sdk/app/`       | `github.com/Ceinl/plumtree/sdk/app`       | Additive clean interactive lifecycle, commands, and subscriptions. |
+| `sdk/ui/`        | `github.com/Ceinl/plumtree/sdk/ui`        | Additive declarative UI nodes, themes, focus, and canvas.      |
+| `sdk/plumtest/`  | `github.com/Ceinl/plumtree/sdk/plumtest`  | Deterministic in-process interactive model test harness.      |
+| `cmd/pt/`         | `github.com/Ceinl/plumtree/cmd/pt`        | Root author CLI entrypoint.                            |
+| `cmd/plumtree/`   | `github.com/Ceinl/plumtree/cmd/plumtree`  | Root server-role entrypoint.                          |
+| `internal/cli/`   | `github.com/Ceinl/plumtree/internal/cli`  | Root-owned author CLI, scaffold, local dev, deploy, and management. |
+| `internal/build/` | `github.com/Ceinl/plumtree/internal/build`| Root-owned local WASM build and source packaging.              |
+| `cmd/runner-worker/` | `github.com/Ceinl/plumtree/cmd/runner-worker` | Root-owned isolated WASM worker boundary. |
+| `internal/runner/` | `github.com/Ceinl/plumtree/internal/runner` | Isolated WASM session runner, broker, worker, and host capabilities. |
+| `internal/gateway/` | `github.com/Ceinl/plumtree/internal/gateway` | Embedded SSH leaf frontend and session lifecycle. |
+| `internal/httpapi/v1/` | `github.com/Ceinl/plumtree/internal/httpapi/v1` | Clean authenticated control and artifact API. |
+| `internal/sqlite/` | `github.com/Ceinl/plumtree/internal/sqlite` | Root-owned strict SQLite/SQLCipher repository. |
+| `internal/protocol/` | `github.com/Ceinl/plumtree/internal/protocol` | Bounded runner, control, pairing, build, and exec contracts. |
+| `internal/server/cleanrole/` | `github.com/Ceinl/plumtree/internal/server/cleanrole` | Root native SSH/SQLite assembly. |
 
 ## Status
 
-The end-to-end author loop works against a local control plane:
+The end-to-end author loop works against a fresh local control plane:
 
 ```
-server: go run ./control-plane/cmd/control-plane
-author: pt new → pt dev → pt deploy → pt claim → ssh -p 2222 <app>@127.0.0.1
+operator: plumtree bootstrap -handle alice -device laptop
+server:   go run ./cmd/plumtree
+author:   pt pair → pt status → pt new → pt dev → pt build → pt deploy
 ```
 
-Local server startup is zero-config: HTTP and SSH bind to loopback, and a
-private persistent deploy token is shared automatically with a same-user `pt`
-client. Use Tailscale Serve with an HTTPS MagicDNS public origin for browser
-authentication from other machines; startup then prints the client
-configuration they need. Trusted HTTP-only tailnets can combine `--tailscale`
-with `--auto-claim` to bypass browser claims. See the control-plane README for
-setup.
+Local server startup persists the SQLite repository and SSH host key (point
+`storage.sshIdentity` at your own key with `-host-key` or `PLUMTREE_HOST_KEY` to
+pin it explicitly). The clean transport is SSH-only; there is no public HTTP
+listener or shared deploy token. Run `pt help <command>` for the exact grammar
+of every author command. The first `plumtree serve` creates the strict configuration at the platform
+config path. Operators can use `plumtree config show`,
+`plumtree config set <field> <value>`, and `plumtree config unset <field>`;
+changes take effect after restart. `-config` or `PLUMTREE_CONFIG` selects an
+explicit file.
 
-A deployed app is built server-side from uploaded source, stored as a WASM
-artifact, and streamed over SSH; every session runs in its own wazero sandbox
-with no ambient authority. The full host-capability surface — KV, pub/sub, auth,
-env/secrets, and gated fetch — is wired end to end on a shared host-import +
-`ptr/len` ABI, with native + `wasip1` builds from one source and e2e tests that
-build the real WASM guest.
+With `resources.autoCapacity` enabled, session admission uses the smaller of
+`limits.maxSessions` and the memory-based capacity. Half the detected memory
+(up to 8 GiB) is reserved for the host and compilation. Each session budgets
+its guest memory limit plus 32 MiB of host state. Default guest limits permit
+4 sessions on 512 MiB or 8 on 1 GiB. This is an admission estimate, not a hard
+process-memory or CPU quota. With automatic capacity disabled, explicit
+`resources.capacity.maxSessions` and `maxWorkers` still apply as ceilings.
 
-Production hardening is in place: hostile WASM runs behind an authenticated
-Unix socket in a separate networkless runner container, with a disposable
-worker process per session. Durable artifact storage, an isolated build worker,
-deploy-rate limiting, anonymous preview mode, and a separate SSH gateway are
-also included.
+Hosted TUIs sleep until input, a timer, or a pub/sub message arrives. Apps that
+poll external state must use an explicit timer subscription. Custom host code
+can opt into periodic refresh through `TTYSource.Refresh`.
+
+A locally built app is stored as a typed WASM artifact through `/api/v1`.
+Public leaf sessions admit anonymous and proved-key visitors. Restricted leaf
+sessions admit only the owner devices and app access keys. Native development
+can run in process; production configuration requires the authenticated Unix
+runner boundary.
+
+Compose uses a combined control/gateway service and a networkless runner
+service. They share only an authenticated Unix socket. Both use read-only root
+filesystems and bounded resources, and only SSH is published.
 
 **Next up:** moderation & per-author quotas at scale, richer scoped storage
 (`ctx.DB`), and content-addressed artifact caching on the gateway.
@@ -267,6 +287,9 @@ existing terminal apps.
 - **ctx** — the capability object (host functions) handed to an app: kv, pubsub,
   auth, env, fetch, io.
 - **Sandbox** — the wazero WASM instance an app runs in, server-side.
-- **Claim** — authenticating ownership to unlock higher-trust capabilities.
 - **Deploy** — publish an app via `pt` (the privileged author action).
 - **Run** — connect to an app with plain `ssh`; the platform executes it.
+
+## License
+
+Plumtree is licensed under the [MIT License](LICENSE).

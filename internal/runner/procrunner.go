@@ -1,0 +1,619 @@
+package runner
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/Ceinl/plumtree/sdk/abi"
+)
+
+// ProcessRunner runs a guest in a separate worker process and serves its host
+// calls from this process. It is a drop-in for the in-process TUI and CLI
+// paths: the worker owns the wazero sandbox (limits, watchdog, the untrusted
+// guest) while the parent owns the Source, Sink, and capabilities. The two speak
+// the lock-step procproto over the worker's stdin/stdout.
+//
+// This is the production isolation split: a bug in the WASM runtime or a host
+// function lives in a disposable child process, not in the control plane.
+type ProcessRunner struct {
+	// WorkerPath is the root-owned runner worker executable to spawn.
+	WorkerPath string
+	// WorkerEndpoint is a remote runner-broker endpoint. Supported forms are
+	// unix:///path/to/socket, tls://host:port (server-authenticated TLS with
+	// the system roots), and tcp://host:port. Plain tcp:// sends the shared
+	// broker token and session traffic in the clear: production configuration
+	// refuses it, and elsewhere it only warns. Production uses a Unix socket
+	// or TLS so a native WASM-runtime escape cannot inherit the gateway's
+	// credentials, filesystem, or network.
+	WorkerEndpoint string
+	// WorkerToken authenticates the gateway to a remote runner broker.
+	WorkerToken string
+	// Logf, when set, receives transport diagnostics such as the plaintext
+	// tcp:// warning.
+	Logf func(format string, args ...any)
+	// TLSClientConfig optionally overrides the client TLS configuration for
+	// tls:// endpoints; nil selects server-authenticated TLS with the system
+	// roots (tests use it to pin a local test CA).
+	TLSClientConfig *tls.Config
+}
+
+// NewProcessRunner returns a ProcessRunner that spawns workerPath per session.
+func NewProcessRunner(workerPath string) *ProcessRunner {
+	return &ProcessRunner{WorkerPath: workerPath}
+}
+
+// NewRemoteProcessRunner returns a ProcessRunner backed by a runner broker.
+// The broker owns the disposable worker process; this process retains all app
+// capabilities and communicates with it over the existing lock-step protocol.
+func NewRemoteProcessRunner(endpoint, token string) *ProcessRunner {
+	return &ProcessRunner{WorkerEndpoint: endpoint, WorkerToken: token}
+}
+
+// Run spawns a worker for one TUI session and serves its capability calls until
+// the guest exits. It returns the same errors as the in-process Run (a guest
+// failure, ErrFrameDeadline surfaced by the worker, or ctx.Err()).
+func (pr *ProcessRunner) Run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, src Source, sink Sink, logs io.Writer) error {
+	return pr.run(ctx, wasm, lim, caps, false, nil, src, sink, CLIStreams{}, logs)
+}
+
+// RunCLI spawns a worker for one non-interactive CLI invocation. Guest output
+// is filtered inside the worker and streamed back to out over the process
+// protocol; args become the guest's command-line arguments.
+func (pr *ProcessRunner) RunCLI(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, out io.Writer) error {
+	return pr.RunCLIWithStreams(ctx, wasm, lim, caps, args, CLIStreams{Stdout: out, Stderr: out})
+}
+
+// RunCLIWithStreams runs an isolated finite guest with distinct standard streams.
+func (pr *ProcessRunner) RunCLIWithStreams(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, args []string, streams CLIStreams) error {
+	return pr.run(ctx, wasm, lim, caps, true, args, nil, nil, streams, nil)
+}
+
+// procSession holds the per-session scratch state of the parent's serve loop.
+// Every buffer here is reused across the whole session so the steady-state
+// frame path (opPresent / opRecv) allocates nothing.
+type procSession struct {
+	buf   []byte // incoming payload scratch, reused per message
+	reply []byte // outgoing opRecv reply scratch: status byte + event
+	ev    []byte // event-encoding scratch, appended after the status byte
+	cells []abi.Cell
+	dedup frameDedup
+}
+
+func (pr *ProcessRunner) run(ctx context.Context, wasm []byte, lim Limits, caps Capabilities, cli bool, args []string, src Source, sink Sink, streams CLIStreams, logs io.Writer) error {
+	if err := validateLimits(lim); err != nil {
+		return err
+	}
+	callerCtx := ctx
+	// Mirror the worker-side budget so a runaway guest also tears down the
+	// parent's serve loop; unlimited selects the hard MaxSessionTimeout ceiling.
+	ctx, cancelSession := context.WithTimeout(ctx, effectiveSessionTimeout(lim))
+	defer cancelSession()
+	ctx, cancel := context.WithCancel(ctx)
+	worker, err := pr.startWorker(ctx)
+	if err != nil {
+		cancel()
+		return err
+	}
+	// Cancel before closing/waiting so a parent-side I/O/protocol error also
+	// terminates a worker that may be blocked waiting for its opResp.
+	defer func() {
+		cancel()
+		worker.close()
+	}()
+
+	// Bus delivery rides the recv channel: bind the real subscription to the
+	// real Source so src.Next returns KindMessage events, exactly as in-process.
+	var sub Subscriber
+	if !cli && caps.Bus != nil {
+		sub = caps.Bus.Open()
+		defer sub.Close()
+		if bb, ok := src.(BusBinder); ok {
+			bb.BindBus(sub.Events())
+		}
+	}
+	if !cli {
+		caps.timers = newTimerManager(ctx)
+		defer caps.timers.Close()
+		src = newMergedSource(ctx, src, caps.timers.Events())
+	}
+
+	if err := writeMsg(worker.in, opStart, encodeStart(lim, cli, capMask(caps), args, wasm)); err != nil {
+		return err
+	}
+
+	sess := &procSession{}
+	for {
+		o, payload, err := readMsgBoundedInto(sess, worker.out, maxWorkerPayload)
+		if err != nil {
+			// Worker exited or pipe closed. Prefer the caller's cancellation cause.
+			if callerCtx.Err() != nil {
+				return callerCtx.Err()
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ErrSessionDeadline
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return fmt.Errorf("runner worker exited unexpectedly: %s", worker.failure())
+			}
+			return err
+		}
+		if o == opDone {
+			errStr, goodbye, logBytes, ok := decodeDone(payload)
+			if !ok || len(errStr) > maxWorkerError || len(goodbye) > abi.GoodbyeMaxLen || len(logBytes) > maxSessionLog {
+				return errProtocol
+			}
+			if caps.Goodbye != nil {
+				*caps.Goodbye = goodbye
+			}
+			if logs != nil && len(logBytes) > 0 {
+				_, _ = logs.Write(logBytes)
+			}
+			if errStr != "" {
+				if errStr == ErrFrameDeadline.Error() {
+					return ErrFrameDeadline
+				}
+				return errors.New(errStr)
+			}
+			return nil
+		}
+		if err := pr.serve(ctx, worker.in, o, payload, sess, caps, src, sink, sub, streams); err != nil {
+			if callerCtx.Err() != nil {
+				return callerCtx.Err()
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ErrSessionDeadline
+			}
+			return err
+		}
+	}
+}
+
+const (
+	maxEncodedFrame = 8 + 150_000*11
+	maxWorkerOutput = 64 << 10
+	maxWorkerInput  = 64 << 10
+	maxWorkerError  = 64 << 10
+	maxEncodedFetch = 2 + abi.FetchMaxMethod + 2 + abi.FetchMaxURL + 4 + abi.FetchMaxBody
+	maxEncodedExec  = 4 + abi.ExecMaxName + 4 + abi.ExecMaxArgs*(4+abi.ExecMaxArg)
+)
+
+func maxWorkerPayload(o op) uint32 {
+	switch o {
+	case opRecv, opAuth:
+		return 0
+	case opInput:
+		return 4
+	case opPresent:
+		return maxEncodedFrame
+	case opKVGet, opKVDel:
+		return abi.KVMaxKey
+	case opKVSet:
+		return 2 + abi.KVMaxKey + abi.KVMaxValue
+	case opKVList:
+		return 2 + abi.KVMaxKey
+	case opKVCAS:
+		return 2 + abi.KVMaxKey + abi.KVHashSize + abi.KVMaxValue
+	case opBusSub:
+		return abi.BusMaxTopic
+	case opBusPub:
+		return 2 + abi.BusMaxTopic + abi.BusMaxData
+	case opEnv:
+		return abi.EnvMaxKey
+	case opFetch:
+		return maxEncodedFetch
+	case opExec:
+		return maxEncodedExec
+	case opTimerStart:
+		return 9
+	case opTimerCancel:
+		return 4
+	case opDone:
+		return 8 + maxWorkerError + abi.GoodbyeMaxLen + maxSessionLog
+	case opOutput, opOutputStderr:
+		return maxWorkerOutput
+	default:
+		return 0
+	}
+}
+
+type workerTransport struct {
+	in      io.Writer
+	out     io.Reader
+	close   func()
+	failure func() string
+}
+
+func (pr *ProcessRunner) startWorker(ctx context.Context) (*workerTransport, error) {
+	if pr.WorkerPath != "" && pr.WorkerEndpoint != "" {
+		return nil, errors.New("runner: configure either a local worker path or a remote worker endpoint, not both")
+	}
+	if pr.WorkerEndpoint != "" {
+		return pr.dialWorker(ctx)
+	}
+	if pr.WorkerPath == "" {
+		return nil, errors.New("runner: worker path or endpoint is required")
+	}
+
+	workDir, err := os.MkdirTemp("", "plumtree-runner-*")
+	if err != nil {
+		return nil, fmt.Errorf("runner: create worker scratch dir: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, pr.WorkerPath)
+	cmd.Dir = workDir
+	// Never inherit gateway credentials or operator-controlled loader settings.
+	// This is defense in depth for local process mode; production additionally
+	// places the broker and workers in their own networkless container.
+	cmd.Env = []string{
+		"HOME=" + workDir,
+		"TMPDIR=" + workDir,
+		"PATH=/usr/local/bin:/usr/bin:/bin",
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		_ = os.RemoveAll(workDir)
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = os.RemoveAll(workDir)
+		return nil, err
+	}
+	stderr := &boundedBuffer{max: 8 << 10}
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(workDir)
+		return nil, err
+	}
+	return &workerTransport{
+		in:  stdin,
+		out: stdout,
+		close: func() {
+			_ = stdin.Close()
+			_ = stdout.Close()
+			_ = cmd.Wait()
+			_ = os.RemoveAll(workDir)
+		},
+		failure: stderr.String,
+	}, nil
+}
+
+func (pr *ProcessRunner) dialWorker(ctx context.Context) (*workerTransport, error) {
+	network, address, ok := strings.Cut(pr.WorkerEndpoint, "://")
+	if !ok || (network != "unix" && network != "tcp" && network != "tls") || address == "" {
+		return nil, fmt.Errorf("runner: invalid worker endpoint %q (want unix:///path, tcp://host:port, or tls://host:port)", pr.WorkerEndpoint)
+	}
+	listenNetwork := network
+	if network == "tls" {
+		// TLS rides a plain TCP dial; the handshake authenticates the broker.
+		listenNetwork = "tcp"
+	}
+	if network == "tcp" && pr.Logf != nil {
+		pr.Logf("runner endpoint %s sends the broker token and session traffic unencrypted; prefer unix:// or tls://", pr.WorkerEndpoint)
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, listenNetwork, address)
+	if err != nil {
+		return nil, fmt.Errorf("runner: connect to broker: %w", err)
+	}
+	if network == "tls" {
+		tlsConfig := pr.TLSClientConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		tlsConfig = tlsConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS12 {
+			tlsConfig.MinVersion = tls.VersionTLS12
+		}
+		if tlsConfig.ServerName == "" {
+			host, _, splitErr := net.SplitHostPort(address)
+			if splitErr != nil || host == "" {
+				_ = conn.Close()
+				return nil, fmt.Errorf("runner: invalid TLS worker address %q", address)
+			}
+			tlsConfig.ServerName = host
+		}
+		conn = tls.Client(conn, tlsConfig)
+	}
+	if err := writeBrokerAuth(conn, pr.WorkerToken); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("runner: authenticate to broker: %w", err)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	return &workerTransport{
+		in:  conn,
+		out: conn,
+		close: func() {
+			stop()
+			_ = conn.Close()
+		},
+		failure: func() string { return "remote broker closed the session" },
+	}, nil
+}
+
+// serve handles one worker request and writes the opResp reply.
+func (pr *ProcessRunner) serve(ctx context.Context, w io.Writer, o op, payload []byte, sess *procSession, caps Capabilities, src Source, sink Sink, sub Subscriber, streams CLIStreams) error {
+	switch o {
+	case opRecv:
+		if src == nil {
+			return errProtocol
+		}
+		ev, ok := src.Next(ctx)
+		if !ok {
+			return writeMsg(w, opResp, []byte{0})
+		}
+		sess.ev = abi.AppendEvent(sess.ev[:0], ev)
+		sess.reply = append(sess.reply[:0], 1)
+		sess.reply = append(sess.reply, sess.ev...)
+		return writeMsg(w, opResp, sess.reply)
+
+	case opPresent:
+		if sink == nil {
+			return errProtocol
+		}
+		// A byte-identical re-present is a visual no-op while the screen is
+		// healthy; skip the decode and the sink entirely.
+		if sess.dedup.suppressed(payload, sink) {
+			return writeMsg(w, opResp, nil)
+		}
+		f, cells, err := abi.AppendDecodeFrame(sess.cells, payload)
+		if err != nil || !validFrame(f) {
+			return errProtocol
+		}
+		sess.cells = cells
+		sess.dedup.observe(payload)
+		sink.Present(f)
+		return writeMsg(w, opResp, nil)
+
+	case opKVGet:
+		if caps.KV == nil || len(payload) == 0 || len(payload) > abi.KVMaxKey {
+			return writeMsg(w, opResp, []byte{2})
+		}
+		val, found, err := caps.KV.Get(string(payload))
+		switch {
+		case err != nil:
+			return writeMsg(w, opResp, []byte{2})
+		case !found:
+			return writeMsg(w, opResp, []byte{1})
+		default:
+			return writeMsg(w, opResp, append([]byte{0}, val...))
+		}
+
+	case opKVSet:
+		key, val, ok := decodeKeyValue(payload)
+		if !ok || caps.KV == nil || len(key) == 0 || len(key) > abi.KVMaxKey || len(val) > abi.KVMaxValue {
+			return writeMsg(w, opResp, []byte{2})
+		}
+		// val aliases the reused session read buffer; the store may retain it.
+		if err := caps.KV.Set(key, append([]byte(nil), val...)); err != nil {
+			if errors.Is(err, ErrQuota) {
+				return writeMsg(w, opResp, []byte{1})
+			}
+			return writeMsg(w, opResp, []byte{2})
+		}
+		return writeMsg(w, opResp, []byte{0})
+
+	case opKVDel:
+		if caps.KV == nil || len(payload) == 0 || len(payload) > abi.KVMaxKey {
+			return writeMsg(w, opResp, []byte{2})
+		}
+		if err := caps.KV.Delete(string(payload)); err != nil {
+			return writeMsg(w, opResp, []byte{2})
+		}
+		return writeMsg(w, opResp, []byte{0})
+
+	case opKVList:
+		prefix, limit, ok := decodeKVListRequest(payload)
+		if !ok || caps.KV == nil || len(prefix) > abi.KVMaxKey || limit < 1 || limit > abi.KVMaxList {
+			return writeMsg(w, opResp, []byte{1})
+		}
+		keys, err := caps.KV.List(prefix, limit)
+		if err != nil || len(keys) > limit || len(keys) > abi.KVMaxList {
+			return writeMsg(w, opResp, []byte{1})
+		}
+		return writeMsg(w, opResp, append([]byte{0}, abi.EncodeKVList(keys)...))
+
+	case opKVCAS:
+		key, expected, value, ok := decodeKVCAS(payload)
+		if !ok || caps.KV == nil || len(key) > abi.KVMaxKey || len(value) > abi.KVMaxValue {
+			return writeMsg(w, opResp, []byte{3})
+		}
+		// value aliases the reused session read buffer; the store may retain it.
+		err := caps.KV.CompareAndSwap(key, expected, append([]byte(nil), value...))
+		switch {
+		case err == nil:
+			return writeMsg(w, opResp, []byte{0})
+		case errors.Is(err, ErrConflict):
+			return writeMsg(w, opResp, []byte{1})
+		case errors.Is(err, ErrQuota):
+			return writeMsg(w, opResp, []byte{2})
+		default:
+			return writeMsg(w, opResp, []byte{3})
+		}
+
+	case opBusSub:
+		if len(payload) == 0 || len(payload) > abi.BusMaxTopic {
+			return errProtocol
+		}
+		// A rejected subscribe is an ordinary bus error, not a protocol fault:
+		// reply with status 1 and let the session continue.
+		var result byte
+		if sub != nil {
+			if err := sub.Subscribe(string(payload)); err != nil {
+				result = 1
+			}
+		}
+		return writeMsg(w, opResp, []byte{result})
+
+	case opBusPub:
+		topic, data, ok := decodeKeyValue(payload)
+		n := 0
+		if !ok || len(topic) == 0 || len(topic) > abi.BusMaxTopic || len(data) > abi.BusMaxData {
+			return errProtocol
+		}
+		if caps.Bus != nil {
+			n = caps.Bus.Publish(topic, data)
+		}
+		var out [4]byte
+		binary.LittleEndian.PutUint32(out[:], uint32(n))
+		return writeMsg(w, opResp, out[:])
+
+	case opAuth:
+		if len(payload) != 0 {
+			return errProtocol
+		}
+		if caps.Auth == nil {
+			return writeMsg(w, opResp, []byte{0})
+		}
+		id := caps.Auth.Whoami()
+		enc := abi.EncodeIdentity(abi.Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindToABI(id.Kind), OwnsApp: id.OwnsApp})
+		return writeMsg(w, opResp, append([]byte{1}, enc...))
+
+	case opEnv:
+		if len(payload) == 0 || len(payload) > abi.EnvMaxKey {
+			return errProtocol
+		}
+		if caps.Env == nil {
+			return writeMsg(w, opResp, []byte{0})
+		}
+		val, found := caps.Env.Get(string(payload))
+		if !found {
+			return writeMsg(w, opResp, []byte{0})
+		}
+		return writeMsg(w, opResp, append([]byte{1}, val...))
+
+	case opFetch:
+		return pr.serveFetch(ctx, w, payload, caps)
+
+	case opExec:
+		if caps.Exec == nil {
+			return writeMsg(w, opResp, []byte{1})
+		}
+		req, err := abi.DecodeExecRequest(payload)
+		if err != nil || !validExecRequest(req) {
+			return writeMsg(w, opResp, []byte{2})
+		}
+		resp, err := caps.Exec.Run(ctx, req)
+		switch {
+		case errors.Is(err, ErrExecTooLarge):
+			return writeMsg(w, opResp, []byte{2})
+		case err != nil:
+			return writeMsg(w, opResp, []byte{3})
+		case len(resp.Stdout) > abi.ExecMaxOutput || len(resp.Stderr) > abi.ExecMaxOutput:
+			return writeMsg(w, opResp, []byte{2})
+		default:
+			return writeMsg(w, opResp, append([]byte{0}, abi.EncodeExecResponse(resp)...))
+		}
+
+	case opTimerStart:
+		if caps.timers == nil || len(payload) != 9 || payload[8] > 1 {
+			return errProtocol
+		}
+		result := caps.timers.Start(time.Duration(binary.LittleEndian.Uint64(payload[:8])), payload[8] == 1)
+		return writeMsg(w, opResp, binary.LittleEndian.AppendUint32(nil, uint32(result)))
+
+	case opTimerCancel:
+		if caps.timers == nil || len(payload) != 4 {
+			return errProtocol
+		}
+		var result byte
+		if caps.timers.Cancel(binary.LittleEndian.Uint32(payload)) {
+			result = 1
+		}
+		return writeMsg(w, opResp, []byte{result})
+
+	case opOutput, opOutputStderr:
+		out := streams.Stdout
+		if o == opOutputStderr {
+			out = streams.Stderr
+		}
+		if len(payload) > maxWorkerOutput {
+			return errProtocol
+		}
+		if out == nil {
+			out = io.Discard
+		}
+		if _, err := out.Write(payload); err != nil {
+			return err
+		}
+		return writeMsg(w, opResp, nil)
+
+	case opInput:
+		if len(payload) != 4 {
+			return errProtocol
+		}
+		requested := binary.LittleEndian.Uint32(payload)
+		if requested == 0 || requested > maxWorkerInput {
+			return errProtocol
+		}
+		if streams.Stdin == nil {
+			return writeMsg(w, opResp, []byte{stdinEOF})
+		}
+		buffer := make([]byte, requested)
+		n, err := streams.Stdin.Read(buffer)
+		if n < 0 || n > len(buffer) {
+			return errProtocol
+		}
+		status := byte(stdinOK)
+		switch {
+		case errors.Is(err, io.EOF):
+			status = stdinEOF
+		case err != nil:
+			status = stdinError
+		}
+		return writeMsg(w, opResp, append([]byte{status}, buffer[:n]...))
+
+	default:
+		return errProtocol
+	}
+}
+
+// boundedBuffer captures up to max bytes of worker stderr (panics, fatal logs)
+// to surface on an unexpected exit, discarding the rest.
+type boundedBuffer struct {
+	max int
+	b   []byte
+}
+
+func (bb *boundedBuffer) Write(p []byte) (int, error) {
+	if room := bb.max - len(bb.b); room > 0 {
+		if len(p) > room {
+			bb.b = append(bb.b, p[:room]...)
+		} else {
+			bb.b = append(bb.b, p...)
+		}
+	}
+	return len(p), nil
+}
+
+func (bb *boundedBuffer) String() string { return string(bb.b) }
+
+func (pr *ProcessRunner) serveFetch(ctx context.Context, w io.Writer, payload []byte, caps Capabilities) error {
+	// Fetch status bytes: 0=ok,1=denied,2=toolarge,3=internal,4=unavail.
+	if caps.Fetch == nil {
+		return writeMsg(w, opResp, []byte{4})
+	}
+	req, err := abi.DecodeFetchRequest(payload)
+	if err != nil || len(req.Method) > abi.FetchMaxMethod || len(req.URL) > abi.FetchMaxURL || len(req.Body) > abi.FetchMaxBody {
+		return writeMsg(w, opResp, []byte{3})
+	}
+	resp, err := caps.Fetch.Fetch(ctx, req)
+	switch {
+	case errors.Is(err, ErrEgressDenied):
+		return writeMsg(w, opResp, []byte{1})
+	case err != nil:
+		return writeMsg(w, opResp, []byte{3})
+	default:
+		return writeMsg(w, opResp, append([]byte{0}, abi.EncodeFetchResponse(resp)...))
+	}
+}

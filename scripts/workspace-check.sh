@@ -20,34 +20,44 @@ case "$check" in
     ;;
 esac
 
-# Keep this list aligned with go.work. Nested modules under runner/testdata are
+# Keep this list aligned with go.work. Nested modules under internal/runner/testdata are
 # build fixtures, while sdk/plums is an independent legacy module outside the
 # workspace and therefore outside this repository-level CI contract.
 workspace_modules=(
-  build-worker
-  control-plane
-  pt
-  runner
+  .
   sdk
-  ssh-gateway
-  tui-runtime
-  _devtest/goodbye-cli
-  _devtest/goodbye-tui
   examples/agentboard
+  examples/afterimage
+  examples/ascii-saver
+  examples/chat
+  examples/familiar
+  examples/tic-tac-toe
 )
 
 for module_dir in "${workspace_modules[@]}"; do
   echo "==> $check $module_dir"
   (
     cd "$workspace_root/$module_dir"
-    if [[ "$check" == race && "$module_dir" == runner ]]; then
-      # The runner's normal suite contains deliberate 150 ms wall-clock
+    if [[ "$module_dir" == . || "$module_dir" == sdk ]]; then
+      # The root product and public SDK are independent release domains. Do
+      # not let go.work conceal a dependency on another repository module.
+      export GOWORK=off
+    fi
+    if [[ "$check" == race && "$module_dir" == . ]]; then
+      # The root runner suite contains deliberate 150 ms wall-clock
       # cancellation budgets around Wazero. Race instrumentation slows those
       # guests by orders of magnitude, so retain them as normal-test
       # performance gates and race-check the shared mutable primitives here.
+      listed_packages=$(go list ./...)
+      mapfile -t race_packages < <(grep -v '^github.com/Ceinl/plumtree/internal/runner$' <<<"$listed_packages")
+      if (( ${#race_packages[@]} == 0 )); then
+        echo "workspace-check: go list produced no race packages" >&2
+        exit 1
+      fi
+      go test -race "${race_packages[@]}"
       go test -race \
         -run '^(TestMemBus.*|TestMemStore.*|TestFileStore.*|TestTokenBucket.*)$' \
-        .
+        ./internal/runner
     else
       "${command[@]}"
     fi

@@ -1,0 +1,34 @@
+// Command {{.Name}} is a Plumtree TUI app.
+package main
+
+import (
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/ui"
+)
+
+type model struct{ n int }
+
+// Update handles input by mutating state.
+func (m *model) Update(event app.Event) app.Command {
+	if key, ok := event.(app.KeyEvent); ok {
+		switch key.Key {
+		case app.KeyUp, '+':
+			m.n++
+		case app.KeyDown, '-':
+			m.n--
+		case 'q', app.KeyCtrlC:
+			return app.Quit()
+		}
+	}
+	return app.Noop()
+}
+
+// View builds the component tree from state each frame.
+func (m *model) View() ui.Node {
+	return ui.Column(
+		ui.Textf("Count: %d", m.n),
+		ui.Text("(↑/↓ to change, q to quit)").Role(ui.Muted),
+	).Fill().Gap(1).Align(ui.Center).Justify(ui.Center)
+}
+
+func main() { app.Run(&model{}) }

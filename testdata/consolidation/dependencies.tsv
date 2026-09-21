@@ -1,0 +1,19 @@
+# module_directory	allowed_dependency_module
+.	github.com/Ceinl/plumtree
+.	github.com/Ceinl/plumtree/sdk
+.	github.com/mattn/go-sqlite3
+.	github.com/tetratelabs/wazero
+.	golang.org/x/crypto
+.	golang.org/x/sys
+.	golang.org/x/term
+sdk	github.com/Ceinl/plumtree/sdk
+sdk	golang.org/x/sys
+sdk	golang.org/x/term
+examples/agentboard	github.com/Ceinl/plumtree/examples/agentboard
+examples/agentboard	github.com/Ceinl/plumtree/sdk
+examples/ascii-saver	github.com/Ceinl/plumtree/examples/ascii-saver
+examples/ascii-saver	github.com/Ceinl/plumtree/sdk
+examples/chat	github.com/Ceinl/plumtree/examples/chat
+examples/chat	github.com/Ceinl/plumtree/sdk
+examples/tic-tac-toe	github.com/Ceinl/plumtree/examples/tic-tac-toe
+examples/tic-tac-toe	github.com/Ceinl/plumtree/sdk

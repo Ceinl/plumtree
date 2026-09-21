@@ -1,0 +1,5 @@
+# Standalone modules that exercise the public SDK as workspace consumers.
+examples/agentboard
+examples/ascii-saver
+examples/chat
+examples/tic-tac-toe

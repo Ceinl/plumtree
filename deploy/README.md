@@ -1,181 +1,77 @@
 # Deploying Plumtree
 
-Four services, built from this repo, wired by `docker-compose.yml`:
-
-| Service | Image | Exposure |
-|---|---|---|
-| `control-plane` | `Dockerfile.control-plane` | `:8080` — dashboard/API; put a TLS reverse proxy in front |
-| `ssh-gateway` | `Dockerfile.ssh-gateway` | container `:2222`, published by `PLUMTREE_SSH_PUBLISH_ADDR` (`:2222` safely by default, dedicated-IP `:22` for production) |
-| `runner-broker` | `Dockerfile.runner-broker` | none — networkless; authenticated Unix socket from the gateway only |
-| `build-worker` | `Dockerfile.build-worker` | none — internal network only |
+Compose runs a combined control/gateway service and a networkless runner
+service. The first service persists SQLite, KV, and the SSH host key. The
+runner receives no database, KV, SSH, or network access. Only SSH is published.
 
 ## Quick start
 
 ```sh
 cd deploy
-cp .env.example .env      # fill in origin + four tokens (openssl rand -hex 32)
-# Create once locally, or have your secret manager write this path instead.
-openssl rand -base64 32 > ./control-plane-state.kek
-chmod 600 ./control-plane-state.kek
+cp .env.example .env
+printf 'PLUMTREE_UID=%s\nPLUMTREE_GID=%s\n' "$(id -u)" "$(id -g)" >> .env
+umask 077
+mkdir -p data runner-socket runner-scratch
+cp ../config.example.json config.json
+openssl rand 32 > database.key
+openssl rand -hex 32 > runner.token
+docker compose build
+docker compose run --rm plumtree bootstrap \
+  --config /etc/plumtree/config.json -handle alice -device laptop
 docker compose up -d --build
 ```
 
-Smoke test:
+The bootstrap command prints a one-use ID and secret. On the author device,
+run `pt pair --bootstrap <id> --yes 127.0.0.1` and enter the secret when
+prompted. The authority expires after ten minutes and is consumed atomically
+with first-author registration. Routine container startup never prints a live
+pairing secret.
+
+The default endpoint is `0.0.0.0:2222`. Set
+`PLUMTREE_SSH_PUBLISH_ADDR` to a dedicated application address when using port
+22 so administrator SSH remains separate. `PLUMTREE_UID` and `PLUMTREE_GID`
+must match the owner of the private secret and state files.
+
+The service command is equivalent to:
 
 ```sh
-curl -s http://localhost:8080/          # dashboard
-ssh -p 2222 <owner>/<app>@<host>        # once something is deployed
+plumtree serve --config /etc/plumtree/config.json \
+  -storage-database-path /data/plumtree.db \
+  -storage-kv-root /data/plumtree-data \
+  -storage-ssh-identity /data/plumtree_host_key \
+  -exposure-ssh-address :2222 \
+  -runtime-runner-endpoint unix:///run/plumtree/runner.sock \
+  -runtime-production true \
+  -secrets-database-key-file /run/secrets/database-key \
+  -secrets-gateway-token-file /run/secrets/runner-token \
+  -product-version "$PLUMTREE_PRODUCT_VERSION"
 ```
 
-## Standard-port SSH
+Native and Compose startup use the same typed configuration loader. Every
+persisted setting also has a one-run flag and environment form. For example,
+`limits.maxSessions` maps to `-limits-max-sessions` and
+`PLUMTREE_LIMITS_MAX_SESSIONS`.
 
-The end-user goal is deliberately ordinary SSH, with no local config and no
-nonstandard port:
+## State and security
 
-```sh
-ssh <owner>/<app>@apps.example.com
-```
+- The database, KV data, and host key are private volume data. Back up all
+  three together with `plumtree state backup`.
+- Production mode requires `secrets.databaseKeyFile`. Startup fails when the
+  key is absent or the binary does not contain the qualified SQLCipher engine.
+- The server persists a stable identity and rejects a changed host key for an
+  existing database.
+- Unknown device keys may use only the bounded pairing subsystem. Only active,
+  enrolled device keys may use the control API subsystem.
+- Compose drops all Linux capabilities, uses a read-only root filesystem, and
+  bounds temporary storage and process resources.
 
-The gateway must own TCP port 22 on the address behind `apps.example.com` for
-that to work. The robust layout gives Plumtree a dedicated app-facing IP (or a
-dedicated gateway host) and keeps administrator SSH on a separate management
-IP. Set the host publish address in `deploy/.env`:
+## Qualification status
 
-```dotenv
-PLUMTREE_SSH_PUBLISH_ADDR=192.0.2.50:22
-```
+The native root server, clean API transport, local SDK builds, and Compose
+configuration are covered by repository checks. A target-native SQLCipher
+toolchain is required before producing release binaries for each OS/architecture.
+The current qualification environment may not have those prefixes or cross
+compilers; in that case the release gate must remain red.
 
-Then point `apps.example.com` at `192.0.2.50` and recreate only the gateway:
-
-```sh
-docker compose up -d --build ssh-gateway
-ssh <owner>/<app>@apps.example.com
-```
-
-Binding a specific IP matters. If host `sshd` listens on `0.0.0.0:22` or
-`[::]:22`, it already owns port 22 on every address and the Compose publish
-will fail until `sshd` is restricted to the management address. Confirm a new
-administrator session through that management address before changing or
-closing the existing session.
-
-On a single-address host, the fallback is to move administrator SSH to a
-different, firewalled port first (for example 22222), verify a second admin
-login and out-of-band recovery, and only then set:
-
-```dotenv
-PLUMTREE_SSH_PUBLISH_ADDR=0.0.0.0:22
-```
-
-That preserves administration, but administrators must use the alternate port;
-end users keep the universal port-22 command. A DNS name alone cannot share one
-IP/port between OpenSSH and Plumtree, and a normal TCP proxy cannot route on the
-SSH username because it is encrypted. Do not stop or rebind the existing SSH
-service until the replacement admin path has been proven.
-
-## Security posture
-
-`PLUMTREE_ALLOW_HOST_COMMANDS=true` is available on the SSH gateway for trusted
-self-hosted installations. It allows every claimed app to execute programs as
-the gateway container user; unclaimed previews remain restricted. This bypasses
-the normal WASM capability boundary by design. Leave it unset on multi-tenant
-servers. In containers, only programs and files available inside the gateway
-container are reachable unless the operator deliberately mounts more.
-
-`PLUMTREE_AUTO_CLAIM=true` is a separate trusted-server option on the control
-plane. It accepts every new deploy authenticated by the shared deploy token and
-removes the Shoo login, handle prompt, claim page, and dashboard step. All such
-clients share the internal `autoclaim/<app>` namespace, so leave it disabled
-when deploy-token holders should not trust one another.
-
-- **build-worker has no internet egress.** It sits on an `internal: true`
-  network with the control plane. Author builds resolve the unpublished
-  SDK from module dirs baked into the image and their transitive deps from a
-  baked-in `file://` module proxy — `GOPROXY` never touches the internet. The
-  root filesystem is read-only; build sandboxes live on a size-capped tmpfs.
-- **Session isolation.** The gateway sends each app session over an
-  authenticated Unix socket to a separate, networkless runner container. That
-  container has no gateway credential, host key, KV volume, or control-plane
-  route; it uses a read-only root and bounded tmpfs scratch. A disposable
-  `plumtree-runner-worker` process still wraps each wazero sandbox inside it.
-- **Tokens.** Shared operator tokens are compared constant-time. Public `pt`
-  binaries are generic and contain no deploy credential; authors configure a
-  token at runtime with `pt configure --token`, which reads it without
-  exposing it in shell history and stores it in a user-only config file. Keep
-  the token narrowly scoped and rotate it if abused.
-- **State encryption.** The control-plane snapshot (including app secret
-  values) uses AES-256-GCM envelope encryption. Each write has a new data key;
-  its wrapping key (KEK) comes from the `control_plane_state_kek` Docker secret
-  mounted at `/run/secrets/`, outside `control-plane-data`. In production,
-  startup refuses persistent state without this key. Per-app KV and the SSH host
-  key currently live in `ssh-gateway-data`; protect that volume with encrypted
-  storage and restrict its backup access.
-- **Capacity limits.** Compose applies CPU, memory, and PID limits to every
-  service. Builds have separate execution and waiting-queue caps. The control
-  plane, gateway, and worker run with production safety checks and refuse to
-  start if an owned critical limit is unlimited. An operator who intentionally
-  accepts that risk must explicitly set
-  `PLUMTREE_ACKNOWLEDGE_UNLIMITED_LIMITS=true` on the affected service.
-
-## Key rotation and backups
-
-Treat `control-plane-state.kek` as a key-encryption key, not as a backup
-artifact. Store the source value in your managed secret store (for example,
-cloud KMS/Secrets Manager or Vault) and have an agent or the orchestration
-platform materialize the mounted file. The snapshot does not contain this key.
-
-To rotate it, schedule a brief control-plane restart. Create a new 32-byte key
-in the secret store, preserve the old version, and set the new material as
-`PLUMTREE_STATE_ENCRYPTION_KEY_FILE` and the old material as
-`PLUMTREE_PREVIOUS_STATE_ENCRYPTION_KEY_FILE`. Restart once with the rotation
-overlay; it decrypts using either key and atomically re-encrypts the snapshot
-with the new key:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.rotate.yml up -d control-plane
-```
-
-Check the service logs, remove `PLUMTREE_PREVIOUS_STATE_ENCRYPTION_KEY_FILE`,
-and restart with normal `docker-compose.yml`. Keep the old key in the secret
-store, access-restricted, until every backup made under it has expired or been
-re-encrypted. Do not delete or overwrite an old key just because the running
-service has been rotated.
-
-Back up `control-plane-data` and `ssh-gateway-data` together, using encrypted
-backup storage with access limited to restore operators. Record the KEK version
-that can decrypt each backup, but never include the KEK in the backup. Test a
-restore at least quarterly in an isolated environment: restore both volumes,
-mount the corresponding historical key from the secret store, and verify the
-control plane starts and can serve a known app. A copied data volume without its
-externally held KEK must be treated as unrecoverable by design.
-
-## Updating the SDK
-
-The build-worker image bakes `sdk/` and `tui-runtime/` at build time — rebuild
-it (`docker compose build build-worker`) whenever they change, or deployed
-authors compile against a stale SDK.
-
-## Releases
-
-Pull requests and pushes to `main` run `.github/workflows/ci.yml`, which checks
-formatting, vets and tests every module declared by `go.work`, runs the race
-detector, and cross-builds the public release contract.
-
-Tagged pushes (`v*`) trigger `.github/workflows/release.yml`. Releases are
-generic: server URLs and deploy credentials are runtime configuration and are
-never embedded in public binaries. Each release publishes:
-
-```text
-pt-{linux,darwin}-{amd64,arm64}
-pt-windows-amd64.exe
-plumtree-server-{linux,darwin}-{amd64,arm64}
-plumtree-server-windows-amd64.exe
-checksums.txt
-```
-
-`plumtree-server` is the all-in-one control-plane binary used for local and
-small self-hosted setups. It embeds the matching Plumtree SDK, TUI runtime, and
-an offline module proxy, so in-process builds do not require a Plumtree source
-checkout or network module resolution. A compatible Go toolchain must still be
-available on `PATH` to compile deployed applications. The production topology
-remains the separate containers described above. `checksums.txt` covers every
-binary and is the machine-readable contract consumed by `ptinstall`.
+Fresh native and Compose volumes use the same bootstrap, pairing, and control
+journey. Deployed leaf serving remains a separate live-fixture release gate.

@@ -1,0 +1,393 @@
+package runner
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
+	"io"
+	"time"
+
+	"github.com/Ceinl/plumtree/sdk/abi"
+)
+
+// RunWorker is the entry point of the runner-worker process. It reads the
+// session parameters from in, runs the guest in this process's wazero sandbox
+// and forwards every host call to the parent over out using
+// the procproto. It returns when the guest finishes; the result is reported to
+// the parent as the final opDone message.
+//
+// The worker owns only the sandbox; the parent owns the Source, Sink, and
+// capabilities. That is the isolation boundary — see ProcessRunner.
+func RunWorker(in io.Reader, out io.Writer) error {
+	o, payload, err := readMsg(in)
+	if err != nil {
+		return err
+	}
+	if o != opStart {
+		return errProtocol
+	}
+	lim, cli, capBits, args, wasm, err := decodeStart(payload)
+	if err != nil {
+		return err
+	}
+
+	// Install a proxy only for capabilities the parent actually holds. A
+	// capability the parent lacks stays nil here so the guest's host function
+	// returns the same "unavailable" code as the in-process path, rather than a
+	// proxy that forwards a call the parent answers as not-found/empty/no-op.
+	rpc := &workerRPC{in: in, out: out}
+	caps := Capabilities{}
+	if capBits&capKV != 0 {
+		caps.KV = proxyKV{rpc}
+	}
+	if capBits&capBus != 0 {
+		caps.Bus = proxyBus{rpc}
+	}
+	if capBits&capAuth != 0 {
+		caps.Auth = proxyAuth{rpc}
+	}
+	if capBits&capEnv != 0 {
+		caps.Env = proxyEnv{rpc}
+	}
+	if capBits&capFetch != 0 {
+		caps.Fetch = proxyFetch{rpc}
+	}
+	if capBits&capExec != 0 {
+		caps.Exec = proxyExec{rpc}
+	}
+	caps.Goodbye = new(string)
+	if !cli {
+		caps.timers = proxyTimers{rpc}
+	}
+	logs := &boundedBuffer{max: maxSessionLog}
+	var runErr error
+	if cli {
+		runErr = RunCLIWithStreams(context.Background(), wasm, lim, caps, args, CLIStreams{
+			Stdin:  proxyInput{rpc: rpc},
+			Stdout: proxyOutput{rpc: rpc, stderr: false},
+			Stderr: proxyOutput{rpc: rpc, stderr: true},
+		})
+	} else {
+		runErr = runGuestEncoded(context.Background(), nil, wasm, lim, caps, &proxySource{rpc}, rpc.present, logs)
+	}
+
+	errStr := ""
+	if runErr != nil {
+		errStr = runErr.Error()
+	}
+	return writeMsg(out, opDone, encodeDone(errStr, *caps.Goodbye, []byte(logs.String())))
+}
+
+// maxSessionLog bounds the guest log captured and shipped to the parent.
+const maxSessionLog = 64 << 10
+
+// LogBuffer is the in-process counterpart of the worker's bounded log: it
+// retains up to maxSessionLog bytes of guest stdout/stderr and silently drops
+// excess output, so a noisy guest cannot grow host memory without bound.
+type LogBuffer struct {
+	boundedBuffer
+}
+
+// NewLogBuffer returns a log buffer capped at maxSessionLog bytes.
+func NewLogBuffer() *LogBuffer { return &LogBuffer{boundedBuffer{max: maxSessionLog}} }
+
+// workerRPC performs one lock-step request/response over the worker's pipes. The
+// guest runs single-threaded, so calls are naturally serialized. Replies use
+// buf as scratch storage and remain valid until the next call.
+type workerRPC struct {
+	in  io.Reader
+	out io.Writer
+	buf []byte
+}
+
+func (r *workerRPC) call(o op, payload []byte) ([]byte, error) {
+	if err := writeMsg(r.out, o, payload); err != nil {
+		return nil, err
+	}
+	ro, rp, err := readMsgInto(r.in, r.buf)
+	r.buf = rp
+	if err != nil {
+		return nil, err
+	}
+	if ro != opResp {
+		return nil, errProtocol
+	}
+	return rp, nil
+}
+
+type proxySource struct{ rpc *workerRPC }
+
+func (s *proxySource) Next(context.Context) (abi.Event, bool) {
+	rp, err := s.rpc.call(opRecv, nil)
+	if err != nil || len(rp) == 0 || rp[0] == 0 {
+		return abi.Event{}, false
+	}
+	ev, err := abi.DecodeEvent(rp[1:])
+	if err != nil {
+		return abi.Event{}, false
+	}
+	return ev, true
+}
+
+// present forwards bytes while the guest is paused. The parent validates and
+// decodes the frame before replying, so no guest-memory copy is needed here.
+func (r *workerRPC) present(raw []byte) {
+	_, _ = r.call(opPresent, raw)
+}
+
+type proxyTimers struct{ rpc *workerRPC }
+
+func (t proxyTimers) Start(delay time.Duration, recurring bool) int32 {
+	payload := binary.LittleEndian.AppendUint64(nil, uint64(delay))
+	if recurring {
+		payload = append(payload, 1)
+	} else {
+		payload = append(payload, 0)
+	}
+	rp, err := t.rpc.call(opTimerStart, payload)
+	if err != nil || len(rp) != 4 {
+		return abi.TimerErrInternal
+	}
+	return int32(binary.LittleEndian.Uint32(rp))
+}
+
+func (t proxyTimers) Cancel(id uint32) bool {
+	rp, err := t.rpc.call(opTimerCancel, binary.LittleEndian.AppendUint32(nil, id))
+	return err == nil && len(rp) == 1 && rp[0] == 1
+}
+
+func (proxyTimers) Events() <-chan abi.Event { return nil }
+func (proxyTimers) Close()                   {}
+
+type proxyOutput struct {
+	rpc    *workerRPC
+	stderr bool
+}
+
+const (
+	stdinOK byte = iota
+	stdinEOF
+	stdinError
+)
+
+type proxyInput struct{ rpc *workerRPC }
+
+func (r proxyInput) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	requested := min(len(p), maxWorkerInput)
+	payload := binary.LittleEndian.AppendUint32(nil, uint32(requested))
+	response, err := r.rpc.call(opInput, payload)
+	if err != nil || len(response) == 0 || len(response)-1 > requested {
+		return 0, errRPC
+	}
+	n := copy(p, response[1:])
+	switch response[0] {
+	case stdinOK:
+		return n, nil
+	case stdinEOF:
+		return n, io.EOF
+	case stdinError:
+		return n, errRPC
+	default:
+		return 0, errRPC
+	}
+}
+
+func (w proxyOutput) Write(p []byte) (int, error) {
+	written := 0
+	for len(p) > 0 {
+		n := min(len(p), maxWorkerOutput)
+		opcode := opOutput
+		if w.stderr {
+			opcode = opOutputStderr
+		}
+		if _, err := w.rpc.call(opcode, p[:n]); err != nil {
+			return written, err
+		}
+		written += n
+		p = p[n:]
+	}
+	return written, nil
+}
+
+type proxyKV struct{ rpc *workerRPC }
+
+func (k proxyKV) Get(key string) ([]byte, bool, error) {
+	rp, err := k.rpc.call(opKVGet, []byte(key))
+	if err != nil || len(rp) == 0 {
+		return nil, false, errRPC
+	}
+	switch rp[0] {
+	case 0:
+		return append([]byte(nil), rp[1:]...), true, nil
+	case 1:
+		return nil, false, nil
+	default:
+		return nil, false, errRPC
+	}
+}
+
+func (k proxyKV) Set(key string, value []byte) error {
+	rp, err := k.rpc.call(opKVSet, encodeKeyValue(key, value))
+	if err != nil || len(rp) == 0 {
+		return errRPC
+	}
+	switch rp[0] {
+	case 0:
+		return nil
+	case 1:
+		return ErrQuota
+	default:
+		return errRPC
+	}
+}
+
+func (k proxyKV) Delete(key string) error {
+	rp, err := k.rpc.call(opKVDel, []byte(key))
+	if err != nil || len(rp) == 0 || rp[0] != 0 {
+		return errRPC
+	}
+	return nil
+}
+
+func (k proxyKV) List(prefix string, limit int) ([]string, error) {
+	rp, err := k.rpc.call(opKVList, encodeKVListRequest(prefix, limit))
+	if err != nil || len(rp) == 0 || rp[0] != 0 {
+		return nil, errRPC
+	}
+	keys, err := abi.DecodeKVList(rp[1:])
+	if err != nil {
+		return nil, errRPC
+	}
+	return keys, nil
+}
+
+func (k proxyKV) CompareAndSwap(key string, expected [sha256.Size]byte, value []byte) error {
+	rp, err := k.rpc.call(opKVCAS, encodeKVCAS(key, expected, value))
+	if err != nil || len(rp) == 0 {
+		return errRPC
+	}
+	switch rp[0] {
+	case 0:
+		return nil
+	case 1:
+		return ErrConflict
+	case 2:
+		return ErrQuota
+	default:
+		return errRPC
+	}
+}
+
+type proxyAuth struct{ rpc *workerRPC }
+
+func (a proxyAuth) Whoami() Identity {
+	rp, err := a.rpc.call(opAuth, nil)
+	if err != nil || len(rp) == 0 || rp[0] == 0 {
+		return Identity{}
+	}
+	id, err := abi.DecodeIdentity(rp[1:])
+	if err != nil {
+		return Identity{}
+	}
+	return Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindFromABI(id.Kind), OwnsApp: id.OwnsApp}
+}
+
+type proxyEnv struct{ rpc *workerRPC }
+
+func (e proxyEnv) Get(key string) (string, bool) {
+	rp, err := e.rpc.call(opEnv, []byte(key))
+	if err != nil || len(rp) == 0 || rp[0] == 0 {
+		return "", false
+	}
+	return string(rp[1:]), true
+}
+
+type proxyFetch struct{ rpc *workerRPC }
+
+func (f proxyFetch) Fetch(_ context.Context, req abi.FetchRequest) (abi.FetchResponse, error) {
+	rp, err := f.rpc.call(opFetch, abi.EncodeFetchRequest(req))
+	if err != nil || len(rp) == 0 {
+		return abi.FetchResponse{}, errRPC
+	}
+	switch rp[0] {
+	case 0:
+		resp, err := abi.DecodeFetchResponse(rp[1:])
+		if err != nil {
+			return abi.FetchResponse{}, errRPC
+		}
+		return resp, nil
+	case 1:
+		return abi.FetchResponse{}, ErrEgressDenied
+	case 4:
+		return abi.FetchResponse{}, errEgressUnavailable
+	default:
+		return abi.FetchResponse{}, errRPC
+	}
+}
+
+type proxyExec struct{ rpc *workerRPC }
+
+func (e proxyExec) Run(ctx context.Context, req abi.ExecRequest) (abi.ExecResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return abi.ExecResponse{}, err
+	}
+	rp, err := e.rpc.call(opExec, abi.EncodeExecRequest(req))
+	if err != nil || len(rp) == 0 {
+		if ctx.Err() != nil {
+			return abi.ExecResponse{}, ctx.Err()
+		}
+		return abi.ExecResponse{}, errRPC
+	}
+	switch rp[0] {
+	case 0:
+		resp, err := abi.DecodeExecResponse(rp[1:])
+		if err != nil {
+			return abi.ExecResponse{}, errRPC
+		}
+		return resp, nil
+	case 2:
+		return abi.ExecResponse{}, ErrExecTooLarge
+	default:
+		return abi.ExecResponse{}, errRPC
+	}
+}
+
+type proxyBus struct{ rpc *workerRPC }
+
+func (b proxyBus) Open() Subscriber { return &proxySubscriber{rpc: b.rpc} }
+
+func (b proxyBus) Publish(topic string, data []byte) int {
+	rp, err := b.rpc.call(opBusPub, encodeKeyValue(topic, data))
+	if err != nil || len(rp) < 4 {
+		return 0
+	}
+	return int(int32(uint32(rp[0]) | uint32(rp[1])<<8 | uint32(rp[2])<<16 | uint32(rp[3])<<24))
+}
+
+// proxySubscriber forwards Subscribe to the parent; delivery of messages rides
+// the recv channel (the parent's Source multiplexes input + bus), so Events is
+// never used here. A non-empty reply payload is the parent's error status,
+// mapped back to the same sentinel the in-process subscription reports.
+type proxySubscriber struct{ rpc *workerRPC }
+
+func (s *proxySubscriber) Subscribe(topic string) error {
+	rp, err := s.rpc.call(opBusSub, []byte(topic))
+	if err != nil {
+		return errRPC
+	}
+	if len(rp) > 0 && rp[0] != 0 {
+		return ErrTooManyBusTopics
+	}
+	return nil
+}
+func (s *proxySubscriber) Events() <-chan abi.Event { return nil }
+func (s *proxySubscriber) Close()                   {}
+
+var (
+	errRPC               = errors.New("runner: worker rpc failed")
+	errEgressUnavailable = errors.New("runner: egress capability unavailable")
+)

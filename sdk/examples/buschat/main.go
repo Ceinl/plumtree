@@ -1,67 +1,74 @@
-// Command buschat is the canonical pub/sub example: it subscribes to a room
-// topic and renders every message delivered over the bus, including its own. It
-// is the live-messaging counterpart to kvcounter (durable storage) and runs
-// unchanged natively (`go run .`) or hosted as WASM. Two hosted sessions of the
-// same app share one bus, so a message one publishes appears in the other.
+// Command buschat demonstrates clean typed pub/sub and declarative messages.
 package main
 
 import (
-	"fmt"
-
-	"github.com/Ceinl/plumtree/sdk"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/components"
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/bus"
+	"github.com/Ceinl/plumtree/sdk/identity"
+	"github.com/Ceinl/plumtree/sdk/secrets"
+	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
 const topic = "room"
 
 type chat struct {
-	user    string
-	kind    sdk.IdentityKind
-	ownsApp bool
-	lines   []string
+	messages int
+	user     string
+	room     string
+	last     string
+}
+type received struct{ message bus.Message }
+type identified struct{ result identity.Result }
+type configured struct{ result secrets.Result }
+
+func (c *chat) Init() app.Command {
+	return app.Batch(
+		identity.Whoami().Map(func(result identity.Result) app.Event { return identified{result: result} }),
+		secrets.Get("ROOM_NAME").Map(func(result secrets.Result) app.Event { return configured{result: result} }),
+	)
 }
 
-func (c *chat) Update(ev sdk.Event) {
-	switch e := ev.(type) {
-	case sdk.MessageMsg:
-		c.lines = append(c.lines, string(e.Data))
-	case sdk.KeyMsg:
-		switch e.Key {
+func (c *chat) Subscriptions() app.Subscription {
+	return bus.Messages("room", topic, func(message bus.Message) app.Event {
+		return received{message: message}
+	})
+}
+
+func (c *chat) Update(event app.Event) app.Command {
+	switch value := event.(type) {
+	case received:
+		if value.message.Err == nil {
+			c.messages++
+			c.last = string(value.message.Data)
+		}
+	case identified:
+		if value.result.Err == nil {
+			c.user = value.result.User
+		}
+	case configured:
+		if value.result.Err == nil {
+			c.room = value.result.Value
+		}
+	case app.KeyEvent:
+		switch value.Key {
 		case 'p':
-			// Publish a message; it is echoed back to this session and to every
-			// other subscribed session.
-			_ = sdk.Publish(topic, []byte("ping"))
-		case 'q', sdk.KeyCtrlC:
-			sdk.Quit()
+			return bus.Publish(topic, []byte("ping")).Ignore()
+		case 'q', app.KeyCtrlC:
+			return app.Quit()
 		}
 	}
+	return app.Noop()
 }
 
-func (c *chat) View() tui.Component {
-	root := components.NewDiv()
-	root.SetDirection(tui.Column)
-	root.SetSize(tui.Grow, tui.Grow)
-
-	root.AppendChild(components.NewText("user: " + c.user))
-	root.AppendChild(components.NewText(fmt.Sprintf("identity: %s owner=%t", c.kind, c.ownsApp)))
-	if v, ok, _ := sdk.Env("ROOM_NAME"); ok {
-		root.AppendChild(components.NewText("room: " + v))
-	}
-	root.AppendChild(components.NewText(fmt.Sprintf("messages: %d", len(c.lines))))
-	for _, l := range c.lines {
-		root.AppendChild(components.NewText(l))
-	}
-	return root
+func (c *chat) View() ui.Node {
+	return ui.Column(
+		ui.Text("Clean bus chat").Role(ui.Accent).Bold(),
+		ui.Textf("messages: %d", c.messages),
+		ui.Textf("last: %s", c.last),
+		ui.Textf("user: %s", c.user),
+		ui.Textf("room: %s", c.room),
+		ui.Text("press p to publish · q quits").Role(ui.Muted),
+	).Fill().Gap(0).Align(ui.Center).Justify(ui.Center)
 }
 
-func main() {
-	c := &chat{user: "?"}
-	if id, err := sdk.Whoami(); err == nil {
-		c.user = id.User
-		c.kind = id.Kind
-		c.ownsApp = id.OwnsApp
-	}
-	_ = sdk.Subscribe(topic)
-	sdk.RunTUI(c, sdk.Meta{Name: "buschat", Type: "tui"})
-}
+func main() { app.Run(&chat{}) }

@@ -1,59 +1,50 @@
-// Command timer demonstrates one-shot and recurring asynchronous commands.
-// The same source runs natively and hosted; completions always arrive through
-// Update, so model state stays single-threaded.
+// Command timer demonstrates finite and recurring clean SDK timers.
 package main
 
 import (
-	"fmt"
 	"time"
 
-	"github.com/Ceinl/plumtree/sdk"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/components"
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/timer"
+	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
 type clock struct {
-	started bool
-	every   sdk.CommandID
-	once    sdk.CommandID
-	ticks   int
-	fired   bool
+	ticks int
+	fired bool
 }
 
-func (c *clock) Update(event sdk.Event) {
-	if !c.started {
-		c.started = true
-		c.every, _ = sdk.Schedule(sdk.Every(250 * time.Millisecond))
-		c.once, _ = sdk.Schedule(sdk.After(time.Second))
-	}
+type tick struct{}
+type fired struct{}
 
-	switch event := event.(type) {
-	case sdk.TimerMsg:
-		switch event.ID {
-		case c.every:
-			c.ticks++
-		case c.once:
-			c.fired = true
+func (c *clock) Init() app.Command {
+	return timer.After(time.Second).Map(func(timer.Result) app.Event { return fired{} })
+}
+
+func (c *clock) Subscriptions() app.Subscription {
+	return timer.Every("clock", 250*time.Millisecond, tick{})
+}
+
+func (c *clock) Update(event app.Event) app.Command {
+	switch value := event.(type) {
+	case tick:
+		c.ticks++
+	case fired:
+		c.fired = true
+	case app.KeyEvent:
+		if value.Key == 'q' || value.Key == app.KeyCtrlC {
+			return app.Quit()
 		}
-	case sdk.KeyMsg:
-		if event.Key == 'q' || event.Key == sdk.KeyCtrlC {
-			sdk.Quit()
-		}
 	}
+	return app.Noop()
 }
 
-func (c *clock) View() tui.Component {
-	root := components.NewDiv()
-	root.SetDirection(tui.Column)
-	root.JustifyContent(tui.JCenter)
-	root.AlignItems(tui.ACenter)
-	root.SetSize(tui.Grow, tui.Grow)
-	root.AppendChild(components.NewText(fmt.Sprintf("ticks: %d", c.ticks)))
-	root.AppendChild(components.NewText(fmt.Sprintf("one-shot fired: %t", c.fired)))
-	root.AppendChild(components.NewText("(q quits)"))
-	return root
+func (c *clock) View() ui.Node {
+	return ui.Column(
+		ui.Textf("ticks: %d", c.ticks),
+		ui.Textf("one-shot fired: %t", c.fired),
+		ui.Text("(q quits)"),
+	).Fill().Gap(1).Align(ui.Center).Justify(ui.Center)
 }
 
-func main() {
-	sdk.RunTUI(&clock{}, sdk.Meta{Name: "timer", Type: "tui"})
-}
+func main() { app.Run(&clock{}) }

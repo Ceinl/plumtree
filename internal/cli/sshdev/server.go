@@ -1,0 +1,332 @@
+// Package sshdev serves a Plumtree app over SSH for local development. It is a
+// thin, single-app stand-in for the production SSH gateway: every connection
+// that requests a shell gets a fresh wazero session (via runner) wired to the
+// SSH channel — keystrokes in, rendered frames out. The `pt dev --ssh` command
+// binds it to a loopback address.
+//
+// Dev-only simplifications: anonymous auth (no key required), a stable local
+// dev host key, and one app per server. Callers must keep the listener on
+// loopback. Real auth, `<owner>/<app>` routing, and quotas belong to the hosted
+// gateway and server phases.
+package sshdev
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/Ceinl/plumtree/internal/hostkey"
+	execprotocol "github.com/Ceinl/plumtree/internal/protocol/exec"
+	"github.com/Ceinl/plumtree/internal/runner"
+	"github.com/Ceinl/plumtree/internal/terminal"
+	"github.com/Ceinl/plumtree/internal/terminal/keyboard"
+	"golang.org/x/crypto/ssh"
+)
+
+// Server serves one app over SSH.
+type Server struct {
+	Wasm    []byte
+	Runner  *runner.Runner
+	Limits  runner.Limits
+	Caps    runner.Capabilities // host capabilities shared across all sessions
+	AppType string              // "tui", "cli" or "vm" ("vm" runs the finite CLI path)
+	AppName string
+	MaxFPS  int
+	// AllowNonloopback disables the loopback-only listen guard. Dev SSH
+	// authenticates no client, so anything it can reach — apps, KV, bus,
+	// owner identity — must not be exposed beyond loopback without an
+	// explicit operator override.
+	AllowNonloopback bool
+	Logf             func(format string, args ...any)
+}
+
+func (s *Server) logf(format string, args ...any) {
+	if s.Logf != nil {
+		s.Logf(format, args...)
+	}
+}
+
+// ListenAndServe listens on addr until ctx is cancelled, serving each
+// connection in its own goroutine. It returns the resolved listen address via
+// the ready callback (handy when addr uses port 0).
+func (s *Server) ListenAndServe(ctx context.Context, addr string, ready func(net.Addr)) error {
+	if err := CheckListenAddress(addr, s.AllowNonloopback); err != nil {
+		return err
+	}
+	if s.Runner == nil {
+		s.Runner = runner.New()
+	}
+	cfg := &ssh.ServerConfig{NoClientAuth: true} // dev: anyone on localhost may connect
+	signer, err := devHostKey()
+	if err != nil {
+		return err
+	}
+	cfg.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	if ready != nil {
+		ready(ln.Addr())
+	}
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil // shutting down
+			}
+			return err
+		}
+		go s.handleConn(ctx, conn, cfg)
+	}
+}
+
+func (s *Server) handleConn(ctx context.Context, nConn net.Conn, cfg *ssh.ServerConfig) {
+	defer nConn.Close()
+	sshConn, chans, reqs, err := ssh.NewServerConn(nConn, cfg)
+	if err != nil {
+		s.logf("ssh handshake from %s failed: %v", nConn.RemoteAddr(), err)
+		return
+	}
+	defer sshConn.Close()
+	s.logf("connected: user=%q from %s", sshConn.User(), nConn.RemoteAddr())
+	go ssh.DiscardRequests(reqs)
+
+	for newCh := range chans {
+		if newCh.ChannelType() != "session" {
+			newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
+			continue
+		}
+		ch, chReqs, err := newCh.Accept()
+		if err != nil {
+			s.logf("accept channel: %v", err)
+			continue
+		}
+		go s.handleSession(ctx, ch, chReqs)
+	}
+}
+
+// handleSession processes channel requests and, once a shell/exec is asked for,
+// runs the app against the channel. Terminal size starts at the pty-req value
+// and tracks window-change events.
+func (s *Server) handleSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var (
+		mu      sync.Mutex
+		w, h    = 80, 24
+		started bool
+	)
+	winch := make(chan os.Signal, 1)
+	size := func() (int, int) { mu.Lock(); defer mu.Unlock(); return w, h }
+
+	for req := range reqs {
+		switch req.Type {
+		case "pty-req":
+			var p ptyRequest
+			if err := ssh.Unmarshal(req.Payload, &p); err == nil {
+				mu.Lock()
+				w, h = int(p.Columns), int(p.Rows)
+				mu.Unlock()
+			}
+			req.Reply(true, nil)
+
+		case "window-change":
+			var p windowChange
+			if err := ssh.Unmarshal(req.Payload, &p); err == nil {
+				mu.Lock()
+				w, h = int(p.Columns), int(p.Rows)
+				mu.Unlock()
+				select {
+				// TTYSource treats this channel as a resize notification; the
+				// concrete signal value is irrelevant. os.Interrupt keeps this
+				// development server portable to Windows as well.
+				case winch <- os.Interrupt:
+				default:
+				}
+			}
+
+		case "shell", "exec":
+			var args []string
+			if req.Type == "exec" {
+				var payload execRequest
+				if len(req.Payload) > 4+64*1024 || ssh.Unmarshal(req.Payload, &payload) != nil {
+					req.Reply(false, nil)
+					continue
+				}
+				var err error
+				args, err = execprotocol.ParseExecCommand(payload.Command)
+				if err != nil {
+					req.Reply(true, nil)
+					_ = json.NewEncoder(ch).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "invalid_request", "message": err.Error()}})
+					_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
+					ch.Close()
+					cancel()
+					return
+				}
+			}
+			req.Reply(true, nil)
+			if started {
+				continue
+			}
+			started = true
+			go func() {
+				status := s.runSessionArgs(ctx, ch, size, winch, args)
+				_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
+				ch.Close()
+				cancel()
+			}()
+
+		case "env":
+			req.Reply(true, nil)
+
+		default:
+			req.Reply(false, nil)
+		}
+	}
+	cancel()
+}
+
+func (s *Server) runSession(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal) uint32 {
+	return s.runSessionArgs(ctx, ch, size, winch, nil)
+}
+
+// runSessionArgs drives one guest to completion and returns the SSH
+// exit-status to report: 0 for a clean run or client disconnect, nonzero for a
+// guest failure.
+func (s *Server) runSessionArgs(ctx context.Context, ch ssh.Channel, size func() (int, int), winch chan os.Signal, args []string) uint32 {
+	caps := s.Caps
+	// Server capabilities are shared by every development connection. Keep the
+	// guest-written goodbye message session-local so concurrent clients cannot
+	// race or inherit one another's message.
+	caps.Goodbye = new(string)
+	if s.AppType == "cli" || s.AppType == "vm" || len(args) > 0 {
+		err := s.Runner.RunCLI(ctx, s.Wasm, s.Limits, caps, args, ch)
+		if err != nil {
+			fmt.Fprintf(ch.Stderr(), "app error: %v\r\n", err)
+		}
+		if *caps.Goodbye != "" {
+			fmt.Fprintf(ch, "\r\n%s\r\n", runner.SanitizeTerminalText(*caps.Goodbye))
+		}
+		return runner.ExitStatus(err)
+	}
+
+	w, h := size()
+	if w <= 0 || h <= 0 {
+		w, h = 80, 24
+	}
+
+	// Set up the client's terminal (alt screen, hidden cursor) and tear it down
+	// afterward. Output is host-generated; the guest never writes ANSI.
+	io.WriteString(ch, terminal.HIDE_CURSOR+terminal.OPEN_ALT+terminal.ENABLE_MOUSE+terminal.CLEAR_SCREEN+terminal.MOVE_CURSOR)
+	defer func() {
+		msg := terminal.DISABLE_MOUSE + terminal.SHOW_CURSOR + terminal.CLOSE_ALT
+		if *caps.Goodbye != "" {
+			msg += "\r\n" + runner.SanitizeTerminalText(*caps.Goodbye) + "\r\n"
+		}
+		_, _ = io.WriteString(ch, msg)
+	}()
+
+	src := &runner.TTYSource{
+		Keys:    keyboard.ListenReader(ctx, ch),
+		Winch:   winch,
+		Refresh: runner.DefaultRefresh,
+		Size:    size,
+	}
+	sink := runner.NewTTYSinkWriter(w, h, s.MaxFPS, ch)
+
+	// Guest output is retained only for post-mortem inspection, so keep the
+	// same bounded log the isolated worker path uses.
+	logs := runner.NewLogBuffer()
+	err := s.Runner.Run(ctx, s.Wasm, s.Limits, caps, src, sink, logs)
+	sink.Close()
+	switch {
+	case err == nil, errors.Is(err, context.Canceled):
+		// Clean exit or normal client disconnect — nothing to report.
+		return 0
+	default:
+		s.logf("session error: %v", err)
+		return 1
+	}
+}
+
+// CheckListenAddress refuses listen addresses that would expose the
+// unauthenticated dev SSH server beyond loopback. An empty host (every
+// interface) is refused; a hostname is allowed only when every address it
+// resolves to is loopback. allowNonloopback permits anything.
+func CheckListenAddress(address string, allowNonloopback bool) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid SSH listen address: %w", err)
+	}
+	refuse := func() error {
+		return fmt.Errorf("dev SSH listens without client authentication; address %q leaves loopback — pass --allow-nonloopback-ssh to override", address)
+	}
+	if allowNonloopback {
+		return nil
+	}
+	if host == "" {
+		return refuse()
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsLoopback() {
+			return refuse()
+		}
+		return nil
+	}
+	ips, err := net.LookupHost(host)
+	if err != nil || len(ips) == 0 {
+		return fmt.Errorf("dev SSH listen host %q does not resolve: %w", host, err)
+	}
+	for _, candidate := range ips {
+		if parsed := net.ParseIP(candidate); parsed == nil || !parsed.IsLoopback() {
+			return refuse()
+		}
+	}
+	return nil
+}
+
+// devHostKey returns a stable host key, persisted under the user config dir so
+// it does not change between runs — clients then trust it once instead of
+// needing StrictHostKeyChecking=no on every connect. An existing-but-corrupt
+// key file is a hard error: regenerating would break clients' TOFU pins. Falls
+// back to an ephemeral key only when the config dir itself is unavailable.
+func devHostKey() (ssh.Signer, error) {
+	cfgDir, err := os.UserConfigDir()
+	if err != nil {
+		signer, _, err := hostkey.Generate("plumtree dev host key")
+		return signer, err
+	}
+	return hostkey.LoadOrCreate(filepath.Join(cfgDir, "plumtree", "dev_host_ed25519"), "plumtree dev host key")
+}
+
+// ptyRequest is the SSH "pty-req" payload.
+type ptyRequest struct {
+	Term              string
+	Columns, Rows     uint32
+	WidthPx, HeightPx uint32
+	Modes             string
+}
+
+type execRequest struct{ Command string }
+
+// windowChange is the SSH "window-change" payload.
+type windowChange struct {
+	Columns, Rows     uint32
+	WidthPx, HeightPx uint32
+}

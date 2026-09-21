@@ -1,0 +1,88 @@
+package runner
+
+import (
+	"context"
+
+	"github.com/Ceinl/plumtree/sdk/abi"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+)
+
+// Identity is who is connected for a session. It mirrors abi.Identity and is
+// supplied by the host (the SSH layer) per session, so unlike KV/Bus it is not
+// shared across sessions.
+type Identity struct {
+	User          string // proved SSH key fingerprint, or "anonymous:<session-id>"
+	Authenticated bool   // verified against a claimed owner key
+	Kind          IdentityKind
+	OwnsApp       bool
+	// OwnerID is root-server metadata used only by the gateway to derive
+	// OwnsApp after resolving an app. It is never encoded into the guest ABI.
+	OwnerID string
+}
+
+type IdentityKind string
+
+const (
+	IdentitySSHKey    IdentityKind = "ssh-key"
+	IdentityAnonymous IdentityKind = "anonymous"
+)
+
+func identityKindToABI(kind IdentityKind) abi.IdentityKind {
+	switch kind {
+	case IdentitySSHKey:
+		return abi.IdentitySSHKey
+	case IdentityAnonymous:
+		return abi.IdentityAnonymous
+	default:
+		return abi.IdentityUnknown
+	}
+}
+
+func identityKindFromABI(kind abi.IdentityKind) IdentityKind {
+	switch kind {
+	case abi.IdentitySSHKey:
+		return IdentitySSHKey
+	case abi.IdentityAnonymous:
+		return IdentityAnonymous
+	default:
+		return ""
+	}
+}
+
+// Auth is the per-session identity capability handed to a guest. Implementations
+// return the identity of the connected user.
+type Auth interface {
+	Whoami() Identity
+}
+
+// StaticAuth is an Auth that always returns the same Identity — the common case,
+// since a session's identity is fixed for its lifetime.
+type StaticAuth struct{ Identity Identity }
+
+func (a StaticAuth) Whoami() Identity { return a.Identity }
+
+// registerAuth adds the auth_whoami host function to b. It is installed even
+// when auth is nil so a guest whose linker kept the import can instantiate;
+// calls then return abi.AuthErrInternal.
+func registerAuth(b wazero.HostModuleBuilder, auth Auth) wazero.HostModuleBuilder {
+	return b.NewFunctionBuilder().
+		WithFunc(func(_ context.Context, m api.Module, outPtr, outCap int32) int32 {
+			if auth == nil {
+				return abi.AuthErrInternal
+			}
+			id := auth.Whoami()
+			enc := abi.EncodeIdentity(abi.Identity{User: id.User, Authenticated: id.Authenticated, Kind: identityKindToABI(id.Kind), OwnsApp: id.OwnsApp})
+			n := int32(len(enc))
+			// Too big for the guest buffer: report the needed length, write
+			// nothing, let the guest grow and retry (mirrors kv_get).
+			if n > outCap {
+				return n
+			}
+			if !m.Memory().Write(uint32(outPtr), enc) {
+				return abi.AuthErrInternal
+			}
+			return n
+		}).
+		Export("auth_whoami")
+}

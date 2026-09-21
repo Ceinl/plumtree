@@ -1,14 +1,14 @@
 go 1.26.5
 
 use (
-	./_devtest/goodbye-tui
-	./_devtest/goodbye-cli
-	./build-worker
-	./control-plane
+	.
 	./examples/agentboard
-	./pt
-	./runner
+	./examples/afterimage
+	./examples/ascii-saver
+	./examples/chat
+	./examples/familiar
+	./examples/tic-tac-toe
 	./sdk
-	./ssh-gateway
-	./tui-runtime
 )
+
+replace github.com/Ceinl/plumtree/sdk v0.0.0 => ./sdk

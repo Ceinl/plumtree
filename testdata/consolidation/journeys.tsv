@@ -1,0 +1,17 @@
+# id	fixture	proof_file	proof_symbol
+interactive-counter	sdk/examples/counter	internal/runner/compatibility_test.go	TestBaselineABIV4CounterArtifact
+finite-cli	internal/runner/testdata/cleancli	internal/runner/integration_test.go	TestGoodbyeCapabilityInProcess
+structured-tui	examples/ascii-saver	examples/ascii-saver/app/main_test.go	TestAsciiSaverCleanRuntime
+scoped-kv	sdk/examples/kvcounter	internal/runner/integration_test.go	TestKVPersistsAcrossSessions
+live-bus	sdk/examples/buschat	internal/runner/integration_test.go	TestBusDeliversPublishedMessage
+mouse-input	sdk/examples/mousebutton	internal/runner/procrunner_test.go	TestProcessRunnerHostedSDKButtonMouseClick
+timers	sdk/examples/timer	internal/runner/procrunner_test.go	TestProcessRunnerTimersWakeAndRedraw
+actions-and-capabilities	examples/agentboard	internal/runner/procrunner_test.go	TestProcessRunnerCleanCLICapabilityParity
+author-deploy	internal/cli/workflow	internal/cli/workflow/workflow_test.go	TestAPIUsesStableProblemAndMultipartDeployment
+ssh-leaf-session	internal/gateway	internal/gateway/session_test.go	TestRunSessionProductionCLIUsesWorker
+secret-management	internal/httpapi/v1	internal/httpapi/v1/server_test.go	TestSecretAndEgressRoutesDoNotExposeSecretValues
+egress-management	internal/httpapi/v1	internal/httpapi/v1/server_test.go	TestSecretAndEgressRoutesDoNotExposeSecretValues
+terminal-safe-frames	internal/runner	internal/runner/devhost_test.go	TestTextSinkRendersGrid
+terminal-safe-cli	internal/cli	internal/cli/terminal_safe_test.go	TestTerminalSafeTextStripsTerminalControls
+worker-authentication	internal/runner	internal/runner/procrunner_test.go	TestRemoteProcessRunnerRejectsWrongToken
+credential-redaction	internal/transport	internal/transport/transport_test.go	TestCheckedClientRejectsIdentityHeader

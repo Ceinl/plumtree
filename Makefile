@@ -1,87 +1,93 @@
 GO ?= go
 GOCACHE ?= /private/tmp/plums-go-cache
 PT ?= pt
-PT_ARGS ?= configure
+PT_ARGS ?= ping
 PT_DIR ?= $(CURDIR)
 
-ADDR ?= 127.0.0.1:18080
-ORIGIN ?= http://localhost:18080
-DEV_TOKEN ?= local-dev
 SSH_ADDR ?= 127.0.0.1:2222
-# A standard-port all-in-one server can override SSH_ADDR=<app-ip>:22, but only
-# after administrator SSH is proven on a different address or port.
-SESSION_TIMEOUT ?= 0
-SSH_IDLE_TIMEOUT ?= -1s
-BUILD_DEV_ROOT ?= $(abspath $(CURDIR))
-STATE_DIR ?= $(HOME)/Library/Application Support/plumtree
-STATE_FILE ?= $(STATE_DIR)/control-plane-state.json
-KV_DIR ?= $(STATE_DIR)/kv
+PRODUCT_VERSION ?= dev
+# Shared dev server home: one config and one state dir for every worktree, so
+# `make run-server` from any checkout serves the same dev server identity
+# without sharing state with the default ~/.config/plumtree/config.json server.
+DEV_HOME ?= $(HOME)/.config/plumtree/dev
+CONFIG ?= $(DEV_HOME)/config.json
+DATABASE ?= $(DEV_HOME)/plumtree.db
+HOST_KEY ?= $(DEV_HOME)/plumtree_host_key
+KV_ROOT ?= $(DEV_HOME)/plumtree-data
 
 # Public and local pt builds are generic. `make pt-local` supplies temporary
 # address/token overrides matching run-server without changing user config.
 PT_LDFLAGS ?= -s -w
 
-.PHONY: help test-control-plane pt-local run-server run-server-memory seed-server clear-server build-pt install-pt
+.PHONY: help test-root run-server config-local bootstrap pair clear-server build-pt install-pt sqlcipher-test
 
 help:
 	@printf '%s\n' \
 		'Targets:' \
-		'  make test-control-plane Run control-plane tests' \
-		'  make pt-local           Run pt against run-server (PT_ARGS=configure)' \
-		'  make run-server         Run local control plane with persistent default state' \
-		'  make run-server-memory  Run local control plane with in-memory state only' \
-		'  make seed-server        Run local control plane with demo seed data' \
-		'  make clear-server       Delete local test server state and KV data' \
+		'  make test-root          Run root module tests' \
+	'  make run-server         Run the native SSH/SQLite server' \
+	'  make config-local       Persist local serve settings into the shared dev config' \
+	'  make bootstrap          Mint a one-use first-author authority (HANDLE=$(USER))' \
+	'  make pair               Pair this device (BOOTSTRAP_ID=<id> [SECRET=<phrase>])' \
+		'  make clear-server       Delete local native server state' \
 		'  make build-pt           Build generic ./pt-bin' \
-		'  make install-pt         Install generic pt; configure it at runtime'
+		'  make install-pt         Install generic pt; configure it at runtime' \
+		'  make sqlcipher-test     Run the native SQLCipher qualification suite'
 
-test-control-plane:
-	cd control-plane && GOCACHE=$(GOCACHE) $(GO) test ./...
+test-root:
+	GOCACHE=$(GOCACHE) $(GO) test ./...
 
-pt-local:
-	@printf 'pt local endpoint: %s\n' "$(ORIGIN)"
-	@cd "$(PT_DIR)" && PLUMTREE_SERVER_URL="$(ORIGIN)" PLUMTREE_DEV_TOKEN="$(DEV_TOKEN)" "$(PT)" $(PT_ARGS)
+# Boundary fuzz targets (~30s each); CI runs them per-PR, smoke runs use -fuzztime.
+fuzz-terminal:
+	GOCACHE=$(GOCACHE) $(GO) test ./internal/terminal -run '^$$' -fuzz FuzzScreenCoordinates -fuzztime 30s
+	GOCACHE=$(GOCACHE) $(GO) test ./internal/runner
 
-run-server:
-	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
-		-addr $(ADDR) \
-		-origin $(ORIGIN) \
-		-dev-token $(DEV_TOKEN) \
-		-build-dev-root "$(BUILD_DEV_ROOT)" \
-		-ssh-addr $(SSH_ADDR) \
-		-session-timeout $(SESSION_TIMEOUT) \
-		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT)
+run-server: config-local
+	PLUMTREE_PRODUCT_VERSION="$(PRODUCT_VERSION)" $(GO) run ./cmd/plumtree serve --config "$(CONFIG)"
 
-run-server-memory:
-	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
-		-addr $(ADDR) \
-		-origin $(ORIGIN) \
-		-dev-token $(DEV_TOKEN) \
-		-build-dev-root "$(BUILD_DEV_ROOT)" \
-		-ssh-addr $(SSH_ADDR) \
-		-session-timeout $(SESSION_TIMEOUT) \
-		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT) \
-		-state-file ""
+# Local serve settings live in the config file, not the serve command line:
+# storage paths are relative to the config file, so they follow it into the
+# shared dev home automatically. Product version stays out of the file on
+# purpose: it is run-scoped version identity (flag or
+# PLUMTREE_PRODUCT_VERSION), not persisted configuration. One-off overrides
+# still work without flags via PLUMTREE_<FIELD> env, e.g.
+# PLUMTREE_EXPOSURE_SSH_ADDRESS=:2222.
+config-local:
+	@mkdir -p "$(DEV_HOME)"
+	$(GO) run ./cmd/plumtree config set --config "$(CONFIG)" exposure.ssh.address "$(SSH_ADDR)"
 
-seed-server:
-	cd control-plane && PLUMTREE_DEV_TOKEN=$(DEV_TOKEN) $(GO) run ./cmd/control-plane \
-		-addr $(ADDR) \
-		-origin $(ORIGIN) \
-		-dev-token $(DEV_TOKEN) \
-		-build-dev-root "$(BUILD_DEV_ROOT)" \
-		-ssh-addr $(SSH_ADDR) \
-		-session-timeout $(SESSION_TIMEOUT) \
-		-ssh-idle-timeout $(SSH_IDLE_TIMEOUT) \
-		-seed-demo
+# First-author onboarding for the shared dev server. Bootstrap mints a
+# one-use authority (secret shown once, 10 minute default TTL); pair consumes
+# it and registers this device. With SECRET empty, pt prompts for the phrase
+# instead of taking it from the command line and shell history.
+HANDLE ?= $(USER)
+# ID is accepted as a short alias for BOOTSTRAP_ID.
+BOOTSTRAP_ID ?= $(ID)
+SECRET ?=
+
+bootstrap:
+	$(GO) run ./cmd/plumtree bootstrap --config "$(CONFIG)" -handle "$(HANDLE)"
+
+# Pairing consumes the one-use ID from `make bootstrap`:
+#   make pair BOOTSTRAP_ID=<id> [SECRET=<phrase>]  (ID= works too)
+# With SECRET empty, pt prompts for the phrase instead of reading shell
+# history. Missing/invalid input is reported by pt itself.
+pair:
+	$(GO) run ./cmd/pt pair --bootstrap "$(BOOTSTRAP_ID)" --secret "$(SECRET)" --yes "$(SSH_ADDR)"
 
 clear-server:
-	rm -f "$(STATE_FILE)"
-	rm -rf "$(KV_DIR)"
+	rm -f "$(DATABASE)" "$(HOST_KEY)" "$(CONFIG)" "$(CONFIG).lock"
+	rm -rf "$(KV_ROOT)"
+
+PT_BIN ?= $(CURDIR)/pt-bin
 
 build-pt:
-	cd pt && GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(abspath $(CURDIR))/pt-bin" .
-	@echo "built generic pt-bin; run 'pt-bin configure --addr URL --token'"
+	GOCACHE=$(GOCACHE) $(GO) build -trimpath -ldflags "$(PT_LDFLAGS)" -o "$(PT_BIN)" ./cmd/pt
+	@echo "built clean pt-bin; pair it with a Plumtree server before using remote commands"
 
 install-pt:
-	cd pt && GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" .
-	@echo "installed generic pt; run 'pt configure --addr URL --token'"
+	GOCACHE=$(GOCACHE) $(GO) install -trimpath -ldflags "$(PT_LDFLAGS)" ./cmd/pt
+	@echo "installed clean pt; pair it with a Plumtree server before using remote commands"
+
+sqlcipher-test:
+	./scripts/check-sqlcipher-target.sh "$(shell go env GOOS)/$(shell go env GOARCH)"

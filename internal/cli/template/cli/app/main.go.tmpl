@@ -1,0 +1,26 @@
+// Command {{.Name}} is a Plumtree CLI app.
+package main
+
+import (
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/cli"
+	"github.com/Ceinl/plumtree/sdk/ui"
+)
+
+func main() {
+	commands := cli.Root("write a greeting").WithArgs(cli.AnyArgs()).WithHandler(
+		func(_ cli.Context, args []string) (cli.Output, error) {
+			name := "world"
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return cli.Value("Hello " + name), nil
+		},
+	)
+	app.Run(&model{}, app.WithCommands(commands))
+}
+
+type model struct{}
+
+func (*model) Update(app.Event) app.Command { return app.Noop() }
+func (*model) View() ui.Node                { return ui.Text("{{.Name}}") }

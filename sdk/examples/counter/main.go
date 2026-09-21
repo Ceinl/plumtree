@@ -1,67 +1,35 @@
-// Command counter is the canonical Plumtree TUI example: a number you move with
-// the arrow keys. It builds against the SDK only and runs unchanged natively
-// (`go run .`) or compiled to WASM and hosted by the platform.
+// Command counter is the canonical clean Plumtree app example.
 package main
 
 import (
-	"fmt"
-
-	"github.com/Ceinl/plumtree/sdk"
-	"github.com/Ceinl/plumtree/sdk/tui"
-	"github.com/Ceinl/plumtree/sdk/tui/components"
+	"github.com/Ceinl/plumtree/sdk/app"
+	"github.com/Ceinl/plumtree/sdk/ui"
 )
 
 type counter struct{ n int }
 
-// Update handles input by mutating state.
-func (c *counter) Update(ev sdk.Event) {
-	k, ok := ev.(sdk.KeyMsg)
+func (c *counter) Update(event app.Event) app.Command {
+	key, ok := event.(app.KeyEvent)
 	if !ok {
-		return
+		return app.Noop()
 	}
-	switch k.Key {
-	case sdk.KeyUp, '+', 'k':
+	switch key.Key {
+	case app.KeyUp, '+', 'k':
 		c.n++
-	case sdk.KeyDown, '-', 'j':
+	case app.KeyDown, '-', 'j':
 		c.n--
-	case 'q', sdk.KeyCtrlC:
-		sdk.Quit()
+	case 'q', app.KeyCtrlC:
+		return app.Quit()
 	}
+	return app.Noop()
 }
 
-// View builds the component tree for the current state each frame.
-func (c *counter) View() tui.Component {
-	var bg tui.Style
-	bg.SetBackground(25, 23, 29)
-	bg.SetForeground(200, 200, 200)
-
-	root := components.NewDiv()
-	root.SetDirection(tui.Column)
-	root.JustifyContent(tui.JCenter)
-	root.AlignItems(tui.ACenter)
-	root.SetSize(tui.Grow, tui.Grow)
-	root.SetStyle(bg)
-
-	var titleStyle tui.Style
-	titleStyle.SetBackground(25, 23, 29)
-	titleStyle.SetForeground(120, 200, 255)
-	titleStyle.AddTextDecoration(tui.Bold)
-	title := components.NewText("Plumtree counter")
-	title.SetStyle(titleStyle)
-	title.SetAlign(components.AlignCenter)
-
-	count := components.NewText(fmt.Sprintf("Count: %d", c.n))
-	count.SetAlign(components.AlignCenter)
-
-	hint := components.NewText("(↑/↓ change · q quits)")
-	hint.SetAlign(components.AlignCenter)
-
-	root.AppendChild(title)
-	root.AppendChild(count)
-	root.AppendChild(hint)
-	return root
+func (c *counter) View() ui.Node {
+	return ui.Column(
+		ui.Text("Plumtree counter").Role(ui.Accent).Bold(),
+		ui.Textf("Count: %d", c.n),
+		ui.Text("(↑/↓ change · q quits)").Role(ui.Muted),
+	).Fill().Gap(1).Align(ui.Center).Justify(ui.Center)
 }
 
-func main() {
-	sdk.RunTUI(&counter{}, sdk.Meta{Name: "counter", Type: "tui"})
-}
+func main() { app.Run(&counter{}) }
