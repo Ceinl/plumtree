@@ -11,7 +11,10 @@ text	legacy-product-module-imports	54-57	0	github.com/Ceinl/plumtree/(build-work
 text	local-module-replaces	53	3	=>[[:space:]]+(\./|\.\./|/)
 text	build-worker-surface	73	4	build-worker
 text	shoo-surface	73	2	[Ss][Hh][Oo][Oo]
-text	browser-dashboard-surface	73	4	[Bb]rowser|[Dd]ashboard
+text	browser-dashboard-surface	73	5	[Bb]rowser|[Dd]ashboard
+# browser-dashboard-surface: +1 is the required GitHub API JSON field name
+# browser_download_url in internal/selfupdate/source.go; it parses release
+# asset metadata and cannot be renamed.
 text	claim-flow	73	29	Claim(Token|URL|Expires|ed)|claim(Token|URL|Expires|ed)|/claim/|/api/dev/deploy
 text	source-build-flow	73	28	[Ss]ource[ -]?(upload|archive|build)|Source(Digest|Archive)|build-worker
 text	legacy-state-store	73	90	[Ss]napshot|[Ee]nvelope
